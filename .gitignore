@@ -1,0 +1,21 @@
+# Env
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+
+# Data
+Backend/data/uploads/*
+!Backend/data/uploads/.gitkeep
+
+# Editors / OS
+.DS_Store
+.vscode/
