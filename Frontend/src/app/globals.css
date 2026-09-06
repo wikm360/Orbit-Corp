@@ -2,10 +2,61 @@
 @tailwind components;
 @tailwind utilities;
 
-html {
-  direction: rtl;
+/*
+ * B Nazanin is the company font. It is a licensed font and is NOT bundled in
+ * the repo — drop the files into `public/fonts/` with these exact names and
+ * they will be picked up automatically:
+ *   public/fonts/BNazanin.ttf
+ *   public/fonts/BNazanin-Bold.ttf
+ * Until then the UI falls back to Vazirmatn (loaded via next/font in layout.tsx).
+ */
+@font-face {
+  font-family: "B Nazanin";
+  src: url("/fonts/BNazanin.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
 }
 
-body {
-  font-family: system-ui, -apple-system, "Segoe UI", Tahoma, sans-serif;
+@font-face {
+  font-family: "B Nazanin";
+  src: url("/fonts/BNazanin-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@layer base {
+  html {
+    direction: rtl;
+    /* B Nazanin renders small at a given px size — bump the base so 16px feels like 16px */
+    font-size: 17px;
+  }
+
+  body {
+    @apply font-sans text-gray-900 antialiased;
+  }
+
+  /* Emails, IDs and code are Latin — keep them LTR inside an RTL page. */
+  .ltr {
+    direction: ltr;
+    unicode-bidi: isolate;
+  }
+
+  input,
+  textarea,
+  select,
+  button {
+    font-family: inherit;
+  }
+
+  ::selection {
+    @apply bg-accent-300 text-brand-900;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
 }
