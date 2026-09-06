@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 
 import { Button } from "@/shared/components/ui/Button";
 import { Input } from "@/shared/components/ui/Input";
@@ -34,6 +34,8 @@ const COPY: Record<Mode, { title: string; subtitle: string; submit: string; swit
 export function LoginScreen() {
   const router = useRouter();
   const setSession = useAuthStore((state) => state.setSession);
+  const token = useAuthStore((state) => state.token);
+  const hasHydrated = useAuthStore((state) => state.hasHydrated);
 
   const [mode, setMode] = useState<Mode>("login");
   const [email, setEmail] = useState("");
@@ -44,6 +46,10 @@ export function LoginScreen() {
   const [isLoading, setIsLoading] = useState(false);
 
   const copy = COPY[mode];
+
+  useEffect(() => {
+    if (hasHydrated && token) router.replace("/chat");
+  }, [hasHydrated, router, token]);
 
   function switchMode() {
     setMode(mode === "login" ? "register" : "login");
@@ -99,11 +105,12 @@ export function LoginScreen() {
           <h1 className="text-2xl font-bold text-gray-900">{copy.title}</h1>
           <p className="mt-2 text-sm leading-relaxed text-gray-500">{copy.subtitle}</p>
 
-          <form onSubmit={handleSubmit} noValidate className="mt-8 flex flex-col gap-5">
+          <form onSubmit={handleSubmit} className="mt-8 flex flex-col gap-5">
             {mode === "register" && (
               <Input
                 label="نام و نام خانوادگی"
                 autoComplete="name"
+                maxLength={100}
                 placeholder="مثلاً: سارا محمدی"
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
@@ -131,6 +138,7 @@ export function LoginScreen() {
               autoComplete={mode === "login" ? "current-password" : "new-password"}
               required
               minLength={8}
+              maxLength={72}
               dir="ltr"
               placeholder="••••••••"
               className="text-left placeholder:text-left"

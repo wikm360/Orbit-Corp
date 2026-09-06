@@ -8,7 +8,7 @@ export function Spinner({ className }: { className?: string }) {
         className
       )}
       role="status"
-      aria-label="loading"
+      aria-label="در حال انجام"
     />
   );
 }

@@ -1,5 +1,7 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
 
+export const AUTH_UNAUTHORIZED_EVENT = "auth:unauthorized";
+
 export class ApiError extends Error {
   status: number;
 
@@ -14,13 +16,19 @@ function getToken(): string | null {
   return localStorage.getItem("auth_token");
 }
 
-async function parseErrorMessage(response: Response): Promise<string> {
+export async function parseErrorMessage(response: Response): Promise<string> {
   try {
     const body = await response.json();
     return body.detail ?? response.statusText;
   } catch {
     return response.statusText;
   }
+}
+
+export function notifyUnauthorized(): void {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem("auth_token");
+  window.dispatchEvent(new Event(AUTH_UNAUTHORIZED_EVENT));
 }
 
 interface RequestOptions {
@@ -50,6 +58,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   });
 
   if (!response.ok) {
+    if (response.status === 401 && path !== "/auth/login") notifyUnauthorized();
     throw new ApiError(response.status, await parseErrorMessage(response));
   }
 

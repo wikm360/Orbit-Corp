@@ -8,14 +8,21 @@ import { Team, UserWithTeams } from "../types";
 interface UserTableProps {
   users: UserWithTeams[];
   teams: Team[];
-  onAssign: (userId: string, teamId: string) => void;
+  onAssign: (userId: string, teamId: string) => Promise<void>;
+  isBusy?: boolean;
 }
 
-export function UserTable({ users, teams, onAssign }: UserTableProps) {
+export function UserTable({ users, teams, onAssign, isBusy = false }: UserTableProps) {
   const [selectedTeam, setSelectedTeam] = useState<Record<string, string>>({});
+  const [assigningUserId, setAssigningUserId] = useState<string | null>(null);
+
+  if (users.length === 0) {
+    return <p className="text-sm text-gray-400">کاربری برای نمایش وجود ندارد.</p>;
+  }
 
   return (
-    <table className="w-full text-right text-sm">
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[760px] text-right text-sm">
       <thead>
         <tr className="border-b border-gray-200 text-gray-500">
           <th className="py-2 font-medium">ایمیل</th>
@@ -30,9 +37,9 @@ export function UserTable({ users, teams, onAssign }: UserTableProps) {
           const availableTeams = teams.filter((t) => !assignedTeamIds.has(t.id));
 
           return (
-            <tr key={user.id} className="border-b border-gray-100">
-              <td className="py-2">{user.email}</td>
-              <td className="py-2">
+            <tr key={user.id} className="border-b border-gray-100 last:border-0">
+              <td dir="ltr" className="py-3 pe-3 text-left font-medium text-gray-800">{user.email}</td>
+              <td className="py-3">
                 <Badge tone={user.role === "admin" ? "yellow" : "gray"}>{user.role}</Badge>
               </td>
               <td className="py-2">
@@ -54,7 +61,9 @@ export function UserTable({ users, teams, onAssign }: UserTableProps) {
                 ) : (
                   <div className="flex items-center gap-2">
                     <select
-                      className="rounded-md border border-gray-300 px-2 py-1 text-xs"
+                      aria-label={`انتخاب تیم برای ${user.email}`}
+                      className="rounded-lg border border-gray-200 bg-white px-2 py-2 text-xs outline-none focus:border-brand-400 focus:ring-4 focus:ring-brand-100"
+                      disabled={isBusy}
                       value={selectedTeam[user.id] ?? ""}
                       onChange={(e) =>
                         setSelectedTeam((prev) => ({ ...prev, [user.id]: e.target.value }))
@@ -71,11 +80,21 @@ export function UserTable({ users, teams, onAssign }: UserTableProps) {
                     </select>
                     <Button
                       variant="secondary"
-                      onClick={() => {
+                      size="sm"
+                      isLoading={assigningUserId === user.id}
+                      disabled={isBusy || !selectedTeam[user.id]}
+                      onClick={async () => {
                         const teamId = selectedTeam[user.id];
                         if (teamId) {
-                          onAssign(user.id, teamId);
-                          setSelectedTeam((prev) => ({ ...prev, [user.id]: "" }));
+                          setAssigningUserId(user.id);
+                          try {
+                            await onAssign(user.id, teamId);
+                            setSelectedTeam((prev) => ({ ...prev, [user.id]: "" }));
+                          } catch {
+                            // The parent renders the localized action error.
+                          } finally {
+                            setAssigningUserId(null);
+                          }
                         }
                       }}
                     >
@@ -88,6 +107,7 @@ export function UserTable({ users, teams, onAssign }: UserTableProps) {
           );
         })}
       </tbody>
-    </table>
+      </table>
+    </div>
   );
 }

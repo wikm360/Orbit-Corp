@@ -45,8 +45,6 @@ const config: Config = {
       },
       fontFamily: {
         sans: [
-          "B Nazanin",
-          "BNazanin",
           "var(--font-vazirmatn)",
           "Vazirmatn",
           "Tahoma",
