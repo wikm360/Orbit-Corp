@@ -17,9 +17,19 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
-            cd ~/Organization-RAG
+            # لود کردن متغیرهای محیطی در صورت استفاده از NVM
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
 
+            cd /root/Organization-RAG
+
+            # دریافت آخرین تغییرات کد
             git pull origin main
 
-            docker compose down
-            docker compose up -d --build
+            # ورود به پوشه فرانت، نصب پکیج‌ها و بیلد مجدد
+            cd Frontend
+            npm install
+            npm run build
+
+            # ریستارت سریع سرویس فرانت‌اند
+            systemctl restart front
