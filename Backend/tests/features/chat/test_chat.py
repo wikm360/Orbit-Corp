@@ -72,5 +72,5 @@ async def test_conversation_history_is_persisted(client):
         f"/api/v1/chat/conversations/{conversation_id}", headers=headers
     )
     assert detail.status_code == 200
-    roles = [m["role"] for m in detail.json()["messages"]]
-    assert roles == ["user", "assistant"]
+    sender_types = [m["sender_type"] for m in detail.json()["messages"]]
+    assert sender_types == ["user", "assistant"]

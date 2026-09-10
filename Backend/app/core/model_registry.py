@@ -9,5 +9,6 @@ from app.features.access_control import models as _access_control_models  # noqa
 from app.features.auth import models as _auth_models  # noqa: F401
 from app.features.chat import models as _chat_models  # noqa: F401
 from app.features.documents import models as _documents_models  # noqa: F401
+from app.features.projects import models as _projects_models  # noqa: F401
 
 __all__: list[str] = []

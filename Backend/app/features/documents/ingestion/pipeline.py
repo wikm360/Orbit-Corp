@@ -92,6 +92,7 @@ async def run_ingestion_pipeline(document_id: uuid.UUID, file_path: str) -> None
                 await step.run(context)
             document = await db.get(Document, document_id)
             document.status = DocumentStatus.READY
+            document.embedding_model = get_settings().embedding_model
             await db.commit()
         except Exception as exc:  # noqa: BLE001 - persisted as failure state, then re-raised for RQ/logs
             await db.rollback()

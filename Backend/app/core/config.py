@@ -1,6 +1,9 @@
+import json
 from functools import lru_cache
+from typing import Annotated, Union
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -15,7 +18,30 @@ class Settings(BaseSettings):
     api_prefix: str = "/api/v1"
 
     # CORS
-    cors_origins: list[str] = ["http://localhost:3000"]
+    # `NoDecode` stops pydantic-settings from JSON-decoding this env var
+    # itself before our validator runs — without it, any value that isn't
+    # valid JSON (e.g. a plain "http://localhost:3000" or a comma-separated
+    # list) crashes at startup instead of reaching `_parse_str_list` below.
+    cors_origins: Annotated[list[str], NoDecode] = [
+        "http://localhost:3000",
+        "http://185.58.243.123:3000",
+        "http://185.58.243.123",
+    ]
+
+    @field_validator("cors_origins", "llm_strip_content_tags", mode="before")
+    @classmethod
+    def _parse_str_list(cls, v: Union[str, list[str]]) -> list[str]:
+        if isinstance(v, str):
+            v = v.strip()
+            if not v:
+                return []
+            if v.startswith("[") and v.endswith("]"):
+                try:
+                    return json.loads(v)
+                except Exception:
+                    pass
+            return [i.strip() for i in v.split(",") if i.strip()]
+        return v
 
     # Database
     database_url: str = (
@@ -29,7 +55,10 @@ class Settings(BaseSettings):
     # Auth
     jwt_secret_key: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
-    access_token_expire_minutes: int = 60 * 24
+    # Short-lived: a leaked access token stops working on its own soon.
+    access_token_expire_minutes: int = 30
+    # Long-lived: refreshed silently by the client, rotated on every use.
+    refresh_token_expire_days: int = 30
 
     # File storage
     upload_dir: str = "./data/uploads"
@@ -52,7 +81,7 @@ class Settings(BaseSettings):
     # Belt-and-suspenders for the same issue: `enable_thinking` isn't always
     # honored, so these tag names (without angle brackets) are stripped out
     # of the streamed content client-side, block and all. Empty by default.
-    llm_strip_content_tags: list[str] = []
+    llm_strip_content_tags: Annotated[list[str], NoDecode] = []
 
     # Chunking
     chunk_size_tokens: int = 500
@@ -61,6 +90,10 @@ class Settings(BaseSettings):
     # Retrieval
     retrieval_top_k: int = 5
     retrieval_score_threshold: float = 0.3
+
+    # Group chat: prefix that triggers an AI reply in a project group chat
+    # (case-insensitive). Personal chats always reply, no trigger needed.
+    ai_trigger_token: str = "@bot"
 
 
 @lru_cache

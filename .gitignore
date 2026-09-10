@@ -1,5 +1,4 @@
-# Env
-.env
+.env*
 
 # Python
 __pycache__/
@@ -21,3 +20,4 @@ Backend/data/uploads/*
 # Editors / OS
 .DS_Store
 .vscode/
+system Admin CEO Leader.txt

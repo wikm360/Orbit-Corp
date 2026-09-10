@@ -1,10 +1,10 @@
+import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import UserContext
 from app.features.documents.models import Document, DocumentChunk
 from app.features.retrieval.access_filter import accessible_documents_filter
 
@@ -31,7 +31,8 @@ class Retriever(ABC):
     async def retrieve(
         self,
         db: AsyncSession,
-        context: UserContext,
+        project_id: uuid.UUID | None,
+        conversation_id: uuid.UUID,
         query_embedding: list[float],
         top_k: int,
     ) -> list[RetrievedChunk]:
@@ -44,7 +45,8 @@ class VectorRetriever(Retriever):
     async def retrieve(
         self,
         db: AsyncSession,
-        context: UserContext,
+        project_id: uuid.UUID | None,
+        conversation_id: uuid.UUID,
         query_embedding: list[float],
         top_k: int,
     ) -> list[RetrievedChunk]:
@@ -56,7 +58,7 @@ class VectorRetriever(Retriever):
                 distance.label("distance"),
             )
             .join(Document, Document.id == DocumentChunk.document_id)
-            .where(accessible_documents_filter(context))
+            .where(accessible_documents_filter(project_id, conversation_id))
             .order_by(distance)
             .limit(top_k)
         )

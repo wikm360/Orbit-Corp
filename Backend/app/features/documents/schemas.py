@@ -14,7 +14,8 @@ class DocumentRead(BaseModel):
     content_type: str
     status: DocumentStatus
     error_message: str | None
-    team_id: uuid.UUID
+    project_id: uuid.UUID | None
+    conversation_id: uuid.UUID | None
     uploaded_by: uuid.UUID | None
     created_at: datetime
 
@@ -22,12 +23,3 @@ class DocumentRead(BaseModel):
 class DocumentUploadResponse(BaseModel):
     document: DocumentRead
     message: str = "Document accepted for processing"
-
-
-class TeamOption(BaseModel):
-    """Minimal team shape used to populate the upload form's team picker."""
-
-    model_config = ConfigDict(from_attributes=True)
-
-    id: uuid.UUID
-    name: str

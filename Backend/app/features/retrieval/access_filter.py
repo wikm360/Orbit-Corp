@@ -1,23 +1,22 @@
-from sqlalchemy import ColumnElement, or_, select
+import uuid
 
-from app.core.dependencies import UserContext
-from app.features.access_control.models import DocumentPermission
+from sqlalchemy import ColumnElement, or_
+
 from app.features.documents.models import Document, DocumentStatus
 
 
-def accessible_documents_filter(context: UserContext) -> ColumnElement[bool]:
-    """SQLAlchemy filter expression: only documents the user's teams may see.
+def accessible_documents_filter(
+    project_id: uuid.UUID | None, conversation_id: uuid.UUID
+) -> ColumnElement[bool]:
+    """SQLAlchemy filter expression: only documents visible from the current chat.
 
     Applied directly inside the pgvector similarity query (not as a
     post-filter on already-fetched rows), so access control is enforced at
-    the database level and never leaks chunk content through pagination.
+    the database level. Scope is always the current conversation's own
+    ad hoc uploads, plus (for project group chats, or personal chats with a
+    project linked) that project's shared knowledge base.
     """
-    shared_document_ids = select(DocumentPermission.document_id).where(
-        DocumentPermission.team_id.in_(context.team_ids)
-    )
-    return (
-        Document.status == DocumentStatus.READY
-    ) & or_(
-        Document.team_id.in_(context.team_ids),
-        Document.id.in_(shared_document_ids),
-    )
+    conditions = [Document.conversation_id == conversation_id]
+    if project_id is not None:
+        conditions.append(Document.project_id == project_id)
+    return (Document.status == DocumentStatus.READY) & or_(*conditions)
