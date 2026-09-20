@@ -39,12 +39,11 @@ settings = get_settings()
 async def chat(
     payload: ChatRequest,
     context: UserContext = Depends(get_current_user_context),
-    db: AsyncSession = Depends(get_db),
 ):
     """Personal AI chat: creates/continues a private conversation and streams
     the assistant's answer over SSE."""
     return StreamingResponse(
-        service.stream_chat_response(db, context, payload.conversation_id, payload.message),
+        service.stream_chat_response(context, payload.conversation_id, payload.message),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

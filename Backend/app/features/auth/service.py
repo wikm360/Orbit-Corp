@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, UnauthorizedError
@@ -16,12 +16,19 @@ from app.features.auth.models import RefreshToken, User, UserRole
 from app.features.auth.schemas import TokenResponse, UserLogin, UserRegister
 
 
+_REGISTRATION_LOCK_KEY = 7_204_001
+
+
 async def get_user_by_email(db: AsyncSession, email: str) -> User | None:
     result = await db.execute(select(User).where(User.email == email))
     return result.scalar_one_or_none()
 
 
 async def register_user(db: AsyncSession, payload: UserRegister) -> TokenResponse:
+    # Serialize registrations so two simultaneous sign-ups on an empty
+    # database can't both see "no users yet" and both become super admin.
+    # Transaction-scoped: released by the commit below.
+    await db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": _REGISTRATION_LOCK_KEY})
     existing = await get_user_by_email(db, payload.email)
     if existing is not None:
         raise ConflictError("A user with this email already exists")
@@ -56,23 +63,29 @@ async def refresh_tokens(db: AsyncSession, raw_refresh_token: str) -> TokenRespo
     token — and rotates the refresh token itself (old one revoked, new one
     issued), so a reused/stolen token is detectable: it'll already show as
     revoked the moment the real owner's client refreshes next."""
-    result = await db.execute(
-        select(RefreshToken).where(RefreshToken.token_hash == hash_token(raw_refresh_token))
+    now = datetime.now(timezone.utc)
+    # Atomic claim: only one concurrent request can flip revoked_at from NULL,
+    # so a token can never be exchanged twice.
+    claimed = await db.execute(
+        update(RefreshToken)
+        .where(
+            RefreshToken.token_hash == hash_token(raw_refresh_token),
+            RefreshToken.revoked_at.is_(None),
+            RefreshToken.expires_at > now,
+        )
+        .values(revoked_at=now)
+        .returning(RefreshToken.user_id)
     )
-    stored = result.scalar_one_or_none()
-
-    if (
-        stored is None
-        or stored.revoked_at is not None
-        or stored.expires_at < datetime.now(timezone.utc)
-    ):
+    user_id = claimed.scalar_one_or_none()
+    if user_id is None:
+        await db.rollback()
         raise UnauthorizedError("Invalid or expired refresh token")
 
-    user = await db.get(User, stored.user_id)
+    user = await db.get(User, user_id)
     if user is None:
+        await db.rollback()
         raise UnauthorizedError("Invalid or expired refresh token")
 
-    stored.revoked_at = datetime.now(timezone.utc)
     await db.commit()
 
     return await _issue_tokens(db, user)

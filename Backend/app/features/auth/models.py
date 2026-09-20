@@ -37,7 +37,9 @@ class User(Base):
     )
 
     team_memberships: Mapped[list["TeamMembership"]] = relationship(
-        back_populates="user", cascade="all, delete-orphan"
+        back_populates="user",
+        cascade="all, delete-orphan",
+        foreign_keys="TeamMembership.user_id",
     )
 
 

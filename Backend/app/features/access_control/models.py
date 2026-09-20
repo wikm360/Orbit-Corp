@@ -69,5 +69,7 @@ class TeamMembership(Base):
         DateTime(timezone=True), server_default=func.now()
     )
 
-    user: Mapped["User"] = relationship(back_populates="team_memberships")  # noqa: F821
+    user: Mapped["User"] = relationship(  # noqa: F821
+        back_populates="team_memberships", foreign_keys=[user_id]
+    )
     team: Mapped["Team"] = relationship(back_populates="memberships")

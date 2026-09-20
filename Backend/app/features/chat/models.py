@@ -10,7 +10,8 @@ from app.core.database import Base
 
 
 class ConversationType(str, enum.Enum):
-    #: Owned by a single user; only they can see or post in it. Every message
+    #: Owned by a single user; only they (and org admins, who can see every
+    #: conversation) can view or post in it. Every message
     #: goes to the AI (no @-trigger needed). May optionally read from one
     #: project's knowledge base via `linked_project_id`.
     PERSONAL = "personal"
@@ -59,7 +60,7 @@ class Conversation(Base):
     messages: Mapped[list["Message"]] = relationship(
         back_populates="conversation",
         cascade="all, delete-orphan",
-        order_by="Message.created_at",
+        order_by="Message.created_at, Message.id",
     )
 
 

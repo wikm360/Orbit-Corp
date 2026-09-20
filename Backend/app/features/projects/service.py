@@ -1,9 +1,10 @@
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
+from app.features.access_control.models import TeamMembership
 from app.features.access_control.service import is_team_member
 from app.features.auth.models import User
 from app.features.projects.models import Project, ProjectMembership
@@ -27,6 +28,10 @@ async def list_user_projects(db: AsyncSession, user_id: uuid.UUID) -> list[Proje
     result = await db.execute(
         select(Project)
         .join(ProjectMembership, ProjectMembership.project_id == Project.id)
+        .join(
+            TeamMembership,
+            and_(TeamMembership.team_id == Project.team_id, TeamMembership.user_id == user_id),
+        )
         .where(ProjectMembership.user_id == user_id)
         .order_by(Project.name)
     )
@@ -34,8 +39,16 @@ async def list_user_projects(db: AsyncSession, user_id: uuid.UUID) -> list[Proje
 
 
 async def get_user_project_ids(db: AsyncSession, user_id: uuid.UUID) -> list[uuid.UUID]:
+    # Joined against team membership so a stale project membership can never
+    # outlive the user's place in the project's team.
     result = await db.execute(
-        select(ProjectMembership.project_id).where(ProjectMembership.user_id == user_id)
+        select(ProjectMembership.project_id)
+        .join(Project, Project.id == ProjectMembership.project_id)
+        .join(
+            TeamMembership,
+            and_(TeamMembership.team_id == Project.team_id, TeamMembership.user_id == user_id),
+        )
+        .where(ProjectMembership.user_id == user_id)
     )
     return [row[0] for row in result.all()]
 

@@ -26,31 +26,53 @@ class ConnectionManager:
         self._redis = aioredis.from_url(settings.redis_url, decode_responses=True)
         self._connections: dict[uuid.UUID, set] = {}
         self._listeners: dict[uuid.UUID, asyncio.Task] = {}
+        self._subscribed: dict[uuid.UUID, asyncio.Event] = {}
 
     async def connect(self, conversation_id: uuid.UUID, websocket) -> None:
-        await websocket.accept()
+        # Subscribe to Redis *before* accepting: once the client sees the
+        # socket open it may assume nothing published from then on is missed.
+        await self._ensure_listener(conversation_id)
+        try:
+            await websocket.accept()
+        except BaseException:
+            self._stop_listener_if_idle(conversation_id)
+            raise
         self._connections.setdefault(conversation_id, set()).add(websocket)
-        if conversation_id not in self._listeners:
-            self._listeners[conversation_id] = asyncio.create_task(self._listen(conversation_id))
 
     async def disconnect(self, conversation_id: uuid.UUID, websocket) -> None:
         conns = self._connections.get(conversation_id)
-        if conns is None:
-            return
-        conns.discard(websocket)
-        if not conns:
-            self._connections.pop(conversation_id, None)
-            task = self._listeners.pop(conversation_id, None)
-            if task is not None:
-                task.cancel()
+        if conns is not None:
+            conns.discard(websocket)
+            if not conns:
+                self._connections.pop(conversation_id, None)
+        self._stop_listener_if_idle(conversation_id)
 
     async def broadcast(self, conversation_id: uuid.UUID, event: dict) -> None:
         await self._redis.publish(_channel(conversation_id), json.dumps(event, default=str))
 
-    async def _listen(self, conversation_id: uuid.UUID) -> None:
+    async def _ensure_listener(self, conversation_id: uuid.UUID) -> None:
+        task = self._listeners.get(conversation_id)
+        if task is None or task.done():
+            ready = asyncio.Event()
+            self._subscribed[conversation_id] = ready
+            self._listeners[conversation_id] = asyncio.create_task(
+                self._listen(conversation_id, ready)
+            )
+        await self._subscribed[conversation_id].wait()
+
+    def _stop_listener_if_idle(self, conversation_id: uuid.UUID) -> None:
+        if self._connections.get(conversation_id):
+            return
+        task = self._listeners.pop(conversation_id, None)
+        self._subscribed.pop(conversation_id, None)
+        if task is not None:
+            task.cancel()
+
+    async def _listen(self, conversation_id: uuid.UUID, ready: asyncio.Event) -> None:
         pubsub = self._redis.pubsub()
-        await pubsub.subscribe(_channel(conversation_id))
         try:
+            await pubsub.subscribe(_channel(conversation_id))
+            ready.set()
             async for message in pubsub.listen():
                 if message["type"] != "message":
                     continue
@@ -60,6 +82,8 @@ class ConnectionManager:
                     except Exception:
                         pass
         finally:
+            # Unblock any connect() still waiting if subscribing itself failed.
+            ready.set()
             await pubsub.unsubscribe(_channel(conversation_id))
             await pubsub.close()
 

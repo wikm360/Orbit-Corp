@@ -1,11 +1,12 @@
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, NotFoundError
 from app.features.access_control.models import Team, TeamMembership, TeamRole
 from app.features.auth.models import User
+from app.features.projects.models import Project, ProjectMembership
 
 
 async def get_user_team_roles(db: AsyncSession, user_id: uuid.UUID) -> dict[uuid.UUID, TeamRole]:
@@ -117,4 +118,12 @@ async def remove_user_from_team(db: AsyncSession, user_id: uuid.UUID, team_id: u
     if membership is None:
         raise NotFoundError("Membership not found")
     await db.delete(membership)
+    # Project access is only ever granted to team members, so leaving the team
+    # must also drop the user's access to that team's projects.
+    await db.execute(
+        delete(ProjectMembership).where(
+            ProjectMembership.user_id == user_id,
+            ProjectMembership.project_id.in_(select(Project.id).where(Project.team_id == team_id)),
+        )
+    )
     await db.commit()

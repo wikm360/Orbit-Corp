@@ -16,6 +16,8 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
+          # اگر هر مرحله (مثلاً migration) شکست بخورد، deploy همان‌جا متوقف می‌شود
+          script_stop: true
           script: |
             # لود کردن متغیرهای محیطی در صورت استفاده از NVM
             export NVM_DIR="$HOME/.nvm"
@@ -25,6 +27,11 @@ jobs:
 
             # دریافت آخرین تغییرات کد
             git pull origin main
+
+            # بک‌اند: اول migration دیتابیس، بعد بیلد و ساخت مجدد بک‌اند و worker
+            docker compose --profile app up -d --wait postgres redis
+            docker compose --profile app run --rm --no-deps backend alembic upgrade head
+            docker compose --profile app up -d --build --force-recreate backend worker
 
             # ورود به پوشه فرانت، نصب پکیج‌ها و بیلد مجدد
             cd Frontend

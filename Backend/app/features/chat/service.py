@@ -5,10 +5,11 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+from app.core.database import async_session_factory
 from app.core.dependencies import UserContext
 from app.core.exceptions import BadRequestError, ForbiddenError
 from app.features.auth.models import User
@@ -171,8 +172,12 @@ async def list_messages_after(
     if after is not None:
         anchor = await db.get(Message, after)
         if anchor is not None:
-            stmt = stmt.where(Message.created_at > anchor.created_at)
-    result = await db.execute(stmt.order_by(Message.created_at))
+            # (created_at, id) is a total order: messages sharing a timestamp
+            # are neither skipped nor repeated across catch-up fetches.
+            stmt = stmt.where(
+                tuple_(Message.created_at, Message.id) > tuple_(anchor.created_at, anchor.id)
+            )
+    result = await db.execute(stmt.order_by(Message.created_at, Message.id))
     return list(result.scalars().all())
 
 
@@ -263,13 +268,28 @@ def _sse_event(event: str, data: dict) -> str:
 
 
 async def stream_chat_response(
-    db: AsyncSession,
     context: UserContext,
     conversation_id: uuid.UUID | None,
     user_message: str,
 ) -> AsyncIterator[str]:
     """Runs the retrieval tool, streams the LLM's answer as SSE, then persists
-    the user + assistant messages once the stream completes."""
+    the user + assistant messages once the stream completes.
+
+    Owns its DB session: FastAPI (< 0.118) closes request-scoped `yield`
+    dependencies before a StreamingResponse body starts iterating, so a
+    session injected into the endpoint would already be closed here.
+    """
+    async with async_session_factory() as db:
+        async for event in _stream_chat_events(db, context, conversation_id, user_message):
+            yield event
+
+
+async def _stream_chat_events(
+    db: AsyncSession,
+    context: UserContext,
+    conversation_id: uuid.UUID | None,
+    user_message: str,
+) -> AsyncIterator[str]:
     conversation = await get_or_create_personal_conversation(db, context, conversation_id, user_message)
 
     db.add(
@@ -359,8 +379,6 @@ async def _generate_group_ai_reply(
 ) -> None:
     # Runs detached from the request that triggered it, so it needs its own
     # DB session rather than reusing the (by-then-closed) request session.
-    from app.core.database import async_session_factory
-
     async with async_session_factory() as db:
         conversation = await db.get(Conversation, conversation_id)
         if conversation is None:

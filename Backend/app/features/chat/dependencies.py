@@ -15,8 +15,8 @@ async def require_conversation_access(
     context: UserContext = Depends(get_current_user_context),
     db: AsyncSession = Depends(get_db),
 ) -> Conversation:
-    """A personal conversation's owner, any member of a group chat's project,
-    that project's team leader(s), or an org admin."""
+    """An org admin (sees every conversation), a personal conversation's owner,
+    any member of a group chat's project, or that project's team leader(s)."""
     conversation = await db.get(Conversation, conversation_id)
     if conversation is None:
         raise NotFoundError("Conversation not found")

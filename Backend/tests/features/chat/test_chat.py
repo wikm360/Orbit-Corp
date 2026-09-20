@@ -1,30 +1,3 @@
-from collections.abc import AsyncIterator
-
-import pytest
-
-from app.core.config import get_settings
-from app.features.chat import service as chat_service
-from app.providers.llm_provider import ChatMessage
-
-
-class _StubLLMProvider:
-    async def stream_chat(self, messages: list[ChatMessage]) -> AsyncIterator[str]:
-        for token in ["Hello", ", ", "world!"]:
-            yield token
-
-
-class _StubEmbeddingProvider:
-    async def embed(self, texts: list[str]) -> list[list[float]]:
-        dim = get_settings().embedding_dimensions
-        return [[0.0] * dim for _ in texts]
-
-
-@pytest.fixture(autouse=True)
-def _stub_providers(monkeypatch):
-    monkeypatch.setattr(chat_service, "get_llm_provider", lambda: _StubLLMProvider())
-    monkeypatch.setattr(chat_service, "get_embedding_provider", lambda: _StubEmbeddingProvider())
-
-
 async def _register(client, email: str) -> str:
     register = await client.post(
         "/api/v1/auth/register", json={"email": email, "password": "supersecret"}
