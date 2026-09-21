@@ -72,9 +72,11 @@ services:
       context: ./Frontend
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api/v1}
+        NEXT_PUBLIC_AI_TRIGGER_TOKEN: ${AI_TRIGGER_TOKEN:-@bot}
     env_file: .env
     environment:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api/v1}
+      NEXT_PUBLIC_AI_TRIGGER_TOKEN: ${AI_TRIGGER_TOKEN:-@bot}
     ports:
       - "3000:3000"
     depends_on:

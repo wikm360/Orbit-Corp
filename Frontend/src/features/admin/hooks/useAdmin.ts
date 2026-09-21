@@ -1,106 +1,61 @@
 import { useCallback, useEffect, useState } from "react";
-
 import { Document } from "@/features/documents/types";
 import { friendlyErrorMessage } from "@/shared/lib/errorMessages";
-
+import { Team, TeamMembership, User, UserRole } from "@/shared/types";
 import { adminApi } from "../api/adminApi";
-import { Team, UserWithTeams } from "../types";
 
 export function useAdmin() {
-  const [users, setUsers] = useState<UserWithTeams[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
+  const [memberships, setMemberships] = useState<Record<string, TeamMembership[]>>({});
   const [documents, setDocuments] = useState<Document[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isMutating, setIsMutating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
 
-  const refresh = useCallback(async (showLoading = true) => {
-    if (showLoading) setIsLoading(true);
+  const refresh = useCallback(async () => {
+    setIsLoading(true);
     try {
       const [usersData, teamsData, documentsData] = await Promise.all([
-        adminApi.listUsers(),
-        adminApi.listTeams(),
-        adminApi.listAllDocuments(),
+        adminApi.listUsers(), adminApi.listTeams(), adminApi.listAllDocuments(),
       ]);
+      const memberLists = await Promise.all(teamsData.map((team) => adminApi.teamMembers(team.id)));
       setUsers(usersData);
       setTeams(teamsData);
       setDocuments(documentsData);
+      setMemberships(Object.fromEntries(teamsData.map((team, index) => [team.id, memberLists[index] ?? []])));
       setError(null);
     } catch (err) {
       setError(friendlyErrorMessage(err, "دریافت اطلاعات پنل مدیریت ناموفق بود."));
     } finally {
-      if (showLoading) setIsLoading(false);
+      setIsLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    Promise.all([adminApi.listUsers(), adminApi.listTeams(), adminApi.listAllDocuments()])
-      .then(([usersData, teamsData, documentsData]) => {
-        if (cancelled) return;
-        setUsers(usersData);
-        setTeams(teamsData);
-        setDocuments(documentsData);
-        setError(null);
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setError(friendlyErrorMessage(err, "دریافت اطلاعات پنل مدیریت ناموفق بود."));
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setIsLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    const timer = window.setTimeout(() => void refresh(), 0);
+    return () => window.clearTimeout(timer);
+  }, [refresh]);
 
-  const createTeam = useCallback(
-    async (name: string) => {
-      setIsMutating(true);
-      setActionError(null);
-      try {
-        await adminApi.createTeam(name);
-        await refresh(false);
-      } catch (err) {
-        setActionError(friendlyErrorMessage(err, "ایجاد تیم ناموفق بود."));
-        throw err;
-      } finally {
-        setIsMutating(false);
-      }
-    },
-    [refresh]
-  );
-
-  const assignUserToTeam = useCallback(
-    async (userId: string, teamId: string) => {
-      setIsMutating(true);
-      setActionError(null);
-      try {
-        await adminApi.assignUserToTeam(userId, teamId);
-        await refresh(false);
-      } catch (err) {
-        setActionError(friendlyErrorMessage(err, "افزودن کاربر به تیم ناموفق بود."));
-        throw err;
-      } finally {
-        setIsMutating(false);
-      }
-    },
-    [refresh]
-  );
+  const mutate = useCallback(async (action: () => Promise<unknown>) => {
+    setIsMutating(true);
+    setError(null);
+    try {
+      await action();
+      await refresh();
+    } catch (err) {
+      setError(friendlyErrorMessage(err, "عملیات ناموفق بود."));
+      throw err;
+    } finally {
+      setIsMutating(false);
+    }
+  }, [refresh]);
 
   return {
-    users,
-    teams,
-    documents,
-    isLoading,
-    isMutating,
-    error,
-    actionError,
-    refresh,
-    createTeam,
-    assignUserToTeam,
+    users, teams, memberships, documents, isLoading, isMutating, error, refresh,
+    createTeam: (name: string, description?: string) => mutate(() => adminApi.createTeam(name, description)),
+    assignUserToTeam: (userId: string, teamId: string, role: "leader" | "member") => mutate(() => adminApi.assignUserToTeam(teamId, userId, role)),
+    removeUserFromTeam: (userId: string, teamId: string) => mutate(() => adminApi.removeUserFromTeam(teamId, userId)),
+    setUserRole: (userId: string, role: UserRole) => mutate(() => adminApi.setUserRole(userId, role)),
   };
 }

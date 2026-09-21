@@ -1,81 +1,67 @@
-import { useCallback, useEffect, useState } from "react";
-
+import { useCallback, useEffect, useRef, useState } from "react";
 import { friendlyErrorMessage } from "@/shared/lib/errorMessages";
-
 import { documentsApi } from "../api/documentsApi";
 import { Document } from "../types";
 
-export function useDocuments() {
-  const [documents, setDocuments] = useState<Document[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+export function useDocuments(projectId: string | null) {
+  const [result, setResult] = useState<{ projectId: string; documents: Document[] } | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const requestIdRef = useRef(0);
+  const documents = result?.projectId === projectId ? result.documents : [];
 
   const refresh = useCallback(async () => {
+    if (!projectId) {
+      requestIdRef.current += 1;
+      return;
+    }
+    const requestId = ++requestIdRef.current;
     setIsLoading(true);
     try {
-      setDocuments(await documentsApi.list());
-      setError(null);
+      const items = await documentsApi.list(projectId);
+      if (requestId === requestIdRef.current) {
+        setResult({ projectId, documents: items });
+        setError(null);
+      }
     } catch (err) {
-      setError(friendlyErrorMessage(err, "دریافت فهرست اسناد ناموفق بود."));
+      if (requestId === requestIdRef.current) setError(friendlyErrorMessage(err, "دریافت فهرست اسناد ناموفق بود."));
     } finally {
-      setIsLoading(false);
+      if (requestId === requestIdRef.current) setIsLoading(false);
     }
-  }, []);
+  }, [projectId]);
 
   useEffect(() => {
-    let cancelled = false;
-    documentsApi
-      .list()
-      .then((items) => {
-        if (!cancelled) {
-          setDocuments(items);
-          setError(null);
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setError(friendlyErrorMessage(err, "دریافت فهرست اسناد ناموفق بود."));
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setIsLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    const timer = window.setTimeout(() => void refresh(), 0);
+    return () => window.clearTimeout(timer);
+  }, [refresh]);
 
-  const upload = useCallback(
-    async (teamId: string, file: File) => {
-      setError(null);
-      try {
-        await documentsApi.upload(teamId, file);
-        await refresh();
-      } catch (err) {
-        setError(friendlyErrorMessage(err, "آپلود سند ناموفق بود."));
-        throw err;
-      }
-    },
-    [refresh]
-  );
+  const upload = useCallback(async (file: File) => {
+    if (!projectId) return;
+    setError(null);
+    try {
+      await documentsApi.upload(projectId, file);
+      await refresh();
+    } catch (err) {
+      setError(friendlyErrorMessage(err, "آپلود سند ناموفق بود."));
+      throw err;
+    }
+  }, [projectId, refresh]);
 
-  const remove = useCallback(
-    async (documentId: string) => {
-      setDeletingId(documentId);
-      setError(null);
-      try {
-        await documentsApi.remove(documentId);
-        setDocuments((current) => current.filter((document) => document.id !== documentId));
-      } catch (err) {
-        setError(friendlyErrorMessage(err, "حذف سند ناموفق بود."));
-        throw err;
-      } finally {
-        setDeletingId(null);
-      }
-    },
-    []
-  );
+  const remove = useCallback(async (documentId: string) => {
+    if (!projectId) return;
+    setDeletingId(documentId);
+    setError(null);
+    try {
+      await documentsApi.remove(projectId, documentId);
+      setResult((current) => current?.projectId === projectId ? { projectId, documents: current.documents.filter((document) => document.id !== documentId) } : current);
+    } catch (err) {
+      setError(friendlyErrorMessage(err, "حذف سند ناموفق بود."));
+      throw err;
+    } finally {
+      setDeletingId(null);
+    }
+  }, [projectId]);
 
   return { documents, isLoading, error, deletingId, refresh, upload, remove };
 }

@@ -8,9 +8,10 @@ interface DocumentListProps {
   documents: Document[];
   onDelete: (id: string) => void;
   deletingId?: string | null;
+  canDelete?: boolean;
 }
 
-export function DocumentList({ documents, onDelete, deletingId }: DocumentListProps) {
+export function DocumentList({ documents, onDelete, deletingId, canDelete = false }: DocumentListProps) {
   if (documents.length === 0) {
     return <p className="text-sm text-gray-400">هنوز سندی آپلود نشده است.</p>;
   }
@@ -40,6 +41,7 @@ export function DocumentList({ documents, onDelete, deletingId }: DocumentListPr
             </td>
             <td className="whitespace-nowrap py-3 text-gray-500">{formatDate(doc.created_at)}</td>
             <td className="py-3">
+              {canDelete && (
               <Button
                 variant="ghost"
                 size="sm"
@@ -50,6 +52,7 @@ export function DocumentList({ documents, onDelete, deletingId }: DocumentListPr
               >
                 حذف
               </Button>
+              )}
             </td>
           </tr>
         ))}

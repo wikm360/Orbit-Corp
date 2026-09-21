@@ -6,12 +6,8 @@ export interface Document {
   content_type: string;
   status: DocumentStatus;
   error_message: string | null;
-  team_id: string;
+  project_id: string | null;
+  conversation_id: string | null;
   uploaded_by: string | null;
   created_at: string;
-}
-
-export interface TeamOption {
-  id: string;
-  name: string;
 }

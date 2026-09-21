@@ -69,7 +69,7 @@ export function LoginScreen() {
               password,
               full_name: fullName.trim() || undefined,
             });
-      setSession(response.access_token, response.user);
+      setSession(response.access_token, response.refresh_token, response.user);
       router.push("/chat");
     } catch (err) {
       setError(authErrorMessage(err, mode));

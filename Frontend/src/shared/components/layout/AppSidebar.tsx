@@ -16,6 +16,7 @@ type IconName =
   | "chat"
   | "search"
   | "document"
+  | "workspace"
   | "admin"
   | "logout"
   | "close";
@@ -26,6 +27,7 @@ const paths: Record<IconName, React.ReactNode> = {
   chat: <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/>,
   search: <><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></>,
   document: <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h6"/></>,
+  workspace: <><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 9v12"/></>,
   admin: <><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></>,
   logout: <><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></>,
   close: <path d="m18 6-12 12M6 6l12 12"/>,
@@ -51,6 +53,7 @@ function Icon({ name, className }: { name: IconName; className?: string }) {
 const NAV_ITEMS = [
   { href: "/chat", label: "دستیار", icon: "chat" as const },
   { href: "/documents", label: "اسناد", icon: "document" as const },
+  { href: "/workspace", label: "فضای کاری", icon: "workspace" as const },
   { href: "/admin", label: "مدیریت", icon: "admin" as const, adminOnly: true },
 ];
 
@@ -167,7 +170,7 @@ export function AppSidebar({
       </button>
 
       <nav aria-label="ناوبری اصلی" className="mt-1 space-y-0.5">
-        {NAV_ITEMS.filter((item) => !item.adminOnly || user?.role === "admin").map((item) => {
+        {NAV_ITEMS.filter((item) => !item.adminOnly || user?.role === "admin" || user?.role === "super_admin").map((item) => {
           const isActive = pathname.startsWith(item.href);
           return (
             <Link
@@ -224,7 +227,7 @@ export function AppSidebar({
                     conversation.id === activeConversationId && "bg-black/[0.065] font-medium text-gray-950"
                   )}
                 >
-                  {conversation.title}
+                  {conversation.type === "project_group" ? "👥 " : ""}{conversation.title}
                 </button>
               ))}
             </div>
@@ -242,7 +245,7 @@ export function AppSidebar({
           <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gray-900 text-xs font-semibold text-white">{avatarLetter}</span>
           <div className={cn("min-w-0 flex-1", isCollapsed && "md:hidden")}>
             <p className="truncate text-xs font-semibold text-gray-900">{userLabel}</p>
-            <p className="mt-0.5 truncate text-[10px] text-gray-500">{user?.role === "admin" ? "مدیر سازمان" : "عضو سازمان"}</p>
+            <p className="mt-0.5 truncate text-[10px] text-gray-500">{user?.role === "super_admin" ? "مدیر ارشد سازمان" : user?.role === "admin" ? "مدیر سازمان" : "عضو سازمان"}</p>
           </div>
           <button
             type="button"

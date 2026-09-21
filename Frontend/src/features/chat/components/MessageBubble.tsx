@@ -6,16 +6,21 @@ import { SourceCitationList } from "./SourceCitation";
 export function MessageBubble({
   message,
   isPending = false,
+  senderName,
+  replyPreview,
 }: {
   message: ChatMessage;
   isPending?: boolean;
+  senderName?: string;
+  replyPreview?: string;
 }) {
-  const isUser = message.role === "user";
+  const isUser = message.sender_type === "user";
 
   if (isUser) {
     return (
       <div className="flex justify-start py-2">
         <div className="max-w-[88%] rounded-3xl rounded-br-lg bg-[#f4f4f4] px-4 py-2.5 text-[15px] leading-7 text-gray-900 sm:max-w-[75%]">
+          {senderName && <p className="text-xs font-semibold text-brand-700">{senderName}</p>}
           <p className="whitespace-pre-wrap break-words">{message.content}</p>
         </div>
       </div>
@@ -30,6 +35,7 @@ export function MessageBubble({
         </svg>
       </div>
       <div className="min-w-0 flex-1 pt-0.5 text-[15px] leading-8 text-gray-900">
+          {replyPreview && <p className="mb-2 border-r-2 border-brand-200 pr-2 text-xs leading-5 text-gray-500">در پاسخ به: {replyPreview}</p>}
           {message.content ? (
             <Markdown content={message.content} />
           ) : isPending ? (

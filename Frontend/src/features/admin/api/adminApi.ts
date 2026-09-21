@@ -1,17 +1,17 @@
 import { apiRequest } from "@/shared/lib/apiClient";
 import { Document } from "@/features/documents/types";
-
-import { Team, UserWithTeams } from "../types";
+import { User } from "@/shared/types";
+import { workspaceApi } from "@/shared/lib/workspaceApi";
 
 export const adminApi = {
-  listUsers: () => apiRequest<UserWithTeams[]>("/admin/users"),
-  listTeams: () => apiRequest<Team[]>("/admin/teams"),
-  createTeam: (name: string) =>
-    apiRequest<Team>("/admin/teams", { method: "POST", body: { name } }),
-  assignUserToTeam: (userId: string, teamId: string) =>
-    apiRequest<void>("/admin/team-memberships", {
-      method: "POST",
-      body: { user_id: userId, team_id: teamId },
-    }),
+  listUsers: workspaceApi.users,
+  listTeams: workspaceApi.allTeams,
+  createTeam: workspaceApi.createTeam,
+  teamMembers: workspaceApi.teamMembers,
+  assignUserToTeam: workspaceApi.addTeamMember,
+  removeUserFromTeam: workspaceApi.removeTeamMember,
+  setUserRole: workspaceApi.updateUserRole,
   listAllDocuments: () => apiRequest<Document[]>("/admin/documents"),
 };
+
+export type AdminUser = User;

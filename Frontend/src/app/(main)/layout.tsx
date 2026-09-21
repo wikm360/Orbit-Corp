@@ -6,7 +6,8 @@ import { useEffect, useState } from "react";
 
 import { useAuthStore } from "@/features/auth/hooks/useAuthStore";
 import { AppSidebar } from "@/shared/components/layout/AppSidebar";
-import { AUTH_UNAUTHORIZED_EVENT } from "@/shared/lib/apiClient";
+import { AUTH_REFRESHED_EVENT, AUTH_UNAUTHORIZED_EVENT } from "@/shared/lib/apiClient";
+import { TokenResponse } from "@/features/auth/types";
 
 export default function MainLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -21,12 +22,20 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
 
   useEffect(() => {
     const handleUnauthorized = () => logout();
+    const handleRefreshed = (event: Event) => {
+      const session = (event as CustomEvent<TokenResponse>).detail;
+      useAuthStore.getState().setSession(session.access_token, session.refresh_token, session.user);
+    };
     window.addEventListener(AUTH_UNAUTHORIZED_EVENT, handleUnauthorized);
-    return () => window.removeEventListener(AUTH_UNAUTHORIZED_EVENT, handleUnauthorized);
+    window.addEventListener(AUTH_REFRESHED_EVENT, handleRefreshed);
+    return () => {
+      window.removeEventListener(AUTH_UNAUTHORIZED_EVENT, handleUnauthorized);
+      window.removeEventListener(AUTH_REFRESHED_EVENT, handleRefreshed);
+    };
   }, [logout]);
 
   useEffect(() => {
-    if (hasHydrated && token && pathname.startsWith("/admin") && user?.role !== "admin") {
+    if (hasHydrated && token && pathname.startsWith("/admin") && user?.role !== "admin" && user?.role !== "super_admin") {
       router.replace("/chat");
     }
   }, [hasHydrated, pathname, router, token, user?.role]);
@@ -34,7 +43,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   if (
     !hasHydrated ||
     !token ||
-    (pathname.startsWith("/admin") && user?.role !== "admin")
+    (pathname.startsWith("/admin") && user?.role !== "admin" && user?.role !== "super_admin")
   ) {
     return (
       <div className="grid min-h-screen place-items-center bg-white text-sm text-gray-500">

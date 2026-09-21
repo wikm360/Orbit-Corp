@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
 import { User } from "@/shared/types";
+import { revokeSession } from "@/shared/lib/apiClient";
 
 interface AuthState {
   token: string | null;
@@ -12,7 +13,7 @@ interface AuthState {
    * initial state) and bounces an already-logged-in user out. */
   hasHydrated: boolean;
   setHasHydrated: (value: boolean) => void;
-  setSession: (token: string, user: User) => void;
+  setSession: (token: string, refreshToken: string, user: User) => void;
   logout: () => void;
 }
 
@@ -23,12 +24,15 @@ export const useAuthStore = create<AuthState>()(
       user: null,
       hasHydrated: false,
       setHasHydrated: (value) => set({ hasHydrated: value }),
-      setSession: (token, user) => {
+      setSession: (token, refreshToken, user) => {
         localStorage.setItem("auth_token", token);
+        localStorage.setItem("refresh_token", refreshToken);
         set({ token, user });
       },
       logout: () => {
+        void revokeSession();
         localStorage.removeItem("auth_token");
+        localStorage.removeItem("refresh_token");
         set({ token: null, user: null });
       },
     }),

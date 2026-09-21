@@ -1,22 +1,12 @@
 import { apiRequest } from "@/shared/lib/apiClient";
-
-import { Document, TeamOption } from "../types";
+import { Document } from "../types";
 
 export const documentsApi = {
-  list: () => apiRequest<Document[]>("/documents"),
-
-  myTeams: () => apiRequest<TeamOption[]>("/documents/teams/mine"),
-
-  upload: (teamId: string, file: File) => {
+  list: (projectId: string) => apiRequest<Document[]>(`/projects/${projectId}/documents`),
+  upload: (projectId: string, file: File) => {
     const formData = new FormData();
-    formData.append("team_id", teamId);
     formData.append("file", file);
-    return apiRequest<{ document: Document; message: string }>("/documents", {
-      method: "POST",
-      formData,
-    });
+    return apiRequest<{ document: Document; message: string }>(`/projects/${projectId}/documents`, { method: "POST", formData });
   },
-
-  remove: (documentId: string) =>
-    apiRequest<void>(`/documents/${documentId}`, { method: "DELETE" }),
+  remove: (projectId: string, documentId: string) => apiRequest<void>(`/projects/${projectId}/documents/${documentId}`, { method: "DELETE" }),
 };

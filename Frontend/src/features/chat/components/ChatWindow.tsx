@@ -10,9 +10,13 @@ interface ChatWindowProps {
   isLoadingConversation?: boolean;
   error: string | null;
   onSend: (text: string) => void;
+  senderNames?: Record<string, string>;
+  group?: boolean;
+  onUpload?: (file: File) => Promise<void>;
 }
 
 const MAX_TEXTAREA_HEIGHT_PX = 200;
+const AI_TRIGGER_TOKEN = process.env.NEXT_PUBLIC_AI_TRIGGER_TOKEN ?? "@bot";
 
 const SUGGESTIONS = [
   { title: "خلاصه قرارداد", text: "مهم‌ترین بندهای قرارداد را خلاصه کن" },
@@ -27,9 +31,15 @@ export function ChatWindow({
   isLoadingConversation = false,
   error,
   onSend,
+  senderNames = {},
+  group = false,
+  onUpload,
 }: ChatWindowProps) {
   const [draft, setDraft] = useState("");
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -84,9 +94,9 @@ export function ChatWindow({
                 چطور می‌توانم کمکتان کنم؟
               </h1>
               <p className="mx-auto mt-2 max-w-lg text-sm leading-7 text-gray-500">
-                درباره اسناد، قراردادها و دانش سازمان سؤال کنید؛ پاسخ‌ها با استناد به منابع در دسترس شما ارائه می‌شوند.
+                {group ? `با اعضای پروژه گفتگو کنید. برای درخواست پاسخ از دستیار، پیام را با ${AI_TRIGGER_TOKEN} شروع کنید.` : "درباره اسناد، قراردادها و دانش سازمان سؤال کنید؛ پاسخ‌ها با استناد به منابع در دسترس شما ارائه می‌شوند."}
               </p>
-              <div className="mt-8 grid gap-2 text-right sm:grid-cols-2">
+              {!group && <div className="mt-8 grid gap-2 text-right sm:grid-cols-2">
                 {SUGGESTIONS.map((suggestion) => (
                   <button
                     key={suggestion.title}
@@ -98,20 +108,22 @@ export function ChatWindow({
                     <span className="mt-0.5 block truncate text-xs text-gray-400 transition group-hover:text-gray-500">{suggestion.text}</span>
                   </button>
                 ))}
-              </div>
+              </div>}
             </div>
           ) : (
             messages.map((message, index) => (
               <MessageBubble
                 key={message.id}
                 message={message}
-                isPending={isStreaming && index === messages.length - 1}
+                isPending={message.id.startsWith("pending-") || (isStreaming && index === messages.length - 1)}
+                senderName={group && message.sender_id ? senderNames[message.sender_id] ?? message.sender_id.slice(0, 8) : undefined}
+                replyPreview={group && message.reply_to_message_id ? messages.find((item) => item.id === message.reply_to_message_id)?.content.slice(0, 90) : undefined}
               />
             ))
           )}
-          {error && (
+          {(error || uploadError) && (
             <div role="alert" className="mx-auto w-full max-w-2xl rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-center text-sm text-red-700">
-              {error}
+              {error ?? uploadError}
             </div>
           )}
         </div>
@@ -125,8 +137,10 @@ export function ChatWindow({
         className="shrink-0 bg-gradient-to-t from-white via-white to-white/0 px-3 pb-3 pt-2 sm:px-6"
       >
         <div className="mx-auto flex w-full max-w-3xl items-end gap-1 rounded-[26px] border border-transparent bg-[#f4f4f4] p-2 shadow-[0_2px_12px_rgba(0,0,0,0.06)] transition focus-within:border-gray-300">
-          <Link
-            href="/documents"
+          {onUpload ? <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            disabled={uploading}
             className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-gray-600 transition hover:bg-black/[0.06]"
             aria-label="افزودن سند"
             title="افزودن سند"
@@ -134,14 +148,22 @@ export function ChatWindow({
             <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5">
               <path strokeLinecap="round" d="M12 5v14M5 12h14" />
             </svg>
-          </Link>
+          </button> : <Link href="/documents" className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-gray-600 transition hover:bg-black/[0.06]" aria-label="اسناد پروژه" title="اسناد پروژه"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5"><path strokeLinecap="round" d="M12 5v14M5 12h14" /></svg></Link>}
+          <input ref={fileRef} type="file" className="hidden" aria-label="فایل پیوست گفتگو" onChange={async (event) => {
+            const file = event.target.files?.[0];
+            if (!file || !onUpload) return;
+            setUploadError(null);
+            setUploading(true);
+            try { await onUpload(file); } catch (err) { setUploadError(err instanceof Error ? err.message : "آپلود ناموفق بود."); }
+            finally { setUploading(false); event.target.value = ""; }
+          }} />
           <textarea
             ref={textareaRef}
             rows={1}
             aria-label="پیام"
             className="min-w-0 flex-1 resize-none overflow-y-auto bg-transparent px-2 py-1.5 text-[15px] leading-7 text-gray-900 outline-none placeholder:text-gray-500 disabled:cursor-not-allowed disabled:opacity-60"
             style={{ maxHeight: MAX_TEXTAREA_HEIGHT_PX }}
-            placeholder="از اسناد سازمان بپرسید"
+            placeholder={group ? `پیام پروژه؛ برای دستیار با ${AI_TRIGGER_TOKEN} شروع کنید` : "از اسناد سازمان بپرسید"}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={handleKeyDown}

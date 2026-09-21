@@ -1,4 +1,4 @@
-export type UserRole = "admin" | "user";
+export type UserRole = "super_admin" | "admin" | "user";
 
 export interface User {
   id: string;
@@ -11,4 +11,21 @@ export interface User {
 export interface Team {
   id: string;
   name: string;
+  description: string | null;
+}
+
+export interface Project {
+  id: string;
+  team_id: string;
+  name: string;
+  description: string | null;
+}
+
+export interface TeamMembership {
+  user: User;
+  role: "leader" | "member";
+}
+
+export interface ProjectMembership {
+  user: User;
 }
