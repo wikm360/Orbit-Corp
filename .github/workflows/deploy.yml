@@ -1,3 +1,4 @@
+```yaml
 name: Deploy
 
 on:
@@ -16,58 +17,96 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          # اگر هر مرحله (مثلاً migration) شکست بخورد، deploy همان‌جا متوقف می‌شود
           script_stop: true
           script: |
-            # لود کردن متغیرهای محیطی در صورت استفاده از NVM
-            export NVM_DIR="$HOME/.nvm"
-            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+            # Explicitly run the deployment script with bash.
+            exec bash -s <<'BASH'
 
-            # The server's checkout can move when the host is rebuilt. Prefer
-            # the checkout used by the running frontend service, then search
-            # common deployment directories for this repository's origin.
+            # Load NVM
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+
+            # Find the Orbit-Corp repository.
             REPO_DIR=""
+
             FRONT_WORKDIR=$(systemctl show --property=WorkingDirectory --value front 2>/dev/null || true)
+
             if [ -n "$FRONT_WORKDIR" ]; then
               for candidate in "$FRONT_WORKDIR" "$(dirname "$FRONT_WORKDIR")"; do
                 repo_root=$(git -C "$candidate" rev-parse --show-toplevel 2>/dev/null || true)
+
                 [ -n "$repo_root" ] || continue
+
                 origin=$(git -C "$repo_root" remote get-url origin 2>/dev/null || true)
+
                 case "$origin" in
-                  *wikm360/Orbit-Corp*) REPO_DIR="$repo_root"; break ;;
+                  *wikm360/Orbit-Corp*)
+                    REPO_DIR="$repo_root"
+                    break
+                    ;;
                 esac
               done
             fi
+
             if [ -z "$REPO_DIR" ]; then
-              REPO_DIR=$(find /root /srv /opt /home /var/www /app -maxdepth 5 -type d -name .git -prune -print 2>/dev/null |
+              REPO_DIR=$(
+                find /root /srv /opt /home /var/www /app \
+                  -maxdepth 5 \
+                  -type d \
+                  -name .git \
+                  -prune \
+                  -print 2>/dev/null |
                 while IFS= read -r git_dir; do
-                  candidate=${git_dir%/.git}
+                  candidate="${git_dir%/.git}"
+
                   origin=$(git -C "$candidate" remote get-url origin 2>/dev/null || true)
+
                   if printf '%s' "$origin" | grep -q 'wikm360/Orbit-Corp'; then
                     printf '%s\n' "$candidate"
                     break
                   fi
-                done)
+                done
+              )
             fi
+
             if [ -z "$REPO_DIR" ]; then
-              echo 'Orbit-Corp checkout not found on server' >&2
+              echo "Orbit-Corp checkout not found on server" >&2
               exit 1
             fi
+
             echo "Deploying from $REPO_DIR"
+
             cd "$REPO_DIR"
 
-            # دریافت آخرین تغییرات کد
+            # Pull latest code
             git pull --ff-only origin main
 
-            # بک‌اند: اول migration دیتابیس، بعد بیلد و ساخت مجدد بک‌اند و worker
+            # Backend:
+            # 1. Start dependencies
+            # 2. Run migrations
+            # 3. Rebuild/recreate backend and worker
             docker compose --profile app up -d --wait postgres redis
-            docker compose --profile app run --rm --no-deps backend alembic upgrade head
-            docker compose --profile app up -d --build --force-recreate backend worker
 
-            # ورود به پوشه فرانت، نصب پکیج‌ها و بیلد مجدد
+            docker compose --profile app run \
+              --rm \
+              --no-deps \
+              backend \
+              alembic upgrade head
+
+            docker compose --profile app up \
+              -d \
+              --build \
+              --force-recreate \
+              backend worker
+
+            # Frontend
             cd Frontend
+
             npm install
             npm run build
 
-            # ریستارت سریع سرویس فرانت‌اند
+            # Restart frontend
             systemctl restart front
+
+            BASH
+```
