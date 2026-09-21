@@ -23,10 +23,41 @@ jobs:
             export NVM_DIR="$HOME/.nvm"
             [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
 
-            cd /root/Organization-RAG
+            # The server's checkout can move when the host is rebuilt. Prefer
+            # the checkout used by the running frontend service, then search
+            # common deployment directories for this repository's origin.
+            REPO_DIR=""
+            FRONT_WORKDIR=$(systemctl show --property=WorkingDirectory --value front 2>/dev/null || true)
+            if [ -n "$FRONT_WORKDIR" ]; then
+              for candidate in "$FRONT_WORKDIR" "$(dirname "$FRONT_WORKDIR")"; do
+                repo_root=$(git -C "$candidate" rev-parse --show-toplevel 2>/dev/null || true)
+                [ -n "$repo_root" ] || continue
+                origin=$(git -C "$repo_root" remote get-url origin 2>/dev/null || true)
+                case "$origin" in
+                  *wikm360/Orbit-Corp*) REPO_DIR="$repo_root"; break ;;
+                esac
+              done
+            fi
+            if [ -z "$REPO_DIR" ]; then
+              REPO_DIR=$(find /root /srv /opt /home /var/www /app -maxdepth 5 -type d -name .git -prune -print 2>/dev/null |
+                while IFS= read -r git_dir; do
+                  candidate=${git_dir%/.git}
+                  origin=$(git -C "$candidate" remote get-url origin 2>/dev/null || true)
+                  if printf '%s' "$origin" | grep -q 'wikm360/Orbit-Corp'; then
+                    printf '%s\n' "$candidate"
+                    break
+                  fi
+                done)
+            fi
+            if [ -z "$REPO_DIR" ]; then
+              echo 'Orbit-Corp checkout not found on server' >&2
+              exit 1
+            fi
+            echo "Deploying from $REPO_DIR"
+            cd "$REPO_DIR"
 
             # دریافت آخرین تغییرات کد
-            git pull origin main
+            git pull --ff-only origin main
 
             # بک‌اند: اول migration دیتابیس، بعد بیلد و ساخت مجدد بک‌اند و worker
             docker compose --profile app up -d --wait postgres redis
