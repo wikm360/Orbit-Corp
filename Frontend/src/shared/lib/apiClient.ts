@@ -1,6 +1,24 @@
 import type { TokenResponse } from "@/features/auth/types";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
+function resolveApiBaseUrl(): string {
+  const configured = process.env.NEXT_PUBLIC_API_URL?.trim();
+  if (typeof window === "undefined") return configured || "http://localhost:8000/api/v1";
+
+  // This deployment serves the frontend on :3000 and the API on :8000 of
+  // the same host. A build-time URL from an older server must not redirect a
+  // visitor's browser to that older host.
+  if (configured) {
+    try {
+      const url = new URL(configured);
+      if (url.hostname === window.location.hostname) return url.toString().replace(/\/$/, "");
+    } catch {
+      // Use the current page host if the optional URL is malformed.
+    }
+  }
+  return `${window.location.protocol}//${window.location.hostname}:8000/api/v1`;
+}
+
+const API_BASE_URL = resolveApiBaseUrl();
 
 export const AUTH_UNAUTHORIZED_EVENT = "auth:unauthorized";
 export const AUTH_REFRESHED_EVENT = "auth:refreshed";

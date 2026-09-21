@@ -26,6 +26,8 @@ class Settings(BaseSettings):
         "http://localhost:3000",
         "http://185.58.243.123:3000",
         "http://185.58.243.123",
+        "http://45.95.65.134:3000",
+        "http://45.95.65.134",
     ]
 
     @field_validator("cors_origins", "llm_strip_content_tags", mode="before")
