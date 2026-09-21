@@ -18,7 +18,6 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
 
           script: |
-            # Explicitly run the deployment script with bash.
             exec bash -s <<'BASH'
 
             set -euo pipefail
@@ -27,7 +26,7 @@ jobs:
             export NVM_DIR="$HOME/.nvm"
             [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
 
-            # Find the Orbit-Corp repository.
+            # Find the Orbit-Corp repository
             REPO_DIR=""
 
             FRONT_WORKDIR=$(systemctl show --property=WorkingDirectory --value front 2>/dev/null || true)
@@ -77,7 +76,7 @@ jobs:
 
             cd "$REPO_DIR"
 
-            # Force server repository to exactly match GitHub main.
+            # Force server repository to match GitHub main
             echo "Fetching latest code from GitHub..."
             git fetch origin main
 
@@ -87,29 +86,7 @@ jobs:
             echo "Current commit:"
             git log -1 --oneline
 
-            # Backend:
-            # 1. Start dependencies
-            # 2. Run migrations
-            # 3. Rebuild/recreate backend and worker
-
-            echo "Starting PostgreSQL and Redis..."
-            docker compose --profile app up -d --wait postgres redis
-
-            echo "Running database migrations..."
-            docker compose --profile app run \
-              --rm \
-              --no-deps \
-              backend \
-              alembic upgrade head
-
-            echo "Building and restarting backend + worker..."
-            docker compose --profile app up \
-              -d \
-              --build \
-              --force-recreate \
-              backend worker
-
-            # Frontend
+            # Build frontend
             echo "Building frontend..."
 
             cd Frontend
@@ -117,8 +94,8 @@ jobs:
             npm install
             npm run build
 
-            # Restart frontend
-            echo "Restarting frontend..."
+            # Restart frontend service
+            echo "Restarting frontend service..."
 
             systemctl restart front
 
