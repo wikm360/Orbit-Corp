@@ -54,6 +54,7 @@ class Tool(ABC):
         conversation_id: uuid.UUID,
         query: str,
         on_status: Callable[[str], Awaitable[None]] | None = None,
+        user_id: uuid.UUID | None = None,
     ) -> ToolResult:
         ...
 
@@ -74,11 +75,12 @@ class DocumentInspectorTool(Tool):
         conversation_id: uuid.UUID,
         query: str,
         on_status: Callable[[str], Awaitable[None]] | None = None,
+        user_id: uuid.UUID | None = None,
     ) -> ToolResult:
-        # 1. Fetch all documents accessible in current conversation scope
+        # 1. Fetch all documents accessible in current conversation scope (including user personal docs)
         stmt = (
             select(Document)
-            .where(accessible_documents_filter(project_id, conversation_id))
+            .where(accessible_documents_filter(project_id, conversation_id, user_id=user_id))
             .order_by(Document.created_at.desc())
         )
         res = await db.execute(stmt)
@@ -258,6 +260,7 @@ class RetrievalTool(Tool):
         conversation_id: uuid.UUID,
         query: str,
         on_status: Callable[[str], Awaitable[None]] | None = None,
+        user_id: uuid.UUID | None = None,
     ) -> ToolResult:
         if on_status:
             await on_status("در حال جستجو در پایگاه دانش...")
@@ -266,7 +269,7 @@ class RetrievalTool(Tool):
 
         retriever = get_retriever()
         chunks = await retriever.retrieve(
-            db, project_id, conversation_id, query_embedding, top_k=settings.retrieval_top_k
+            db, project_id, conversation_id, query_embedding, top_k=settings.retrieval_top_k, user_id=user_id
         )
 
         if not chunks or chunks[0].score < settings.retrieval_score_threshold:
@@ -514,7 +517,7 @@ async def _stream_chat_events(
     async def run_tools() -> ToolResult:
         res = ToolResult(used=False)
         for tool in TOOLS:
-            res = await tool.run(db, project_id, conversation.id, user_message, on_status=on_status)
+            res = await tool.run(db, project_id, conversation.id, user_message, on_status=on_status, user_id=context.id)
             if res.used:
                 break
         return res
@@ -620,9 +623,12 @@ async def _generate_group_ai_reply(
                 },
             )
 
+        trigger_message = await db.get(Message, trigger_message_id)
+        trigger_user_id = trigger_message.sender_id if trigger_message else None
+
         tool_result = ToolResult(used=False)
         for tool in TOOLS:
-            tool_result = await tool.run(db, project_id, conversation_id, query, on_status=on_group_status)
+            tool_result = await tool.run(db, project_id, conversation_id, query, on_status=on_group_status, user_id=trigger_user_id)
             if tool_result.used:
                 break
 

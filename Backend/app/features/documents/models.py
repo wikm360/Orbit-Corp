@@ -31,7 +31,8 @@ class Document(Base):
     __table_args__ = (
         CheckConstraint(
             "(project_id IS NOT NULL AND conversation_id IS NULL) OR "
-            "(project_id IS NULL AND conversation_id IS NOT NULL)",
+            "(project_id IS NULL AND conversation_id IS NOT NULL) OR "
+            "(project_id IS NULL AND conversation_id IS NULL AND uploaded_by IS NOT NULL)",
             name="ck_document_single_scope",
         ),
     )

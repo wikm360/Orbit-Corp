@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.core.exceptions import BadRequestError, NotFoundError
+from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
 from app.features.documents.ingestion.parser import SUPPORTED_EXTENSIONS
 from app.features.documents.models import Document, DocumentChunk, DocumentStatus
 
@@ -203,3 +203,47 @@ async def delete_document(db: AsyncSession, document_id: uuid.UUID) -> None:
         path = Path(file_path)
         if path.exists():
             path.unlink()
+
+
+async def list_personal_documents(db: AsyncSession, user_id: uuid.UUID) -> list[Document]:
+    """All personal documents uploaded by this user (not attached to any project or conversation)."""
+    result = await db.execute(
+        select(Document)
+        .where(
+            Document.uploaded_by == user_id,
+            Document.project_id.is_(None),
+            Document.conversation_id.is_(None),
+        )
+        .order_by(Document.created_at.desc())
+    )
+    return list(result.scalars().all())
+
+
+async def upload_personal_document(
+    db: AsyncSession,
+    filename: str,
+    content_type: str,
+    file_bytes: bytes,
+    uploaded_by: uuid.UUID,
+) -> Document:
+    """Uploads a personal document belonging directly to the user."""
+    return await _create_document(
+        db,
+        filename=filename,
+        content_type=content_type,
+        file_bytes=file_bytes,
+        uploaded_by=uploaded_by,
+        project_id=None,
+        conversation_id=None,
+    )
+
+
+async def delete_personal_document(db: AsyncSession, document_id: uuid.UUID, user_id: uuid.UUID) -> None:
+    """Deletes a personal document, verifying ownership."""
+    document = await get_document(db, document_id)
+    if document.project_id is not None or document.conversation_id is not None:
+        raise BadRequestError("This is not a personal document")
+    if document.uploaded_by != user_id:
+        raise ForbiddenError("You can only delete your own personal documents")
+    await delete_document(db, document_id)
+

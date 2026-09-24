@@ -26,6 +26,20 @@ export function usePersonalDocuments() {
     void refresh();
   }, [refresh]);
 
+  useEffect(() => {
+    const hasProcessing = documents.some((doc) => doc.status === "processing");
+    if (!hasProcessing) return;
+    const interval = setInterval(async () => {
+      try {
+        const items = await documentsApi.listPersonal();
+        setDocuments(items);
+      } catch {
+        // Silent catch for background poll
+      }
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [documents]);
+
   const upload = useCallback(
     async (file: File) => {
       setError(null);

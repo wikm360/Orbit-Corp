@@ -6,17 +6,20 @@ from app.features.documents.models import Document, DocumentStatus
 
 
 def accessible_documents_filter(
-    project_id: uuid.UUID | None, conversation_id: uuid.UUID
+    project_id: uuid.UUID | None,
+    conversation_id: uuid.UUID,
+    user_id: uuid.UUID | None = None,
 ) -> ColumnElement[bool]:
     """SQLAlchemy filter expression: only documents visible from the current chat.
 
-    Applied directly inside the pgvector similarity query (not as a
-    post-filter on already-fetched rows), so access control is enforced at
-    the database level. Scope is always the current conversation's own
-    ad hoc uploads, plus (for project group chats, or personal chats with a
-    project linked) that project's shared knowledge base.
+    Includes:
+    - Ad hoc uploads made inside this conversation
+    - The linked/group project knowledge base (if any)
+    - The user's own personal documents library
     """
     conditions = [Document.conversation_id == conversation_id]
     if project_id is not None:
         conditions.append(Document.project_id == project_id)
+    if user_id is not None:
+        conditions.append((Document.uploaded_by == user_id) & Document.project_id.is_(None))
     return (Document.status == DocumentStatus.READY) & or_(*conditions)
