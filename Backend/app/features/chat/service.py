@@ -1,11 +1,12 @@
 import asyncio
 import json
+import re
 import uuid
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 
-from sqlalchemy import or_, select, tuple_
+from sqlalchemy import func, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -16,7 +17,9 @@ from app.features.auth.models import User
 from app.features.chat.models import Conversation, ConversationType, Message, SenderType
 from app.features.chat.schemas import ConversationCreate, MessageRead, SourceCitation
 from app.features.chat.ws import manager as ws_manager
+from app.features.documents.models import Document, DocumentChunk, DocumentStatus
 from app.features.projects.service import get_project
+from app.features.retrieval.access_filter import accessible_documents_filter
 from app.features.retrieval.service import get_retriever
 from app.providers.embedding_provider import get_embedding_provider
 from app.providers.llm_provider import ChatMessage, get_llm_provider
@@ -39,29 +42,225 @@ class ToolResult:
 
 
 class Tool(ABC):
-    """A capability the chat orchestrator can call before asking the LLM to respond.
-
-    Only `RetrievalTool` exists for the MVP, but the orchestrator loops over a
-    list of tools rather than calling retrieval directly, so phase 2 can add
-    e.g. a `WebSearchTool` here and switch to a real tool-calling loop without
-    reshaping this service.
-    """
+    """A capability the chat orchestrator can call before asking the LLM to respond."""
 
     name: str
 
     @abstractmethod
     async def run(
-        self, db: AsyncSession, project_id: uuid.UUID | None, conversation_id: uuid.UUID, query: str
+        self,
+        db: AsyncSession,
+        project_id: uuid.UUID | None,
+        conversation_id: uuid.UUID,
+        query: str,
+        on_status: Callable[[str], Awaitable[None]] | None = None,
     ) -> ToolResult:
         ...
+
+
+class DocumentInspectorTool(Tool):
+    """Inspects and reads specific documents referenced directly by mentions (@filename),
+    explicit file names, or conversational references (e.g. 'in this file').
+    
+    Provides structured inspection (chunk counting, section navigation) to prevent
+    context overflow on large files while ensuring immediate targeted retrieval.
+    """
+    name = "document_inspector"
+
+    async def run(
+        self,
+        db: AsyncSession,
+        project_id: uuid.UUID | None,
+        conversation_id: uuid.UUID,
+        query: str,
+        on_status: Callable[[str], Awaitable[None]] | None = None,
+    ) -> ToolResult:
+        # 1. Fetch all documents accessible in current conversation scope
+        stmt = (
+            select(Document)
+            .where(accessible_documents_filter(project_id, conversation_id))
+            .order_by(Document.created_at.desc())
+        )
+        res = await db.execute(stmt)
+        accessible_docs = list(res.scalars().all())
+        if not accessible_docs:
+            return ToolResult(used=False)
+
+        # 2. Extract potential mentions (@filename)
+        mentions = re.findall(r"@([^\s@]+)", query)
+        bot_tokens = {"bot", settings.ai_trigger_token.lstrip("@").lower()}
+        file_mentions = [m.lower() for m in mentions if m.lower() not in bot_tokens]
+
+        # 3. Match against accessible documents
+        matched_docs: list[Document] = []
+        lowered_query = query.lower()
+
+        # Check explicit @mentions
+        for doc in accessible_docs:
+            doc_lower = doc.filename.lower()
+            if any(doc_lower == fm or fm in doc_lower or doc_lower.startswith(fm) for fm in file_mentions):
+                if doc not in matched_docs:
+                    matched_docs.append(doc)
+
+        # Check explicit filename mentioned in query text (without @)
+        if not matched_docs:
+            for doc in accessible_docs:
+                doc_lower = doc.filename.lower()
+                # Check either exact filename or stem if at least 4 characters
+                stem = doc_lower.rsplit(".", 1)[0] if "." in doc_lower else doc_lower
+                if doc_lower in lowered_query or (len(stem) >= 4 and stem in lowered_query):
+                    if doc not in matched_docs:
+                        matched_docs.append(doc)
+
+        # Check general conversational reference if files were uploaded in this conversation
+        # (e.g. "توی فایل", "محتوای فایل", "این سند چی میگه", "فایل پیوست")
+        if not matched_docs:
+            file_referential_terms = [
+                "فایل", "سند", "پیوست", "ضمیمه", "محتوای", "توی فایل", "توی این فایل",
+                "file", "document", "attachment", "what is inside", "summary of the file"
+            ]
+            has_doc_reference = any(term in lowered_query for term in file_referential_terms)
+            if has_doc_reference:
+                # Pick the latest document in this conversation
+                conv_docs = [d for d in accessible_docs if d.conversation_id == conversation_id]
+                if conv_docs:
+                    matched_docs.append(conv_docs[0])
+
+        if not matched_docs:
+            return ToolResult(used=False)
+
+        # 4. Inspect and read matched documents smartly
+        all_context_blocks: list[str] = []
+        all_sources: list[SourceCitation] = []
+
+        # Target section / page regex (e.g. "صفحه ۲", "بخش ۳", "section 2", "page 5")
+        section_match = re.search(r"(?:صفحه|بخش|قسمت|part|page|section)\s*(\d+)", lowered_query)
+        requested_page_or_section = int(section_match.group(1)) if section_match else None
+
+        for doc in matched_docs[:2]:  # inspect up to 2 targeted documents
+            if on_status:
+                await on_status(f"در حال بازرسی ساختار و تحلیل سند «{doc.filename}»...")
+
+            # Inspect chunk count
+            count_stmt = select(func.count(DocumentChunk.id)).where(DocumentChunk.document_id == doc.id)
+            total_chunks = (await db.scalar(count_stmt)) or 0
+
+            if total_chunks == 0:
+                all_context_blocks.append(f"[سند: {doc.filename}]\nاین سند ثبت شده اما هنوز قطعه متنی برای آن ایجاد نشده است.")
+                continue
+
+            chunks: list[DocumentChunk] = []
+
+            if requested_page_or_section is not None:
+                # Target the requested section and its neighboring chunk
+                target_idx = max(0, requested_page_or_section - 1)
+                chunk_stmt = (
+                    select(DocumentChunk)
+                    .where(
+                        DocumentChunk.document_id == doc.id,
+                        DocumentChunk.chunk_index.between(max(0, target_idx - 1), target_idx + 2),
+                    )
+                    .order_by(DocumentChunk.chunk_index)
+                )
+                chunk_res = await db.execute(chunk_stmt)
+                chunks = list(chunk_res.scalars().all())
+
+            # If small document, read entirely to preserve full context
+            elif total_chunks <= 5:
+                chunk_stmt = (
+                    select(DocumentChunk)
+                    .where(DocumentChunk.document_id == doc.id)
+                    .order_by(DocumentChunk.chunk_index)
+                )
+                chunk_res = await db.execute(chunk_stmt)
+                chunks = list(chunk_res.scalars().all())
+
+            else:
+                # If large document:
+                # Check if user asked a specific topical question to perform focused semantic search within this document
+                clean_query = query
+                for fm in file_mentions:
+                    clean_query = clean_query.replace(f"@{fm}", "")
+                clean_query = clean_query.replace(doc.filename, "").strip()
+
+                is_generic_inquiry = any(clean_query.startswith(g) or clean_query == g for g in [
+                    "توی این فایل چی نوشته", "توی فایل چی نوشته", "توی فایل چیه", "خلاصه کن",
+                    "چی نوشته", "محتواش چیه", "محتوای فایل رو بگو", "بررسی کن", ""
+                ]) or len(clean_query) < 10
+
+                if not is_generic_inquiry:
+                    # Semantic search constrained to this specific document
+                    if on_status:
+                        await on_status(f"در حال جستجوی بخش‌های مرتبط در سند «{doc.filename}»...")
+                    try:
+                        embedding_provider = get_embedding_provider()
+                        [query_embedding] = await embedding_provider.embed([clean_query])
+                        distance = DocumentChunk.embedding.cosine_distance(query_embedding)
+                        top_stmt = (
+                            select(DocumentChunk)
+                            .where(DocumentChunk.document_id == doc.id)
+                            .order_by(distance)
+                            .limit(min(5, settings.retrieval_top_k))
+                        )
+                        chunk_res = await db.execute(top_stmt)
+                        chunks = list(chunk_res.scalars().all())
+                    except Exception:
+                        chunks = []
+
+                if not chunks:
+                    # Fallback to the opening chunks with inspection note
+                    chunk_stmt = (
+                        select(DocumentChunk)
+                        .where(DocumentChunk.document_id == doc.id)
+                        .order_by(DocumentChunk.chunk_index)
+                        .limit(5)
+                    )
+                    chunk_res = await db.execute(chunk_stmt)
+                    chunks = list(chunk_res.scalars().all())
+
+            doc_text_parts = [f"=== مستند: {doc.filename} (مجموع کل بخش‌ها: {total_chunks}) ==="]
+            for c in chunks:
+                doc_text_parts.append(f"[بخش {c.chunk_index + 1} از سند {doc.filename}]\n{c.content}")
+                all_sources.append(
+                    SourceCitation(
+                        document_id=str(doc.id),
+                        document_filename=doc.filename,
+                        chunk_index=c.chunk_index,
+                        snippet=c.content[:300],
+                        score=1.0,
+                    )
+                )
+
+            if total_chunks > len(chunks):
+                doc_text_parts.append(
+                    f"\n[نکته ساختاری: این سند شامل مجموعاً {total_chunks} بخش است. در حال حاضر {len(chunks)} بخش منتخب بارگذاری شده‌اند.]"
+                )
+
+            all_context_blocks.append("\n\n".join(doc_text_parts))
+
+        if not all_context_blocks:
+            return ToolResult(used=False)
+
+        return ToolResult(
+            used=True,
+            context_text="\n\n" + ("\n\n---\n\n".join(all_context_blocks)),
+            sources=all_sources,
+        )
 
 
 class RetrievalTool(Tool):
     name = "document_retrieval"
 
     async def run(
-        self, db: AsyncSession, project_id: uuid.UUID | None, conversation_id: uuid.UUID, query: str
+        self,
+        db: AsyncSession,
+        project_id: uuid.UUID | None,
+        conversation_id: uuid.UUID,
+        query: str,
+        on_status: Callable[[str], Awaitable[None]] | None = None,
     ) -> ToolResult:
+        if on_status:
+            await on_status("در حال جستجو در پایگاه دانش...")
         embedding_provider = get_embedding_provider()
         [query_embedding] = await embedding_provider.embed([query])
 
@@ -90,7 +289,8 @@ class RetrievalTool(Tool):
         return ToolResult(used=True, context_text=context_text, sources=sources)
 
 
-TOOLS: list[Tool] = [RetrievalTool()]
+TOOLS: list[Tool] = [DocumentInspectorTool(), RetrievalTool()]
+
 
 
 def _resolve_retrieval_scope(context: UserContext, conversation: Conversation) -> uuid.UUID | None:
@@ -302,15 +502,36 @@ async def _stream_chat_events(
     )
     await db.commit()
 
+    yield _sse_event("start", {"conversation_id": str(conversation.id)})
+
     project_id = _resolve_retrieval_scope(context, conversation)
 
-    tool_result = ToolResult(used=False)
-    for tool in TOOLS:
-        tool_result = await tool.run(db, project_id, conversation.id, user_message)
-        if tool_result.used:
-            break
+    status_queue: asyncio.Queue[str] = asyncio.Queue()
 
-    yield _sse_event("start", {"conversation_id": str(conversation.id)})
+    async def on_status(status_msg: str) -> None:
+        await status_queue.put(status_msg)
+
+    async def run_tools() -> ToolResult:
+        res = ToolResult(used=False)
+        for tool in TOOLS:
+            res = await tool.run(db, project_id, conversation.id, user_message, on_status=on_status)
+            if res.used:
+                break
+        return res
+
+    tools_task = asyncio.create_task(run_tools())
+    while not tools_task.done():
+        try:
+            status_msg = await asyncio.wait_for(status_queue.get(), timeout=0.08)
+            yield _sse_event("status", {"status": status_msg})
+        except asyncio.TimeoutError:
+            pass
+
+    while not status_queue.empty():
+        status_msg = status_queue.get_nowait()
+        yield _sse_event("status", {"status": status_msg})
+
+    tool_result = await tools_task
 
     llm_messages = await _build_llm_messages(db, conversation, tool_result.context_text, group=False)
     llm_provider = get_llm_provider()
@@ -384,16 +605,26 @@ async def _generate_group_ai_reply(
         if conversation is None:
             return
 
-        tool_result = ToolResult(used=False)
-        for tool in TOOLS:
-            tool_result = await tool.run(db, project_id, conversation_id, query)
-            if tool_result.used:
-                break
-
         await ws_manager.broadcast(
             conversation_id,
             {"event": "assistant_start", "reply_to_message_id": str(trigger_message_id)},
         )
+
+        async def on_group_status(status_msg: str) -> None:
+            await ws_manager.broadcast(
+                conversation_id,
+                {
+                    "event": "assistant_status",
+                    "reply_to_message_id": str(trigger_message_id),
+                    "status": status_msg,
+                },
+            )
+
+        tool_result = ToolResult(used=False)
+        for tool in TOOLS:
+            tool_result = await tool.run(db, project_id, conversation_id, query, on_status=on_group_status)
+            if tool_result.used:
+                break
 
         llm_messages = await _build_llm_messages(db, conversation, tool_result.context_text, group=True)
         llm_provider = get_llm_provider()

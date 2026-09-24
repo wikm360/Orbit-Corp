@@ -10,9 +10,24 @@ export function UploadForm({ onUpload }: { onUpload: (file: File) => Promise<voi
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const ALLOWED_EXTENSIONS = [".pdf", ".docx", ".pptx", ".xlsx", ".txt"];
+  const MAX_SIZE_MB = 50;
+
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     if (!file) return;
+
+    const extension = `.${file.name.split(".").pop()?.toLowerCase()}`;
+    if (!ALLOWED_EXTENSIONS.includes(extension)) {
+      setError("فرمت فایل مجاز نیست. لطفاً فایلی با پسوند PDF، DOCX، PPTX، XLSX یا TXT انتخاب کنید.");
+      return;
+    }
+
+    if (file.size > MAX_SIZE_MB * 1024 * 1024) {
+      setError(`حجم فایل بیشتر از ${MAX_SIZE_MB} مگابایت است.`);
+      return;
+    }
+
     setError(null);
     setIsUploading(true);
     try {

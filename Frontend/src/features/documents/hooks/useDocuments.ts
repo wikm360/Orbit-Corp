@@ -36,6 +36,20 @@ export function useDocuments(projectId: string | null) {
     return () => window.clearTimeout(timer);
   }, [refresh]);
 
+  useEffect(() => {
+    const hasProcessing = documents.some((doc) => doc.status === "processing");
+    if (!hasProcessing || !projectId) return;
+    const interval = setInterval(async () => {
+      try {
+        const items = await documentsApi.list(projectId);
+        setResult((current) => current?.projectId === projectId ? { projectId, documents: items } : current);
+      } catch {
+        // Silent catch for background poll
+      }
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [documents, projectId]);
+
   const upload = useCallback(async (file: File) => {
     if (!projectId) return;
     setError(null);

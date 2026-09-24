@@ -2,19 +2,18 @@ import type { TokenResponse } from "@/features/auth/types";
 
 function resolveApiBaseUrl(): string {
   const configured = process.env.NEXT_PUBLIC_API_URL?.trim();
-  if (typeof window === "undefined") return configured || "http://185.58.243.123:8000/api/v1";
 
-  // This deployment serves the frontend on :3000 and the API on :8000 of
-  // the same host. A build-time URL from an older server must not redirect a
-  // visitor's browser to that older host.
+  // ۱. اگر متغیر محیطی ست شده بود، دقیقاً همان را برگردان
   if (configured) {
-    try {
-      const url = new URL(configured);
-      if (url.hostname === window.location.hostname) return url.toString().replace(/\/$/, "");
-    } catch {
-      // Use the current page host if the optional URL is malformed.
-    }
+    return configured.replace(/\/$/, "");
   }
+
+  // ۲. در حالت SSR (سمت سرور نكست)
+  if (typeof window === "undefined") {
+    return "http://2.144.26.100:8000/api/v1";
+  }
+
+  // ۳. فال‌بک برای حالت کلاینت اگر متغیر env ست نشده بود
   return `${window.location.protocol}//${window.location.hostname}:8000/api/v1`;
 }
 

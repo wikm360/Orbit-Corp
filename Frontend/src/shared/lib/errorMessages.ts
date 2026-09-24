@@ -8,7 +8,8 @@ export function friendlyErrorMessage(
     if (error.status === 401) return "نشست شما منقضی شده است. دوباره وارد شوید.";
     if (error.status === 403) return "برای انجام این کار دسترسی کافی ندارید.";
     if (error.status === 404) return "اطلاعات موردنظر پیدا نشد.";
-    if (error.status === 413) return "حجم فایل بیشتر از حد مجاز است.";
+    if (error.status === 409) return "این مورد از قبل وجود دارد.";
+    if (error.status === 413) return "حجم فایل بیشتر از ۵۰ مگابایت یا حد مجاز است.";
     if (error.status === 429) return "تعداد درخواست‌ها زیاد است؛ کمی بعد دوباره تلاش کنید.";
     if (error.status >= 500) return "سرور موقتاً در دسترس نیست. کمی بعد دوباره تلاش کنید.";
     return error.message || fallback;

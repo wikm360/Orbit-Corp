@@ -33,4 +33,5 @@ export interface ConversationDetail extends Conversation {
 export type GroupEvent =
   | { event: "message"; message: ChatMessage }
   | { event: "assistant_start"; reply_to_message_id: string }
+  | { event: "assistant_status"; reply_to_message_id: string; status: string }
   | { event: "assistant_delta"; reply_to_message_id: string; delta: string };

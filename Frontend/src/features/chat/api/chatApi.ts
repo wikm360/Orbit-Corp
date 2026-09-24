@@ -12,6 +12,7 @@ import { ChatMessage, Conversation, ConversationDetail, SourceCitation } from ".
 
 export interface ChatStreamHandlers {
   onStart?: (conversationId: string) => void;
+  onStatus?: (status: string) => void;
   onDelta: (text: string) => void;
   onDone?: (sources: SourceCitation[], messageId: string) => void;
   onError?: (message: string) => void;
@@ -45,12 +46,15 @@ export async function streamChat(
       buffer = events.pop() ?? "";
       for (const rawEvent of events) {
         const lines = rawEvent.split("\n");
-        const eventLine = lines.find((line) => line.startsWith("event:"));
-        const dataLines = lines.filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trimStart());
+        const eventLine = lines.find((line) => /^event:\s*/i.test(line));
+        const dataLines = lines
+          .filter((line) => /^data:\s*/i.test(line))
+          .map((line) => line.replace(/^data:\s*/i, ""));
         if (!eventLine || dataLines.length === 0) continue;
-        const eventName = eventLine.slice(6).trim();
+        const eventName = eventLine.replace(/^event:\s*/i, "").trim();
         const data = JSON.parse(dataLines.join("\n"));
         if (eventName === "start") handlers.onStart?.(data.conversation_id);
+        else if (eventName === "status") handlers.onStatus?.(data.status);
         else if (eventName === "delta") handlers.onDelta(data.content);
         else if (eventName === "done") {
           completed = true;
@@ -70,9 +74,15 @@ export async function streamChat(
 export const chatApi = {
   listConversations: () => apiRequest<Conversation[]>("/chat/conversations"),
   getConversation: (id: string) => apiRequest<ConversationDetail>(`/chat/conversations/${id}`),
-  createPersonal: (linkedProjectId: string) => apiRequest<Conversation>("/chat/conversations", {
-    method: "POST", body: { type: "personal", linked_project_id: linkedProjectId },
-  }),
+  createPersonal: (linkedProjectId?: string | null, title?: string) =>
+    apiRequest<Conversation>("/chat/conversations", {
+      method: "POST",
+      body: {
+        type: "personal",
+        linked_project_id: linkedProjectId || null,
+        ...(title ? { title } : {}),
+      },
+    }),
   createGroup: (projectId: string) => apiRequest<Conversation>("/chat/conversations", {
     method: "POST", body: { type: "project_group", project_id: projectId },
   }),
@@ -88,5 +98,10 @@ export const chatApi = {
     formData.append("file", file);
     return apiRequest<{ document: Document; message: string }>(`/chat/conversations/${id}/documents`, { method: "POST", formData });
   },
-  websocketUrl: (id: string, token: string) => `${API_BASE_URL.replace(/^http/, "ws")}/chat/conversations/${id}/ws?token=${encodeURIComponent(token)}`,
+  websocketUrl: (id: string, token: string) => {
+    const wsBase = API_BASE_URL.startsWith("https://")
+      ? API_BASE_URL.replace("https://", "wss://")
+      : API_BASE_URL.replace("http://", "ws://");
+    return `${wsBase}/chat/conversations/${id}/ws?token=${encodeURIComponent(token)}`;
+  },
 };

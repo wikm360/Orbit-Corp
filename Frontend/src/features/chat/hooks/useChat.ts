@@ -20,6 +20,7 @@ export function useChat() {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [agentStatusText, setAgentStatusText] = useState<string | null>(null);
   const [isLoadingConversation, setIsLoadingConversation] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const streamControllerRef = useRef<AbortController | null>(null);
@@ -38,6 +39,7 @@ export function useChat() {
     streamControllerRef.current?.abort();
     socketRef.current?.close();
     setIsStreaming(false);
+    setAgentStatusText(null);
     setError(null);
     setIsLoadingConversation(true);
     const requestId = ++loadRequestRef.current;
@@ -66,6 +68,7 @@ export function useChat() {
     setMessages([]);
     setError(null);
     setIsStreaming(false);
+    setAgentStatusText(null);
     setIsLoadingConversation(false);
   }, []);
 
@@ -76,8 +79,6 @@ export function useChat() {
     let socket: WebSocket;
     const connect = async () => {
       try {
-        // A REST request refreshes an expired access token before the WS handshake.
-        await chatApi.listMessages(conversationId, latestMessageIdRef.current);
         if (stopped) return;
         const currentToken = localStorage.getItem("auth_token") ?? token;
         socket = new WebSocket(chatApi.websocketUrl(conversationId, currentToken));
@@ -98,17 +99,50 @@ export function useChat() {
           const payload = JSON.parse(event.data) as GroupEvent;
           if (payload.event === "message") {
             latestMessageIdRef.current = payload.message.id;
+            if (payload.message.sender_type === "assistant" || payload.message.reply_to_message_id) {
+              setIsStreaming(false);
+              setAgentStatusText(null);
+            }
             setMessages((current) => addMessage(current, payload.message));
           } else if (payload.event === "assistant_start") {
+            setIsStreaming(true);
+            setAgentStatusText("هوش مصنوعی در حال تحلیل و آماده‌سازی پاسخ...");
             setMessages((current) => addMessage(current, {
-              id: `pending-${payload.reply_to_message_id}`, sender_type: "assistant", sender_id: null,
-              content: "", sources: [], reply_to_message_id: payload.reply_to_message_id, created_at: new Date().toISOString(),
+              id: `pending-${payload.reply_to_message_id}`,
+              sender_type: "assistant",
+              sender_id: null,
+              content: "",
+              sources: [],
+              reply_to_message_id: payload.reply_to_message_id,
+              created_at: new Date().toISOString(),
             }));
+          } else if (payload.event === "assistant_status") {
+            setAgentStatusText(payload.status);
           } else if (payload.event === "assistant_delta") {
-            setMessages((current) => current.map((item) => item.id === `pending-${payload.reply_to_message_id}` ? { ...item, content: item.content + payload.delta } : item));
+            setAgentStatusText(null);
+            setMessages((current) => {
+              const pendingId = `pending-${payload.reply_to_message_id}`;
+              const exists = current.some((item) => item.id === pendingId);
+              if (!exists) {
+                return addMessage(current, {
+                  id: pendingId,
+                  sender_type: "assistant",
+                  sender_id: null,
+                  content: payload.delta,
+                  sources: [],
+                  reply_to_message_id: payload.reply_to_message_id,
+                  created_at: new Date().toISOString(),
+                });
+              }
+              return current.map((item) =>
+                item.id === pendingId ? { ...item, content: item.content + payload.delta } : item
+              );
+            });
           }
         };
         socket.onclose = () => {
+          setIsStreaming(false);
+          setAgentStatusText(null);
           if (!stopped) retryTimer = setTimeout(() => void connect(), 2500);
         };
       } catch (err) {
@@ -142,6 +176,7 @@ export function useChat() {
       return;
     }
     let targetConversationId = conversationId;
+    let pendingProjectToLink: string | null = null;
     setIsStreaming(true);
     if (!targetConversationId && linkedProjectId) {
       try {
@@ -150,10 +185,9 @@ export function useChat() {
         setConversation(created);
         setConversationId(created.id);
         window.dispatchEvent(new Event("orbit:conversations-changed"));
-      } catch (err) {
-        setError(friendlyErrorMessage(err, "ایجاد گفتگو ناموفق بود."));
-        setIsStreaming(false);
-        return;
+      } catch {
+        // If backend creates personal conversations only via POST /chat, link it upon start
+        pendingProjectToLink = linkedProjectId;
       }
     }
     const controller = new AbortController();
@@ -169,19 +203,35 @@ export function useChat() {
       content: "", sources: [], reply_to_message_id: null, created_at: new Date().toISOString(),
     };
     setMessages((current) => [...current, userMessage, assistantMessage]);
+    setAgentStatusText("در حال پردازش پیام...");
     await streamChat(text, targetConversationId, {
-      onStart: (id) => { activeConversationIdRef.current = id; setConversationId(id); },
-      onDelta: (delta) => setMessages((current) => current.map((item) => item.id === assistantMessage.id ? { ...item, content: item.content + delta } : item)),
+      onStart: (id) => {
+        activeConversationIdRef.current = id;
+        setConversationId(id);
+        if (pendingProjectToLink) {
+          void chatApi.linkProject(id, pendingProjectToLink).catch(() => {});
+        }
+      },
+      onStatus: (status) => setAgentStatusText(status),
+      onDelta: (delta) => {
+        setAgentStatusText(null);
+        setMessages((current) => current.map((item) => item.id === assistantMessage.id ? { ...item, content: item.content + delta } : item));
+      },
       onDone: (sources, messageId) => {
+        setAgentStatusText(null);
         setMessages((current) => current.map((item) => item.id === assistantMessage.id ? { ...item, id: messageId, sources } : item));
         if (activeConversationIdRef.current) void chatApi.getConversation(activeConversationIdRef.current).then(setConversation).catch(() => {});
         window.dispatchEvent(new Event("orbit:conversations-changed"));
       },
-      onError: (message) => setError(message),
+      onError: (message) => {
+        setAgentStatusText(null);
+        setError(message);
+      },
     }, controller.signal);
     if (streamControllerRef.current === controller) {
       streamControllerRef.current = null;
       setIsStreaming(false);
+      setAgentStatusText(null);
     }
   }, [conversation, conversationId]);
 
@@ -192,7 +242,7 @@ export function useChat() {
   }, [conversationId]);
 
   return {
-    conversation, conversationId, messages, isStreaming, isLoadingConversation, error,
+    conversation, conversationId, messages, isStreaming, agentStatusText, isLoadingConversation, error,
     sendMessage, loadConversation, startNewConversation, linkProject,
   };
 }

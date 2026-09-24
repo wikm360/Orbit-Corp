@@ -26,11 +26,11 @@ export interface WorkspaceOverview {
 
 export async function loadWorkspace(user: User): Promise<WorkspaceOverview> {
   const isAdmin = user.role === "admin" || user.role === "super_admin";
-  const teams = isAdmin ? await workspaceApi.allTeams() : await workspaceApi.myTeams();
+  const teams = await (isAdmin ? workspaceApi.allTeams() : workspaceApi.myTeams()).catch(() => [] as Team[]);
   const [myProjects, teamProjects, memberships] = await Promise.all([
-    workspaceApi.myProjects(),
-    Promise.all(teams.map((team) => workspaceApi.teamProjects(team.id))),
-    isAdmin ? Promise.resolve([]) : Promise.all(teams.map((team) => workspaceApi.teamMembers(team.id))),
+    workspaceApi.myProjects().catch(() => [] as Project[]),
+    Promise.all(teams.map((team) => workspaceApi.teamProjects(team.id).catch(() => [] as Project[]))),
+    isAdmin ? Promise.resolve([]) : Promise.all(teams.map((team) => workspaceApi.teamMembers(team.id).catch(() => [] as TeamMembership[]))),
   ]);
   const projects = Array.from(new Map([...myProjects, ...teamProjects.flat()].map((project) => [project.id, project])).values());
   const managedTeamIds = new Set(isAdmin
