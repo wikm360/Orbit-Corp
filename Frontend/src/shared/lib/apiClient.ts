@@ -2,7 +2,7 @@ import type { TokenResponse } from "@/features/auth/types";
 
 function resolveApiBaseUrl(): string {
   const configured = process.env.NEXT_PUBLIC_API_URL?.trim();
-  if (typeof window === "undefined") return configured || "http://localhost:8000/api/v1";
+  if (typeof window === "undefined") return configured || "http://185.58.243.123:8000/api/v1";
 
   // This deployment serves the frontend on :3000 and the API on :8000 of
   // the same host. A build-time URL from an older server must not redirect a
