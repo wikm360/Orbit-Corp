@@ -30,6 +30,7 @@ function frame(name, data) { return `event: ${name}\ndata: ${JSON.stringify(data
     }, { user });
     const page = await context.newPage();
     page.on('pageerror', (error) => errors.push(error.message));
+    page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text()); });
     await page.route('**/api/v1/**', async (route) => {
       const req = route.request(), url = new URL(req.url()), endpoint = url.pathname.replace('/api/v1', ''), method = req.method();
       const json = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
@@ -67,7 +68,8 @@ function frame(name, data) { return `event: ${name}\ndata: ${JSON.stringify(data
         const item = body.conversation_id ? conversations.find((item) => item.id === body.conversation_id) : { ...conversations[0], id: 'sse-new', title: 'گفتگوی تازه', messages: [] };
         if (!conversations.some((entry) => entry.id === item.id)) conversations.push(item);
         const finalMessage = message('answer-1', 'پاسخ مستند بر اساس اسناد پروژه.');
-        finalMessage.sources = [{ document_id: 'd1', document_filename: 'قرارداد.pdf', chunk_index: 0, snippet: 'تحویل پروژه در پایان مهر', score: 0.9 }];
+        const source = { document_id: 'd1', document_filename: 'قرارداد.pdf', chunk_index: 0, snippet: 'تحویل پروژه در پایان مهر', score: 0.9 };
+        finalMessage.sources = [source, { ...source }];
         item.messages = [message('question-1', body.message, null, 'user'), finalMessage];
         return route.fulfill({ contentType: 'text/event-stream', body: frame('start', { conversation_id: item.id }) + frame('status', { status: 'searching', tool: 'search_knowledge_base', args: { query: 'test' } }) + frame('status', { status: 'generating' }) + frame('delta', { content: finalMessage.content }) + frame('done', { message_id: finalMessage.id, sources: finalMessage.sources }) });
       }
@@ -79,6 +81,13 @@ function frame(name, data) { return `event: ${name}\ndata: ${JSON.stringify(data
     });
     await page.goto(process.env.APP_URL || 'http://127.0.0.1:3000/chat');
     await page.getByRole('heading', { name: /دانش سازمان/ }).waitFor();
+    const knowledgeDropdown = page.getByRole('combobox', { name: 'محدودهٔ دانش', exact: true });
+    await knowledgeDropdown.click();
+    await page.getByRole('listbox').waitFor();
+    await page.screenshot({ path: path.join(artifactDir, 'dropdown.png'), fullPage: true });
+    await page.getByRole('option', { name: /توسعهٔ زیرساخت/ }).click();
+    assert.match(await knowledgeDropdown.textContent(), /توسعهٔ زیرساخت/);
+    console.log('PASS: advanced project dropdown opens, renders and selects');
     await page.getByRole('button', { name: /خلاصهٔ یک سند/ }).click();
     assert.match(await page.getByRole('textbox', { name: 'پیام', exact: true }).inputValue(), /خلاصه/);
     assert.equal(requests.filter((item) => item.endpoint === '/chat').length, 0, 'suggestions must not send immediately');
@@ -114,6 +123,7 @@ function frame(name, data) { return `event: ${name}\ndata: ${JSON.stringify(data
     await page.getByRole('button', { name: 'ارسال پیام', exact: true }).click();
     await page.getByText('پاسخ مستند بر اساس اسناد پروژه.', { exact: true }).waitFor();
     await page.getByText('[1] قرارداد.pdf', { exact: true }).waitFor();
+    assert.equal(await page.getByText('[2] قرارداد.pdf', { exact: true }).count(), 0, 'duplicate citations are removed');
     assert.equal(await page.getByRole('button', { name: 'توقف دریافت پاسخ' }).count(), 0);
     console.log('PASS: SSE completion and citations');
 
@@ -205,6 +215,11 @@ function frame(name, data) { return `event: ${name}\ndata: ${JSON.stringify(data
     await page.getByRole('link', { name: 'اسناد', exact: true }).click();
     await page.getByRole('heading', { name: 'پایگاه اسناد و دانش' }).waitFor();
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+    await page.getByRole('combobox', { name: 'انتخاب پروژه', exact: true }).click();
+    await page.getByRole('listbox').waitFor();
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'mobile dropdown must stay inside viewport');
+    await page.screenshot({ path: path.join(artifactDir, 'mobile-dropdown.png'), fullPage: true });
+    await page.keyboard.press('Escape');
     await page.screenshot({ path: path.join(artifactDir, 'mobile-documents.png'), fullPage: true });
     assert.deepEqual(errors, []);
     console.log('PASS: mobile navigation, documents, no horizontal overflow, no browser runtime errors');

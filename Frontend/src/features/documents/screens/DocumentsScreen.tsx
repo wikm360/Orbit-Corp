@@ -162,17 +162,12 @@ export function DocumentsScreen() {
                 <Select
                   id="documents-project"
                   value={projectId ?? ""}
-                  onChange={(event) => {
+                  onValueChange={(nextValue) => {
                     setPendingDeleteId(null);
-                    setProjectId(event.target.value);
+                    setProjectId(nextValue);
                   }}
-                >
-                  {workspace.projects.map((project) => (
-                    <option key={project.id} value={project.id}>
-                      {project.name}
-                    </option>
-                  ))}
-                </Select>
+                  options={workspace.projects.map((project) => ({ value: project.id, label: project.name, description: project.description }))}
+                />
               </div>
 
               {canManageProject && (

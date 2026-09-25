@@ -71,10 +71,9 @@ export function MemoryForm({ initialValue, submitLabel, isSubmitting, onCancel, 
         <Select
           id="memory-category"
           value={category}
-          onChange={(event) => setCategory(event.target.value as MemoryCategory)}
-        >
-          {CATEGORY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-        </Select>
+          onValueChange={(nextValue) => setCategory(nextValue as MemoryCategory)}
+          options={CATEGORY_OPTIONS}
+        />
       </div>
 
       {error && <p role="alert" className="rounded-xl bg-red-50 px-3 py-2.5 text-sm text-red-700">{error}</p>}

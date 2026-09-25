@@ -10,6 +10,8 @@ import { DocumentAdminTable } from "../components/DocumentAdminTable";
 import { useAdmin } from "../hooks/useAdmin";
 
 const ROLE_LABEL: Record<UserRole, string> = { super_admin: "مدیر ارشد", admin: "مدیر", user: "کاربر" };
+const TEAM_ROLE_OPTIONS = [{ value: "member", label: "عضو" }, { value: "leader", label: "سرپرست" }];
+const USER_ROLE_OPTIONS = [{ value: "user", label: "کاربر" }, { value: "admin", label: "مدیر" }, { value: "super_admin", label: "مدیر ارشد" }];
 
 export function AdminScreen() {
   const currentUser = useAuthStore((state) => state.user);
@@ -45,16 +47,12 @@ export function AdminScreen() {
           <h3 className="font-medium text-gray-900">{team.name}</h3>
           <div className="mt-3 space-y-2">{currentMembers.map((member) => <div key={member.user.id} className="flex flex-wrap items-center gap-2 text-sm">
             <span className="min-w-0 flex-1 break-all">{member.user.full_name || member.user.email}</span>
-            <Select size="sm" aria-label={`نقش ${member.user.email} در ${team.name}`} value={member.role} disabled={isMutating} onChange={(event) => void assignUserToTeam(member.user.id, team.id, event.target.value as "leader" | "member").catch(() => {})} className="w-28"><option value="member">عضو</option><option value="leader">سرپرست</option></Select>
+            <Select size="sm" aria-label={`نقش ${member.user.email} در ${team.name}`} value={member.role} disabled={isMutating} onValueChange={(nextValue) => void assignUserToTeam(member.user.id, team.id, nextValue as "leader" | "member").catch(() => {})} options={TEAM_ROLE_OPTIONS} className="w-36" />
             <Button type="button" variant="ghost" size="sm" disabled={isMutating} onClick={() => void removeUserFromTeam(member.user.id, team.id).catch(() => {})}>حذف عضویت</Button>
           </div>)}</div>
           {availableUsers.length > 0 && <div className="mt-4 flex flex-wrap gap-2">
-            <Select aria-label={`کاربر برای تیم ${team.name}`} value={selectedUser[team.id] ?? ""} onChange={(event) => setSelectedUser((current) => ({ ...current, [team.id]: event.target.value }))} className="min-w-56 flex-1">
-              <option value="">انتخاب کاربر</option>{availableUsers.map((user) => <option key={user.id} value={user.id}>{user.full_name || user.email}</option>)}
-            </Select>
-            <Select aria-label={`نقش در تیم ${team.name}`} value={selectedRole[team.id] ?? "member"} onChange={(event) => setSelectedRole((current) => ({ ...current, [team.id]: event.target.value as "leader" | "member" }))} className="w-32">
-              <option value="member">عضو</option><option value="leader">سرپرست</option>
-            </Select>
+            <Select aria-label={`کاربر برای تیم ${team.name}`} value={selectedUser[team.id] ?? ""} onValueChange={(nextValue) => setSelectedUser((current) => ({ ...current, [team.id]: nextValue }))} options={availableUsers.map((user) => ({ value: user.id, label: user.full_name || user.email, description: user.full_name ? user.email : undefined }))} placeholder="انتخاب کاربر" className="min-w-56 flex-1" />
+            <Select aria-label={`نقش در تیم ${team.name}`} value={selectedRole[team.id] ?? "member"} onValueChange={(nextValue) => setSelectedRole((current) => ({ ...current, [team.id]: nextValue as "leader" | "member" }))} options={TEAM_ROLE_OPTIONS} className="w-36" />
             <Button type="button" size="sm" disabled={isMutating || !selectedUser[team.id]} onClick={() => void assignUserToTeam(selectedUser[team.id] ?? "", team.id, selectedRole[team.id] ?? "member").then(() => setSelectedUser((current) => ({ ...current, [team.id]: "" }))).catch(() => {})}>افزودن</Button>
           </div>}
         </div>;
@@ -64,9 +62,7 @@ export function AdminScreen() {
       <h2 className="mb-4 font-semibold text-gray-800">کاربران</h2>
       <div className="space-y-3">{users.map((user) => <div key={user.id} className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 pb-3 text-sm">
         <span className="break-all">{user.full_name || user.email} — {ROLE_LABEL[user.role]}</span>
-        {currentUser?.role === "super_admin" && <Select aria-label={`نقش سازمانی ${user.email}`} value={user.role} disabled={isMutating || user.id === currentUser.id} onChange={(event) => void setUserRole(user.id, event.target.value as UserRole).catch(() => {})} className="w-32">
-          <option value="user">کاربر</option><option value="admin">مدیر</option><option value="super_admin">مدیر ارشد</option>
-        </Select>}
+        {currentUser?.role === "super_admin" && <Select aria-label={`نقش سازمانی ${user.email}`} value={user.role} disabled={isMutating || user.id === currentUser.id} onValueChange={(nextValue) => void setUserRole(user.id, nextValue as UserRole).catch(() => {})} options={USER_ROLE_OPTIONS} className="w-36" />}
       </div>)}</div>
     </section>
     <section className="rounded-2xl border border-gray-200 bg-white p-5">

@@ -194,7 +194,15 @@ export function ChatScreen() {
       <OrbitIcon name="folder" className="h-4 w-4 text-slate-400" />
       {group ? <span className="text-slate-500">دانش پروژه: <span className="font-medium text-slate-700">{projectName || "پروژهٔ این گفتگو"}</span></span> : <>
         <label htmlFor="linked-project" className="text-slate-500">محدودهٔ دانش</label>
-        <Select id="linked-project" size="sm" disabled={isLoadingConversation || isStreaming || linkingProject || isUploadingDocument || Boolean(conversationId && !conversation)} value={conversationId ? conversation?.linked_project_id ?? "" : newLinkedProjectId} onChange={(event) => conversationId ? void changeLinkedProject(event.target.value || null) : setNewLinkedProjectId(event.target.value)} className="max-w-[65vw] border-slate-200 font-medium"><option value="">دانش عمومی و اسناد شخصی</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</Select>
+        <Select
+          id="linked-project"
+          size="sm"
+          disabled={isLoadingConversation || isStreaming || linkingProject || isUploadingDocument || Boolean(conversationId && !conversation)}
+          value={conversationId ? conversation?.linked_project_id ?? "" : newLinkedProjectId}
+          onValueChange={(nextValue) => conversationId ? void changeLinkedProject(nextValue || null) : setNewLinkedProjectId(nextValue)}
+          options={[{ value: "", label: "دانش عمومی و اسناد شخصی" }, ...projects.map((project) => ({ value: project.id, label: project.name, description: project.description }))]}
+          className="max-w-[65vw]"
+        />
       </>}
       <span className="mr-auto hidden text-[11px] text-slate-400 sm:block">پاسخ‌های مستند، تصمیم‌های روشن‌تر</span>
     </div>
@@ -203,7 +211,7 @@ export function ChatScreen() {
     <Modal isOpen={groupModalOpen} onClose={closeGroupModal} title="یک گفتگو برای تیم شما">
       <p className="mb-5 text-sm leading-7 text-slate-500">دربارهٔ پروژه گفتگو کنید و با منشن کردن دستیار، از دانش و اسناد پروژه کمک بگیرید.</p>
       <form onSubmit={(event) => { event.preventDefault(); void createGroup(); }} className="space-y-4">
-        <div><label htmlFor="group-project" className="mb-2 block text-sm font-medium text-slate-700">پروژه</label><Select id="group-project" required disabled={creatingGroup} value={groupProjectId} onChange={(event) => setGroupProjectId(event.target.value)}>{projects.length === 0 && <option value="">پروژه‌ای در دسترس نیست</option>}{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</Select></div>
+        <div><label htmlFor="group-project" className="mb-2 block text-sm font-medium text-slate-700">پروژه</label><Select id="group-project" required disabled={creatingGroup || projects.length === 0} value={groupProjectId} onValueChange={setGroupProjectId} options={projects.map((project) => ({ value: project.id, label: project.name, description: project.description }))} placeholder="پروژه‌ای در دسترس نیست" /></div>
         <Input label="عنوان گفتگو (اختیاری)" value={groupTitle} disabled={creatingGroup} onChange={(event) => setGroupTitle(event.target.value)} placeholder="مثلاً برنامه‌ریزی اسپرینت جدید" />
         <p className="text-xs leading-6 text-slate-500">اگر عنوان خالی باشد، نام پیش‌فرض گفتگو انتخاب می‌شود.</p>
         {modalError && <p role="alert" className="text-xs leading-6 text-red-600">{modalError}</p>}

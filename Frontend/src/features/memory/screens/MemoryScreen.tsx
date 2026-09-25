@@ -151,9 +151,7 @@ export function MemoryScreen() {
             <div className="grid gap-5 lg:grid-cols-[minmax(240px,1fr)_minmax(0,2fr)] lg:items-end">
               <div>
                 <label htmlFor="memory-project" className="mb-2 block text-sm font-medium text-gray-700">پروژه</label>
-                <Select id="memory-project" value={projectId ?? ""} onChange={(event) => selectProject(event.target.value)}>
-                  {managedProjects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
-                </Select>
+                <Select id="memory-project" value={projectId ?? ""} onValueChange={selectProject} options={managedProjects.map((project) => ({ value: project.id, label: project.name, description: project.description }))} />
                 {selectedProject?.description && <p className="mt-2 line-clamp-2 text-xs leading-5 text-gray-500">{selectedProject.description}</p>}
               </div>
               <div className="grid grid-cols-3 gap-2 sm:gap-3">
@@ -171,13 +169,8 @@ export function MemoryScreen() {
                 <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400"><circle cx="11" cy="11" r="7"/><path strokeLinecap="round" d="m20 20-4-4"/></svg>
                 <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="جست‌وجو در متن حافظه..." className="h-10 w-full rounded-xl border border-gray-200 bg-slate-50 pr-9 pl-3 text-sm outline-none transition focus:border-teal-400 focus:bg-white focus:ring-4 focus:ring-teal-100" />
               </label>
-              <Select size="sm" aria-label="فیلتر دسته‌بندی" value={category} onChange={(event) => setCategory(event.target.value as MemoryCategory | "all")} className="lg:w-48">
-                <option value="all">همه دسته‌ها</option>
-                {CATEGORY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-              </Select>
-              <Select size="sm" aria-label="فیلتر وضعیت تأیید" value={verification} onChange={(event) => setVerification(event.target.value as VerificationFilter)} className="lg:w-48">
-                <option value="all">همه وضعیت‌ها</option><option value="verified">تأییدشده</option><option value="unverified">در انتظار تأیید</option>
-              </Select>
+              <Select size="sm" aria-label="فیلتر دسته‌بندی" value={category} onValueChange={(nextValue) => setCategory(nextValue as MemoryCategory | "all")} options={[{ value: "all", label: "همه دسته‌ها" }, ...CATEGORY_OPTIONS]} className="lg:w-48" />
+              <Select size="sm" aria-label="فیلتر وضعیت تأیید" value={verification} onValueChange={(nextValue) => setVerification(nextValue as VerificationFilter)} options={[{ value: "all", label: "همه وضعیت‌ها" }, { value: "verified", label: "تأییدشده" }, { value: "unverified", label: "در انتظار تأیید" }]} className="lg:w-48" />
               <Button type="button" variant="ghost" size="sm" onClick={() => void refresh()} disabled={isLoading || Boolean(mutationKey)} className="h-10">به‌روزرسانی</Button>
             </div>
 
