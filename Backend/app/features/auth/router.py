@@ -1,5 +1,4 @@
 from fastapi import APIRouter, Depends
-from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -19,18 +18,6 @@ async def register(payload: UserRegister, db: AsyncSession = Depends(get_db)):
 @router.post("/login", response_model=TokenResponse)
 async def login(payload: UserLogin, db: AsyncSession = Depends(get_db)):
     return await service.login_user(db, payload)
-
-
-@router.post("/token", response_model=TokenResponse, include_in_schema=False)
-async def token_login(
-    form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)
-):
-    """OAuth2 password-flow form endpoint, used only by Swagger UI's
-    "Authorize" dialog (which POSTs username/password as form data to the
-    scheme's tokenUrl, not JSON). Real clients use /login instead."""
-    return await service.login_user(
-        db, UserLogin(email=form_data.username, password=form_data.password)
-    )
 
 
 @router.post("/refresh", response_model=TokenResponse)

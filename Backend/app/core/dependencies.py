@@ -3,7 +3,7 @@ from uuid import UUID
 
 import jwt
 from fastapi import Depends
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,7 +15,7 @@ from app.features.auth.models import User, UserRole
 from app.features.projects.models import Project
 from app.features.projects.service import get_user_project_ids
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")
+bearer_scheme = HTTPBearer()
 
 ADMIN_ROLES = (UserRole.SUPER_ADMIN, UserRole.ADMIN)
 
@@ -54,11 +54,11 @@ class UserContext:
 
 
 async def get_current_user(
-    token: str = Depends(oauth2_scheme),
+    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> User:
     try:
-        payload = decode_access_token(token)
+        payload = decode_access_token(credentials.credentials)
         user_id = payload.get("sub")
     except jwt.PyJWTError as exc:
         raise UnauthorizedError() from exc
