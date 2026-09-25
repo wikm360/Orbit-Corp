@@ -23,9 +23,43 @@ def parse_document(file_path: str) -> str:
     if suffix == ".xlsx":
         return _parse_xlsx(file_path)
     if suffix == ".txt":
-        return Path(file_path).read_text(encoding="utf-8", errors="ignore")
+        return _parse_txt(file_path)
 
     raise BadRequestError(f"Unsupported file type: {suffix}")
+
+
+def _parse_txt(file_path: str) -> str:
+    """Decodes a .txt file, detecting UTF-16 (common for Windows-originated
+    files - e.g. PowerShell's `Start-Transcript` writes UTF-16LE) instead of
+    assuming UTF-8 outright.
+
+    A blind `read_text(encoding="utf-8")` doesn't raise on UTF-16 content:
+    every ASCII byte in it is followed by a `\\x00` byte, and `\\x00` alone
+    is *also* valid UTF-8 (it decodes to U+0000), so the read silently
+    "succeeds" while leaving a literal NUL between every character. Postgres
+    then rejects the whole chunk outright - `text`/`varchar` columns can
+    never contain an embedded NUL byte, regardless of the source encoding.
+    """
+    raw = Path(file_path).read_bytes()
+
+    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+        text = raw.decode("utf-16")
+    elif raw.startswith(b"\xef\xbb\xbf"):
+        text = raw.decode("utf-8-sig")
+    else:
+        # No BOM: guess UTF-16LE by its tell - a NUL byte after most
+        # characters. Genuine UTF-8 text (Latin or multi-byte, Persian
+        # included) essentially never contains NUL bytes at all.
+        sample = raw[:4000]
+        if sample.count(b"\x00") > len(sample) // 4:
+            try:
+                text = raw.decode("utf-16-le")
+            except UnicodeDecodeError:
+                text = raw.decode("utf-8", errors="ignore")
+        else:
+            text = raw.decode("utf-8", errors="ignore")
+
+    return text.replace("\x00", "")
 
 
 def _parse_pdf(file_path: str) -> str:

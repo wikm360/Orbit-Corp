@@ -89,3 +89,18 @@ class ConnectionManager:
 
 
 manager = ConnectionManager()
+
+
+async def publish_event(conversation_id: uuid.UUID, event: dict) -> None:
+    """One-shot publish onto a conversation's channel, for callers outside
+    the main app process (the RQ ingestion worker, which runs each job in
+    its own fresh event loop via `asyncio.run`). `manager.broadcast` reuses
+    a single long-lived Redis client tied to whichever loop first used it -
+    fine for the main process's one event loop, but unsafe to reuse across
+    the worker's many short-lived ones. This opens and closes its own
+    connection instead."""
+    redis_client = aioredis.from_url(settings.redis_url, decode_responses=True)
+    try:
+        await redis_client.publish(_channel(conversation_id), json.dumps(event, default=str))
+    finally:
+        await redis_client.aclose()

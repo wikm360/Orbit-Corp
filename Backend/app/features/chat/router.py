@@ -27,7 +27,7 @@ from app.features.chat.schemas import (
 )
 from app.features.chat.ws import manager as ws_manager
 from app.features.documents import service as documents_service
-from app.features.documents.schemas import DocumentUploadResponse
+from app.features.documents.schemas import DocumentRead, DocumentUploadResponse
 from app.features.projects.models import Project
 from app.features.projects.service import get_user_project_ids
 
@@ -131,6 +131,19 @@ async def upload_conversation_document(
         uploaded_by=context.id,
     )
     return DocumentUploadResponse(document=document)
+
+
+@router.get("/conversations/{conversation_id}/documents", response_model=list[DocumentRead])
+async def list_conversation_documents(
+    conversation: Conversation = Depends(require_conversation_access),
+    db: AsyncSession = Depends(get_db),
+):
+    """Catch-up/poll endpoint for files uploaded into this conversation - each
+    row's `status` reflects whether ingestion has finished (`ready`/`failed`)
+    or is still running (`processing`). A `document_status` event is also
+    pushed on this conversation's websocket the moment ingestion completes,
+    so a connected client doesn't have to poll."""
+    return await documents_service.list_conversation_documents(db, conversation.id)
 
 
 async def _authenticate_websocket(db: AsyncSession, token: str) -> UserContext | None:

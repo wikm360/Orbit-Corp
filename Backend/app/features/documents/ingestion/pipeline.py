@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.database import async_session_factory
+from app.features.chat.ws import publish_event
 from app.features.documents.ingestion.chunker import chunk_text
 from app.features.documents.ingestion.embedder import embed_chunks
 from app.features.documents.ingestion.parser import parse_document
@@ -44,7 +45,11 @@ class IngestionStep(ABC):
 
 class ParseStep(IngestionStep):
     async def run(self, context: IngestionContext) -> None:
-        context.raw_text = parse_document(context.file_path)
+        # Postgres text/varchar columns reject an embedded NUL byte outright
+        # regardless of source encoding - stripped here so no parser (txt,
+        # or an edge case in pdf/docx/pptx/xlsx extraction) can sneak one
+        # through and fail the whole insert downstream.
+        context.raw_text = parse_document(context.file_path).replace("\x00", "")
 
 
 class ChunkStep(IngestionStep):
@@ -94,6 +99,7 @@ async def run_ingestion_pipeline(document_id: uuid.UUID, file_path: str) -> None
             document.status = DocumentStatus.READY
             document.embedding_model = get_settings().embedding_model
             await db.commit()
+            await _notify_conversation(document)
         except Exception as exc:  # noqa: BLE001 - persisted as failure state, then re-raised for RQ/logs
             await db.rollback()
             logger.exception("Ingestion failed for document %s", document_id)
@@ -102,7 +108,26 @@ async def run_ingestion_pipeline(document_id: uuid.UUID, file_path: str) -> None
                 document.status = DocumentStatus.FAILED
                 document.error_message = str(exc)[:2000]
                 await db.commit()
+                await _notify_conversation(document)
             raise
+
+
+async def _notify_conversation(document: Document) -> None:
+    """Pushes a `document_status` event on the uploading conversation's
+    websocket once ingestion finishes, so a connected client learns a file
+    is ready (or failed) without polling. Only conversation-scoped uploads
+    have a channel to notify on - project/personal-library uploads don't."""
+    if document.conversation_id is None:
+        return
+    await publish_event(
+        document.conversation_id,
+        {
+            "event": "document_status",
+            "document_id": str(document.id),
+            "status": document.status.value,
+            "filename": document.filename,
+        },
+    )
 
 
 def run_ingestion_pipeline_sync(document_id: uuid.UUID, file_path: str) -> None:
