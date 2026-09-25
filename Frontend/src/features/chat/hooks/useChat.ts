@@ -4,155 +4,165 @@ import { friendlyErrorMessage } from "@/shared/lib/errorMessages";
 import { useAuthStore } from "@/features/auth/hooks/useAuthStore";
 
 import { chatApi, streamChat } from "../api/chatApi";
-import { ChatMessage, Conversation, GroupEvent } from "../types";
+import { normalizeAgentStatus } from "../lib/agentStatus";
+import { AgentActivity, AgentStatus, ChatMessage, Conversation, GroupEvent } from "../types";
 
 function addMessage(current: ChatMessage[], message: ChatMessage): ChatMessage[] {
-  const withoutPending = message.reply_to_message_id
-    ? current.filter((item) => item.id !== `pending-${message.reply_to_message_id}`)
-    : current;
-  const index = withoutPending.findIndex((item) => item.id === message.id);
-  if (index < 0) return [...withoutPending, message];
-  return withoutPending.map((item, position) => position === index ? message : item);
+  const pendingId = message.sender_type === "assistant" && message.reply_to_message_id ? `pending-${message.reply_to_message_id}` : null;
+  const index = current.findIndex((item) => item.id === message.id || item.id === pendingId);
+  if (index < 0) return [...current, message];
+  // Replace in place so another assistant's ongoing response keeps its position.
+  return current.flatMap((item, position) => position === index ? [message] : item.id === message.id || item.id === pendingId ? [] : [item]);
+}
+
+function pendingMessage(replyId: string): ChatMessage {
+  return { id: `pending-${replyId}`, sender_type: "assistant", sender_id: null, content: "", sources: [], reply_to_message_id: replyId, created_at: new Date().toISOString() };
+}
+
+function settlePending(messages: ChatMessage[]) {
+  return messages.filter((message) => !message.id.startsWith("pending-") || message.content).map((message) =>
+    message.id.startsWith("pending-") ? { ...message, id: message.id.replace("pending-", "interrupted-") } : message
+  );
 }
 
 export function useChat() {
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [agentStatusText, setAgentStatusText] = useState<string | null>(null);
+  const [isSending, setIsSending] = useState(false);
+  const [activities, setActivities] = useState<Record<string, AgentStatus | null>>({});
+  const [connectionState, setConnectionState] = useState<"connecting" | "connected" | "reconnecting">("connecting");
   const [isLoadingConversation, setIsLoadingConversation] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const streamControllerRef = useRef<AbortController | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
-  const loadRequestRef = useRef(0);
+  const sessionRef = useRef(0);
+  const mountedRef = useRef(true);
+  const sendingRef = useRef(false);
   const latestMessageIdRef = useRef<string | undefined>(undefined);
-  const activeConversationIdRef = useRef<string | null>(null);
   const token = useAuthStore((state) => state.token);
 
-  useEffect(() => () => {
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      streamControllerRef.current?.abort();
+      socketRef.current?.close();
+    };
+  }, []);
+
+  const reset = useCallback(() => {
+    sessionRef.current += 1;
     streamControllerRef.current?.abort();
+    streamControllerRef.current = null;
     socketRef.current?.close();
+    socketRef.current = null;
+    sendingRef.current = false;
+    latestMessageIdRef.current = undefined;
+    setConversation(null);
+    setConversationId(null);
+    setMessages([]);
+    setError(null);
+    setIsSending(false);
+    setActivities({});
+    setConnectionState("connecting");
+    setIsLoadingConversation(false);
+    return sessionRef.current;
   }, []);
 
   const loadConversation = useCallback(async (id: string) => {
-    streamControllerRef.current?.abort();
-    socketRef.current?.close();
-    setIsStreaming(false);
-    setAgentStatusText(null);
-    setError(null);
+    const session = reset();
     setIsLoadingConversation(true);
-    const requestId = ++loadRequestRef.current;
     try {
       const detail = await chatApi.getConversation(id);
-      if (requestId !== loadRequestRef.current) return;
+      if (!mountedRef.current || session !== sessionRef.current) return;
       setConversation(detail);
       setConversationId(detail.id);
       setMessages(detail.messages);
       latestMessageIdRef.current = detail.messages.at(-1)?.id;
     } catch (err) {
-      if (requestId === loadRequestRef.current) setError(friendlyErrorMessage(err, "بارگذاری گفتگو ناموفق بود."));
+      if (mountedRef.current && session === sessionRef.current) setError(friendlyErrorMessage(err, "بارگذاری گفتگو ناموفق بود."));
     } finally {
-      if (requestId === loadRequestRef.current) setIsLoadingConversation(false);
+      if (mountedRef.current && session === sessionRef.current) setIsLoadingConversation(false);
     }
-  }, []);
+  }, [reset]);
 
-  const startNewConversation = useCallback(() => {
-    streamControllerRef.current?.abort();
-    socketRef.current?.close();
-    loadRequestRef.current += 1;
-    latestMessageIdRef.current = undefined;
-    activeConversationIdRef.current = null;
-    setConversation(null);
-    setConversationId(null);
-    setMessages([]);
-    setError(null);
-    setIsStreaming(false);
-    setAgentStatusText(null);
-    setIsLoadingConversation(false);
-  }, []);
+  const startNewConversation = useCallback(() => { reset(); }, [reset]);
 
   useEffect(() => {
     if (!conversationId || conversation?.type !== "project_group" || !token) return;
+    const session = sessionRef.current;
     let stopped = false;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     let socket: WebSocket;
-    const connect = async () => {
+    const active = () => mountedRef.current && !stopped && session === sessionRef.current;
+    const receiveMessage = (message: ChatMessage) => {
+      latestMessageIdRef.current = message.id;
+      if (message.sender_type === "assistant" && message.reply_to_message_id) {
+        setActivities((current) => {
+          const next = { ...current };
+          delete next[message.reply_to_message_id!];
+          return next;
+        });
+      }
+      setMessages((current) => addMessage(current, message));
+    };
+    const connect = () => {
+      if (!active()) return;
       try {
-        if (stopped) return;
         const currentToken = localStorage.getItem("auth_token") ?? token;
         socket = new WebSocket(chatApi.websocketUrl(conversationId, currentToken));
         socketRef.current = socket;
         socket.onopen = async () => {
+          if (!active()) return;
+          setConnectionState("connected");
           try {
             const missed = await chatApi.listMessages(conversationId, latestMessageIdRef.current);
-            if (stopped) return;
-            missed.forEach((message) => {
-              latestMessageIdRef.current = message.id;
-              setMessages((current) => addMessage(current, message));
-            });
+            if (active()) missed.forEach(receiveMessage);
           } catch (err) {
-            setError(friendlyErrorMessage(err, "همگام‌سازی پیام‌ها ناموفق بود."));
+            if (active()) setError(friendlyErrorMessage(err, "همگام‌سازی پیام‌ها ناموفق بود."));
           }
         };
         socket.onmessage = (event) => {
-          const payload = JSON.parse(event.data) as GroupEvent;
-          if (payload.event === "message") {
-            latestMessageIdRef.current = payload.message.id;
-            if (payload.message.sender_type === "assistant" || payload.message.reply_to_message_id) {
-              setIsStreaming(false);
-              setAgentStatusText(null);
-            }
-            setMessages((current) => addMessage(current, payload.message));
+          if (!active()) return;
+          let payload: GroupEvent;
+          try { payload = JSON.parse(event.data) as GroupEvent; } catch { return; }
+          if (!payload || typeof payload !== "object") return;
+          if (payload.event === "message" && payload.message) {
+            receiveMessage(payload.message);
           } else if (payload.event === "assistant_start") {
-            setIsStreaming(true);
-            setAgentStatusText("هوش مصنوعی در حال تحلیل و آماده‌سازی پاسخ...");
-            setMessages((current) => addMessage(current, {
-              id: `pending-${payload.reply_to_message_id}`,
-              sender_type: "assistant",
-              sender_id: null,
-              content: "",
-              sources: [],
-              reply_to_message_id: payload.reply_to_message_id,
-              created_at: new Date().toISOString(),
-            }));
+            setActivities((current) => ({ ...current, [payload.reply_to_message_id]: { status: "preparing" } }));
+            setMessages((current) => current.some((item) => item.id === `pending-${payload.reply_to_message_id}`) ? current : [...current, pendingMessage(payload.reply_to_message_id)]);
           } else if (payload.event === "assistant_status") {
-            setAgentStatusText(payload.status);
+            const status = normalizeAgentStatus(payload);
+            if (status) setActivities((current) => ({ ...current, [payload.reply_to_message_id]: status }));
           } else if (payload.event === "assistant_delta") {
-            setAgentStatusText(null);
+            setActivities((current) => ({ ...current, [payload.reply_to_message_id]: null }));
             setMessages((current) => {
-              const pendingId = `pending-${payload.reply_to_message_id}`;
-              const exists = current.some((item) => item.id === pendingId);
-              if (!exists) {
-                return addMessage(current, {
-                  id: pendingId,
-                  sender_type: "assistant",
-                  sender_id: null,
-                  content: payload.delta,
-                  sources: [],
-                  reply_to_message_id: payload.reply_to_message_id,
-                  created_at: new Date().toISOString(),
-                });
-              }
-              return current.map((item) =>
-                item.id === pendingId ? { ...item, content: item.content + payload.delta } : item
-              );
+              const pending = pendingMessage(payload.reply_to_message_id);
+              return current.some((item) => item.id === pending.id)
+                ? current.map((item) => item.id === pending.id ? { ...item, content: item.content + payload.delta } : item)
+                : [...current, { ...pending, content: payload.delta }];
             });
           }
         };
         socket.onclose = () => {
-          setIsStreaming(false);
-          setAgentStatusText(null);
-          if (!stopped) retryTimer = setTimeout(() => void connect(), 2500);
+          if (!active()) return;
+          setConnectionState("reconnecting");
+          setActivities({});
+          // Catch-up will restore final messages after reconnection.
+          setMessages((current) => current.filter((message) => !message.id.startsWith("pending-")));
+          retryTimer = setTimeout(connect, 2500);
         };
       } catch (err) {
-        if (!stopped) {
+        if (active()) {
+          setConnectionState("reconnecting");
           setError(friendlyErrorMessage(err, "اتصال گفتگوی گروهی ناموفق بود."));
-          retryTimer = setTimeout(() => void connect(), 2500);
+          retryTimer = setTimeout(connect, 2500);
         }
       }
     };
-    void connect();
+    connect();
     return () => {
       stopped = true;
       if (retryTimer) clearTimeout(retryTimer);
@@ -161,88 +171,101 @@ export function useChat() {
   }, [conversationId, conversation?.type, token]);
 
   const sendMessage = useCallback(async (text: string, linkedProjectId: string | null = null) => {
+    if (sendingRef.current || !text.trim() || isLoadingConversation) return;
+    const session = sessionRef.current;
+    sendingRef.current = true;
+    setIsSending(true);
     setError(null);
     if (conversation?.type === "project_group" && conversationId) {
-      setIsStreaming(true);
       try {
         const message = await chatApi.postGroupMessage(conversationId, text);
+        if (!mountedRef.current || session !== sessionRef.current) return;
         latestMessageIdRef.current = message.id;
         setMessages((current) => addMessage(current, message));
       } catch (err) {
-        setError(friendlyErrorMessage(err, "ارسال پیام ناموفق بود."));
+        if (mountedRef.current && session === sessionRef.current) setError(friendlyErrorMessage(err, "ارسال پیام ناموفق بود."));
       } finally {
-        setIsStreaming(false);
+        if (mountedRef.current && session === sessionRef.current) { sendingRef.current = false; setIsSending(false); }
       }
       return;
     }
-    let targetConversationId = conversationId;
-    let pendingProjectToLink: string | null = null;
-    setIsStreaming(true);
-    if (!targetConversationId && linkedProjectId) {
-      try {
+    const controller = new AbortController();
+    streamControllerRef.current = controller;
+    const active = () => mountedRef.current && session === sessionRef.current && !controller.signal.aborted;
+    let targetId = conversationId;
+    try {
+      if (!targetId && linkedProjectId) {
         const created = await chatApi.createPersonal(linkedProjectId);
-        targetConversationId = created.id;
+        if (!active()) return;
+        targetId = created.id;
         setConversation(created);
         setConversationId(created.id);
         window.dispatchEvent(new Event("orbit:conversations-changed"));
-      } catch {
-        // If backend creates personal conversations only via POST /chat, link it upon start
-        pendingProjectToLink = linkedProjectId;
+      }
+      const replyId = crypto.randomUUID();
+      const userMessage: ChatMessage = { id: `local-${replyId}`, sender_type: "user", sender_id: null, content: text, sources: [], reply_to_message_id: null, created_at: new Date().toISOString() };
+      const assistantMessage = { ...pendingMessage(replyId), reply_to_message_id: null };
+      setMessages((current) => [...current, userMessage, assistantMessage]);
+      setActivities({ [replyId]: { status: "preparing" } });
+      await streamChat(text, targetId, {
+        onStart: (id) => {
+          if (!active()) return;
+          targetId = id;
+          setConversationId(id);
+        },
+        onStatus: (status) => { if (active()) setActivities({ [replyId]: status }); },
+        onDelta: (delta) => {
+          if (!active()) return;
+          setActivities({ [replyId]: null });
+          setMessages((current) => current.map((item) => item.id === assistantMessage.id ? { ...item, content: item.content + delta } : item));
+        },
+        onDone: (sources, messageId) => {
+          if (!active()) return;
+          setActivities({});
+          setMessages((current) => current.map((item) => item.id === assistantMessage.id ? { ...item, id: messageId, sources } : item));
+          if (targetId) void chatApi.getConversation(targetId).then((detail) => { if (active()) setConversation(detail); }).catch(() => {});
+          window.dispatchEvent(new Event("orbit:conversations-changed"));
+        },
+        onError: (message) => { if (active()) setError(message); },
+      }, controller.signal);
+    } catch (err) {
+      if (active()) setError(friendlyErrorMessage(err, "ارسال پیام ناموفق بود."));
+    } finally {
+      if (mountedRef.current && session === sessionRef.current && streamControllerRef.current === controller) {
+        streamControllerRef.current = null;
+        sendingRef.current = false;
+        setIsSending(false);
+        setActivities({});
+        setMessages(settlePending);
       }
     }
-    const controller = new AbortController();
+  }, [conversation, conversationId, isLoadingConversation]);
+
+  const stopResponse = useCallback(() => {
     streamControllerRef.current?.abort();
-    streamControllerRef.current = controller;
-    const requestKey = crypto.randomUUID();
-    const userMessage: ChatMessage = {
-      id: `local-${requestKey}`, sender_type: "user", sender_id: null,
-      content: text, sources: [], reply_to_message_id: null, created_at: new Date().toISOString(),
-    };
-    const assistantMessage: ChatMessage = {
-      id: `pending-${requestKey}`, sender_type: "assistant", sender_id: null,
-      content: "", sources: [], reply_to_message_id: null, created_at: new Date().toISOString(),
-    };
-    setMessages((current) => [...current, userMessage, assistantMessage]);
-    setAgentStatusText("در حال پردازش پیام...");
-    await streamChat(text, targetConversationId, {
-      onStart: (id) => {
-        activeConversationIdRef.current = id;
-        setConversationId(id);
-        if (pendingProjectToLink) {
-          void chatApi.linkProject(id, pendingProjectToLink).catch(() => {});
-        }
-      },
-      onStatus: (status) => setAgentStatusText(status),
-      onDelta: (delta) => {
-        setAgentStatusText(null);
-        setMessages((current) => current.map((item) => item.id === assistantMessage.id ? { ...item, content: item.content + delta } : item));
-      },
-      onDone: (sources, messageId) => {
-        setAgentStatusText(null);
-        setMessages((current) => current.map((item) => item.id === assistantMessage.id ? { ...item, id: messageId, sources } : item));
-        if (activeConversationIdRef.current) void chatApi.getConversation(activeConversationIdRef.current).then(setConversation).catch(() => {});
-        window.dispatchEvent(new Event("orbit:conversations-changed"));
-      },
-      onError: (message) => {
-        setAgentStatusText(null);
-        setError(message);
-      },
-    }, controller.signal);
-    if (streamControllerRef.current === controller) {
-      streamControllerRef.current = null;
-      setIsStreaming(false);
-      setAgentStatusText(null);
-    }
-  }, [conversation, conversationId]);
+    setActivities({});
+    setMessages(settlePending);
+  }, []);
 
   const linkProject = useCallback(async (projectId: string | null) => {
     if (!conversationId) return;
+    const session = sessionRef.current;
     const updated = await chatApi.linkProject(conversationId, projectId);
-    setConversation(updated);
+    if (mountedRef.current && session === sessionRef.current) setConversation(updated);
   }, [conversationId]);
 
+  const renameConversation = useCallback(async (title: string) => {
+    if (!conversation) return;
+    const session = sessionRef.current;
+    const updated = await chatApi.renameConversation(conversation, title);
+    if (mountedRef.current && session === sessionRef.current) setConversation(updated);
+    window.dispatchEvent(new Event("orbit:conversations-changed"));
+  }, [conversation]);
+
+  const agentActivities: AgentActivity[] = Object.entries(activities).map(([replyId, status]) => ({ replyId, status }));
   return {
-    conversation, conversationId, messages, isStreaming, agentStatusText, isLoadingConversation, error,
-    sendMessage, loadConversation, startNewConversation, linkProject,
+    conversation, conversationId, messages, isStreaming: isSending || agentActivities.length > 0,
+    isSending, agentActivities, connectionState, isLoadingConversation, error,
+    sendMessage, loadConversation, startNewConversation, linkProject, renameConversation, stopResponse,
   };
 }

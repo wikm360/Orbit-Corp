@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build --webpack",
     "start": "next start",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test": "node --test tests/chat-contract.test.cjs",
+    "test:browser": "node tests/chat-browser.cjs"
   },
   "dependencies": {
     "next": "16.3.4",

@@ -57,7 +57,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   }
 
   return (
-    <div className="flex h-dvh min-h-0 overflow-hidden bg-white">
+    <div className="flex h-dvh min-h-0 overflow-hidden bg-[#f6f8fa]">
       {isSidebarOpen && (
         <button
           type="button"
@@ -76,7 +76,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
         onLogout={logout}
       />
 
-      <div className="flex min-w-0 flex-1 flex-col bg-white">
+      <div className="flex min-w-0 flex-1 flex-col bg-[#f6f8fa]">
         <header className="flex h-14 shrink-0 items-center justify-between border-b border-black/[0.06] px-3 md:hidden">
           <button
             type="button"

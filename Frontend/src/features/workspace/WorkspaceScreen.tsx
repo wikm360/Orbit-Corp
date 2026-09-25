@@ -86,7 +86,7 @@ export function WorkspaceScreen() {
   }
 
   return <main className="mx-auto max-w-5xl space-y-6 p-4 sm:p-6 lg:p-8">
-    <div><h1 className="text-2xl font-bold text-gray-900">فضای کاری</h1><p className="mt-1 text-sm text-gray-500">تیم‌ها، پروژه‌ها و اعضای هر پروژه</p></div>
+    <div className="page-heading rounded-2xl border border-slate-200 bg-white p-6"><h1 className="text-2xl font-bold text-gray-900">فضای کاری</h1><p className="mt-1 text-sm text-gray-500">تیم‌ها، پروژه‌ها و اعضای هر پروژه</p></div>
     {error && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p>}
     {!overview && !error && <p className="text-sm text-gray-500">در حال دریافت اطلاعات...</p>}
     {overview && overview.teams.length === 0 && <p className="rounded-xl bg-white p-4 text-sm text-gray-500">هنوز عضو تیمی نیستید.</p>}

@@ -81,6 +81,8 @@ export function AppSidebar({
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [hasError, setHasError] = useState(false);
+  const [search, setSearch] = useState("");
+  const visibleConversations = conversations.filter((item) => item.title.toLocaleLowerCase("fa-IR").includes(search.trim().toLocaleLowerCase("fa-IR")));
 
   const loadConversations = useCallback(async () => {
     if (pathname !== "/chat") return;
@@ -118,28 +120,28 @@ export function AppSidebar({
     <aside
       aria-label="نوار کناری اصلی"
       className={cn(
-        "fixed inset-y-0 right-0 z-50 flex w-[286px] flex-col border-l border-black/5 bg-[#f7f7f8] p-2 transition-[transform,width] duration-200 ease-out md:relative md:z-20 md:translate-x-0",
+        "orbit-sidebar fixed inset-y-0 right-0 z-50 flex w-[272px] flex-col border-l border-white/5 bg-[#142b40] p-3 transition-[transform,width] duration-200 ease-out md:relative md:z-20 md:translate-x-0",
         isOpen ? "translate-x-0 shadow-2xl" : "translate-x-full",
         isCollapsed && "md:w-[72px]"
       )}
     >
-      <div className="flex h-11 items-center gap-2 px-1">
+      <div className="flex h-14 items-center gap-2 px-1">
         <Link
           href="/chat"
           onClick={onClose}
           className={cn(
-            "flex min-w-0 flex-1 items-center gap-2 rounded-xl p-1.5 transition hover:bg-black/[0.04]",
-            isCollapsed && "md:justify-center"
+            "flex min-w-0 flex-1 items-center gap-2 rounded-xl p-1.5 transition hover:bg-white/[0.05]",
+            isCollapsed && "md:hidden"
           )}
           aria-label="دستیار هوشمند محور گستر"
         >
-          <Image src="/logo.jpg" alt="" width={30} height={30} className="h-7 w-7 rounded-lg object-cover" />
-          <span className={cn("truncate text-sm font-bold text-gray-900", isCollapsed && "md:hidden")}>محور گستر</span>
+          <Image src="/logo.jpg" alt="" width={30} height={30} className="h-9 w-9 rounded-xl object-cover" />
+          <span className={cn("min-w-0", isCollapsed && "md:hidden")}><span className="block truncate text-sm font-bold text-white">محور گستر</span><span className="mt-1 block text-[9px] tracking-[0.18em] text-slate-400" dir="ltr">ORBIT WORKSPACE</span></span>
         </Link>
         <button
           type="button"
           onClick={onToggleCollapse}
-          className="hidden rounded-xl p-2 text-gray-600 transition hover:bg-black/[0.06] hover:text-gray-950 md:block"
+          className="hidden rounded-xl p-2 text-slate-300 transition hover:bg-white/[0.06] hover:text-white md:block"
           aria-label={isCollapsed ? "باز کردن نوار کناری" : "جمع کردن نوار کناری"}
           title={isCollapsed ? "باز کردن نوار کناری" : "جمع کردن نوار کناری"}
         >
@@ -148,7 +150,7 @@ export function AppSidebar({
         <button
           type="button"
           onClick={onClose}
-          className="rounded-xl p-2 text-gray-600 transition hover:bg-black/[0.06] md:hidden"
+          className="rounded-xl p-2 text-slate-300 transition hover:bg-white/[0.06] md:hidden"
           aria-label="بستن نوار کناری"
         >
           <Icon name="close" />
@@ -159,8 +161,7 @@ export function AppSidebar({
         type="button"
         onClick={startNewConversation}
         className={cn(
-          "mt-2 flex h-11 w-full items-center gap-3 rounded-xl px-3 text-sm font-medium text-gray-900 transition hover:bg-black/[0.055] focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-300",
-          pathname === "/chat" && !activeConversationId && "bg-black/[0.055]",
+          "mb-5 mt-6 flex h-11 w-full items-center justify-center gap-3 rounded-xl border border-teal-400/30 bg-teal-500/15 px-3 text-sm font-medium text-teal-100 transition hover:bg-teal-500/25 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-300",
           isCollapsed && "md:justify-center md:px-0"
         )}
         title={isCollapsed ? "گفتگوی جدید" : undefined}
@@ -169,7 +170,7 @@ export function AppSidebar({
         <span className={cn(isCollapsed && "md:hidden")}>گفتگوی جدید</span>
       </button>
 
-      <nav aria-label="ناوبری اصلی" className="mt-1 space-y-0.5">
+      <nav aria-label="ناوبری اصلی" className="space-y-1">
         {NAV_ITEMS.filter((item) => !item.adminOnly || user?.role === "admin" || user?.role === "super_admin").map((item) => {
           const isActive = pathname.startsWith(item.href);
           return (
@@ -179,8 +180,8 @@ export function AppSidebar({
               onClick={onClose}
               title={isCollapsed ? item.label : undefined}
               className={cn(
-                "flex h-11 items-center gap-3 rounded-xl px-3 text-sm text-gray-700 transition hover:bg-black/[0.055] hover:text-gray-950 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-300",
-                isActive && item.href !== "/chat" && "bg-white font-medium text-gray-950 shadow-sm",
+                "flex h-11 items-center gap-3 rounded-xl px-3 text-sm text-slate-300 transition hover:bg-white/[0.06] hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-300",
+                isActive && "bg-white/[0.09] font-medium text-white",
                 isCollapsed && "md:justify-center md:px-0"
               )}
             >
@@ -191,15 +192,19 @@ export function AppSidebar({
         })}
       </nav>
 
-      <div className={cn("my-3 h-px bg-black/[0.06]", isCollapsed && "md:mx-1")} />
+      <div className={cn("my-5 h-px bg-white/10", isCollapsed && "md:mx-1")} />
 
       <div className={cn("min-h-0 flex-1", isCollapsed && "md:hidden")}>
         {pathname === "/chat" ? (
           <div className="flex h-full min-h-0 flex-col">
             <div className="flex items-center justify-between px-3 pb-2">
-              <span className="text-xs font-medium text-gray-500">گفتگوهای اخیر</span>
-              <Icon name="search" className="h-4 w-4 text-gray-400" />
+              <span className="text-xs font-medium text-slate-400">گفتگوهای اخیر</span>
+              <span className="text-[10px] text-slate-500">{conversations.length.toLocaleString("fa-IR")}</span>
             </div>
+            <label className="mx-1 mb-3 flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-2.5 py-2 text-slate-400">
+              <Icon name="search" className="h-3.5 w-3.5" />
+              <input aria-label="جست‌وجوی گفتگوها" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="جست‌وجوی گفتگوها" className="min-w-0 flex-1 bg-transparent text-[11px] text-slate-200 outline-none placeholder:text-slate-500" />
+            </label>
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-1 pb-2">
               {isLoading && conversations.length === 0 && (
                 <div className="space-y-2 px-2 py-1" aria-label="در حال دریافت گفتگوها">
@@ -212,9 +217,10 @@ export function AppSidebar({
                 </button>
               )}
               {!isLoading && !hasError && conversations.length === 0 && (
-                <p className="px-3 py-3 text-xs leading-6 text-gray-400">گفتگوهای شما اینجا نمایش داده می‌شوند.</p>
+                <p className="px-3 py-3 text-xs leading-6 text-slate-400">گفتگوهای شما اینجا نمایش داده می‌شوند.</p>
               )}
-              {conversations.map((conversation) => (
+              {!isLoading && !hasError && search && visibleConversations.length === 0 && <p className="px-3 py-4 text-xs text-slate-400">گفتگویی با این عنوان پیدا نشد.</p>}
+              {visibleConversations.map((conversation) => (
                 <button
                   key={conversation.id}
                   type="button"
@@ -223,34 +229,34 @@ export function AppSidebar({
                     onClose();
                   }}
                   className={cn(
-                    "mb-0.5 block w-full truncate rounded-lg px-3 py-2.5 text-right text-[13px] text-gray-700 transition hover:bg-black/[0.055] hover:text-gray-950",
-                    conversation.id === activeConversationId && "bg-black/[0.065] font-medium text-gray-950"
+                    "mb-1 flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-right text-[13px] text-slate-300 transition hover:bg-white/[0.06] hover:text-white",
+                    conversation.id === activeConversationId && "bg-white/10 font-medium text-white"
                   )}
                 >
-                  {conversation.type === "project_group" ? "👥 " : ""}{conversation.title}
+                  <Icon name={conversation.type === "project_group" ? "workspace" : "chat"} className="h-3.5 w-3.5 text-slate-400" /><span className="truncate">{conversation.title}</span>
                 </button>
               ))}
             </div>
           </div>
         ) : (
           <div className="px-3 py-2">
-            <p className="text-xs font-medium text-gray-500">فضای کاری سازمان</p>
-            <p className="mt-2 text-xs leading-6 text-gray-400">مدیریت دانش، اسناد و دسترسی‌های تیم در یک محیط یکپارچه.</p>
+            <p className="text-xs font-medium text-slate-400">فضای کاری سازمان</p>
+            <p className="mt-2 text-xs leading-6 text-slate-400">مدیریت دانش، اسناد و دسترسی‌های تیم در یک محیط یکپارچه.</p>
           </div>
         )}
       </div>
 
-      <div className="border-t border-black/[0.06] pt-2">
-        <div className={cn("flex items-center gap-2 rounded-xl p-2 hover:bg-black/[0.045]", isCollapsed && "md:justify-center")}>
-          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gray-900 text-xs font-semibold text-white">{avatarLetter}</span>
+      <div className="mt-auto border-t border-white/10 pt-3">
+        <div className={cn("flex items-center gap-2 rounded-xl p-2 hover:bg-white/[0.05]", isCollapsed && "md:justify-center")}>
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-teal-500/20 text-xs font-semibold text-teal-100">{avatarLetter}</span>
           <div className={cn("min-w-0 flex-1", isCollapsed && "md:hidden")}>
-            <p className="truncate text-xs font-semibold text-gray-900">{userLabel}</p>
-            <p className="mt-0.5 truncate text-[10px] text-gray-500">{user?.role === "super_admin" ? "مدیر ارشد سازمان" : user?.role === "admin" ? "مدیر سازمان" : "عضو سازمان"}</p>
+            <p className="truncate text-xs font-semibold text-slate-100">{userLabel}</p>
+            <p className="mt-0.5 truncate text-[10px] text-slate-400">{user?.role === "super_admin" ? "مدیر ارشد سازمان" : user?.role === "admin" ? "مدیر سازمان" : "عضو سازمان"}</p>
           </div>
           <button
             type="button"
             onClick={onLogout}
-            className={cn("rounded-lg p-2 text-gray-500 transition hover:bg-white hover:text-red-600", isCollapsed && "md:hidden")}
+            className={cn("rounded-lg p-2 text-slate-400 transition hover:bg-white/10 hover:text-red-300", isCollapsed && "md:hidden")}
             aria-label="خروج از حساب"
             title="خروج"
           >

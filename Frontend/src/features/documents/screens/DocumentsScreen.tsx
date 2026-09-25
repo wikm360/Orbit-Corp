@@ -85,7 +85,7 @@ export function DocumentsScreen() {
 
   return (
     <main className="mx-auto max-w-5xl p-4 sm:p-6 lg:p-8">
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+      <div className="page-heading mb-6 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-5 sm:p-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">پایگاه اسناد و دانش</h1>
           <p className="mt-1 text-sm leading-6 text-gray-500">

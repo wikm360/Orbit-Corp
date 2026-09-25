@@ -30,8 +30,19 @@ export interface ConversationDetail extends Conversation {
   messages: ChatMessage[];
 }
 
+export interface AgentStatus {
+  status: string;
+  tool?: string;
+  args?: Record<string, unknown>;
+}
+
+export interface AgentActivity {
+  replyId: string;
+  status: AgentStatus | null;
+}
+
 export type GroupEvent =
   | { event: "message"; message: ChatMessage }
   | { event: "assistant_start"; reply_to_message_id: string }
-  | { event: "assistant_status"; reply_to_message_id: string; status: string }
+  | ({ event: "assistant_status"; reply_to_message_id: string } & AgentStatus)
   | { event: "assistant_delta"; reply_to_message_id: string; delta: string };

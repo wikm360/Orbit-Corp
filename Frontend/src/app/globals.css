@@ -10,6 +10,7 @@
 
   body {
     @apply font-sans text-gray-900 antialiased;
+    background: #f6f8fa;
   }
 
   /* Emails, IDs and code are Latin — keep them LTR inside an RTL page. */
@@ -26,7 +27,34 @@
   }
 
   ::selection {
-    @apply bg-accent-300 text-brand-900;
+    background: #b9ebe4;
+    color: #142b40;
+  }
+
+  :focus-visible {
+    outline: 2px solid #1a9391;
+    outline-offset: 3px;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #cbd5e1 transparent;
+  }
+}
+
+@layer components {
+  .chat-surface {
+    background-color: #f9fbfc;
+    background-image: radial-gradient(ellipse at 15% 8%, rgba(37, 184, 180, 0.045), transparent 48%);
+  }
+
+  .orbit-sidebar {
+    background-image: radial-gradient(ellipse at 100% 0%, rgba(54, 110, 139, 0.18), transparent 60%);
+    scrollbar-color: #365063 transparent;
+  }
+
+  .page-heading {
+    background-image: radial-gradient(ellipse at top left, #ebfcfb, transparent 65%);
   }
 }
 

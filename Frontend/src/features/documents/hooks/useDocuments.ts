@@ -3,13 +3,15 @@ import { friendlyErrorMessage } from "@/shared/lib/errorMessages";
 import { documentsApi } from "../api/documentsApi";
 import { Document } from "../types";
 
+const EMPTY_DOCUMENTS: Document[] = [];
+
 export function useDocuments(projectId: string | null) {
   const [result, setResult] = useState<{ projectId: string; documents: Document[] } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const requestIdRef = useRef(0);
-  const documents = result?.projectId === projectId ? result.documents : [];
+  const documents = result?.projectId === projectId ? result.documents : EMPTY_DOCUMENTS;
 
   const refresh = useCallback(async () => {
     if (!projectId) {

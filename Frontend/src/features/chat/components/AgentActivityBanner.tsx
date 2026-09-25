@@ -1,21 +1,17 @@
-"use client";
+import { OrbitIcon } from "@/shared/components/ui/OrbitIcon";
+import { agentStatusLabel } from "../lib/agentStatus";
+import { AgentStatus } from "../types";
 
 interface AgentActivityBannerProps {
-  statusText?: string;
-  isStreaming: boolean;
+  status: AgentStatus;
 }
 
-export function AgentActivityBanner({ statusText, isStreaming }: AgentActivityBannerProps) {
-  if (!isStreaming && !statusText) return null;
-
+export function AgentActivityBanner({ status }: AgentActivityBannerProps) {
   return (
-    <div className="mb-2 inline-flex items-center gap-2 rounded-xl border border-brand-100 bg-brand-50/60 px-3 py-1.5 text-xs text-brand-800 transition-all animate-fade-in">
-      <span className="relative flex h-2 w-2">
-        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand-400 opacity-75" />
-        <span className="relative inline-flex h-2 w-2 rounded-full bg-brand-600" />
-      </span>
-      <span>{statusText || "هوش مصنوعی در حال تحلیل و آماده‌سازی پاسخ..."}</span>
+    <div role="status" className="inline-flex max-w-full items-center gap-3 rounded-2xl border border-teal-100 bg-teal-50/70 px-4 py-3 text-xs text-teal-700">
+      <OrbitIcon name={status.tool?.includes("insight") ? "memory" : status.status === "reading_documents" ? "document" : status.status === "searching" ? "search" : "spark"} className="h-4 w-4" />
+      <span>{agentStatusLabel(status)}</span>
+      <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-teal-600" />
     </div>
   );
 }
-
