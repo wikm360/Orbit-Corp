@@ -9,6 +9,7 @@ import { Button } from "@/shared/components/ui/Button";
 import { Input } from "@/shared/components/ui/Input";
 import { Modal } from "@/shared/components/ui/Modal";
 import { OrbitIcon } from "@/shared/components/ui/OrbitIcon";
+import { Select } from "@/shared/components/ui/Select";
 import { Project } from "@/shared/types";
 import { Document } from "@/features/documents/types";
 import { documentsApi } from "@/features/documents/api/documentsApi";
@@ -17,7 +18,7 @@ import { ChatWindow } from "../components/ChatWindow";
 import { useChat } from "../hooks/useChat";
 
 export function ChatScreen() {
-  const { conversation, conversationId, messages, isStreaming, isSending, agentActivities, connectionState, isLoadingConversation, error, sendMessage, loadConversation, startNewConversation, linkProject, renameConversation, stopResponse } = useChat();
+  const { conversation, conversationId, messages, conversationDocuments, hasProcessingDocuments, isStreaming, isSending, agentActivities, connectionState, isLoadingConversation, error, sendMessage, loadConversation, startNewConversation, linkProject, renameConversation, stopResponse, registerDocument } = useChat();
   const user = useAuthStore((state) => state.user);
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -129,32 +130,31 @@ export function ChatScreen() {
     finally { setLinkingProject(false); }
   }
 
-  async function uploadDocument(file: File) {
+  async function uploadDocument(file: File): Promise<Document> {
     let targetId = conversationId;
     if (!targetId) {
       try {
         const created = await chatApi.createPersonal(newLinkedProjectId || null, file.name);
         targetId = created.id;
-        void loadConversation(created.id);
+        await loadConversation(created.id);
         window.dispatchEvent(new Event("orbit:conversations-changed"));
       } catch (err) {
         throw new Error(friendlyErrorMessage(err, "شروع گفتگو برای آپلود سند ناموفق بود."));
       }
     }
-    await chatApi.uploadDocument(targetId, file);
-    // Save to user's personal documents library as well
-    void documentsApi.uploadPersonal(file).then(() => {
-      void documentsApi.listPersonal().then(setPersonalDocs).catch(() => {});
-    }).catch(() => {});
+    const result = await chatApi.uploadDocument(targetId, file);
+    registerDocument(result.document);
+    return result.document;
   }
 
-  async function handleUpload(file: File) {
+  async function handleUpload(file: File): Promise<Document> {
     setIsUploadingDocument(true);
-    try { await uploadDocument(file); }
+    try { return await uploadDocument(file); }
     finally { setIsUploadingDocument(false); }
   }
 
   const availableDocs = [
+    ...conversationDocuments.map((d) => ({ id: d.id, filename: d.filename, isPersonal: false })),
     ...personalDocs.map((d) => ({ id: d.id, filename: d.filename, isPersonal: true })),
     ...(activeProjectId === loadedDocsProjectId ? projectDocs : []).map((d) => ({ id: d.id, filename: d.filename, isPersonal: false })),
   ];
@@ -194,16 +194,16 @@ export function ChatScreen() {
       <OrbitIcon name="folder" className="h-4 w-4 text-slate-400" />
       {group ? <span className="text-slate-500">دانش پروژه: <span className="font-medium text-slate-700">{projectName || "پروژهٔ این گفتگو"}</span></span> : <>
         <label htmlFor="linked-project" className="text-slate-500">محدودهٔ دانش</label>
-        <select id="linked-project" disabled={isLoadingConversation || isStreaming || linkingProject || isUploadingDocument || Boolean(conversationId && !conversation)} value={conversationId ? conversation?.linked_project_id ?? "" : newLinkedProjectId} onChange={(event) => conversationId ? void changeLinkedProject(event.target.value || null) : setNewLinkedProjectId(event.target.value)} className="max-w-[65vw] rounded-lg border-0 bg-transparent py-1 pl-5 pr-2 text-xs font-medium text-slate-700 disabled:opacity-50"><option value="">دانش عمومی و اسناد شخصی</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select>
+        <Select id="linked-project" size="sm" disabled={isLoadingConversation || isStreaming || linkingProject || isUploadingDocument || Boolean(conversationId && !conversation)} value={conversationId ? conversation?.linked_project_id ?? "" : newLinkedProjectId} onChange={(event) => conversationId ? void changeLinkedProject(event.target.value || null) : setNewLinkedProjectId(event.target.value)} className="max-w-[65vw] border-slate-200 font-medium"><option value="">دانش عمومی و اسناد شخصی</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</Select>
       </>}
       <span className="mr-auto hidden text-[11px] text-slate-400 sm:block">پاسخ‌های مستند، تصمیم‌های روشن‌تر</span>
     </div>
     {actionError && <p role="alert" className="mx-4 mt-3 rounded-xl bg-red-50 p-3 text-xs text-red-700">{actionError}</p>}
-    <div className="min-h-0 flex-1"><ChatWindow key={composerKey} messages={messages} isStreaming={isStreaming} isSending={isSending} isUploadingDocument={isUploadingDocument} isLoadingConversation={isLoadingConversation || linkingProject} error={error} onSend={(text) => void sendMessage(text, newLinkedProjectId || null)} group={group} senderNames={senderNames} onUpload={handleUpload} availableDocuments={availableDocs} agentActivities={agentActivities} onStop={stopResponse} userName={user?.full_name?.split(" ")[0]} /></div>
+    <div className="min-h-0 flex-1"><ChatWindow key={composerKey} messages={messages} isStreaming={isStreaming} isSending={isSending} isUploadingDocument={isUploadingDocument} isDocumentProcessing={hasProcessingDocuments} conversationDocuments={conversationDocuments} isLoadingConversation={isLoadingConversation || linkingProject} error={error} onSend={(text) => void sendMessage(text, newLinkedProjectId || null)} group={group} senderNames={senderNames} onUpload={handleUpload} availableDocuments={availableDocs} agentActivities={agentActivities} onStop={stopResponse} userName={user?.full_name?.split(" ")[0]} /></div>
     <Modal isOpen={groupModalOpen} onClose={closeGroupModal} title="یک گفتگو برای تیم شما">
       <p className="mb-5 text-sm leading-7 text-slate-500">دربارهٔ پروژه گفتگو کنید و با منشن کردن دستیار، از دانش و اسناد پروژه کمک بگیرید.</p>
       <form onSubmit={(event) => { event.preventDefault(); void createGroup(); }} className="space-y-4">
-        <div><label htmlFor="group-project" className="mb-2 block text-sm font-medium text-slate-700">پروژه</label><select id="group-project" required disabled={creatingGroup} value={groupProjectId} onChange={(event) => setGroupProjectId(event.target.value)} className="w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm">{projects.length === 0 && <option value="">پروژه‌ای در دسترس نیست</option>}{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></div>
+        <div><label htmlFor="group-project" className="mb-2 block text-sm font-medium text-slate-700">پروژه</label><Select id="group-project" required disabled={creatingGroup} value={groupProjectId} onChange={(event) => setGroupProjectId(event.target.value)}>{projects.length === 0 && <option value="">پروژه‌ای در دسترس نیست</option>}{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</Select></div>
         <Input label="عنوان گفتگو (اختیاری)" value={groupTitle} disabled={creatingGroup} onChange={(event) => setGroupTitle(event.target.value)} placeholder="مثلاً برنامه‌ریزی اسپرینت جدید" />
         <p className="text-xs leading-6 text-slate-500">اگر عنوان خالی باشد، نام پیش‌فرض گفتگو انتخاب می‌شود.</p>
         {modalError && <p role="alert" className="text-xs leading-6 text-red-600">{modalError}</p>}

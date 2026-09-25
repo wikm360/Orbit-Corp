@@ -32,7 +32,7 @@ function apiHarness(response) {
       ApiError: class extends Error {},
       authorizedFetch: async () => response,
       parseErrorMessage: async () => 'server error',
-      apiRequest: async (url, options) => { calls.push({ url, ...options }); return { ...options.body }; },
+      apiRequest: async (url, options = {}) => { calls.push({ url, ...options }); return { ...options.body }; },
     },
     '@/shared/lib/errorMessages': { friendlyErrorMessage: (error) => error.message },
   }) };
@@ -127,4 +127,11 @@ test('group creation trims optional title and omits empty title; websocket URL r
   assert.deepEqual(calls[0].body, { type: 'project_group', project_id: 'project-1', title: 'اسپرینت ۳' });
   assert.deepEqual(calls[1].body, { type: 'project_group', project_id: 'project-1' });
   assert.equal(chatApi.websocketUrl('c1', 'a+b'), 'wss://api.example.test/api/v1/chat/conversations/c1/ws?token=a%2Bb');
+});
+
+test('conversation documents have a dedicated status endpoint', async () => {
+  const { chatApi, calls } = apiHarness();
+  await chatApi.listDocuments('conversation-1');
+  assert.equal(calls.at(-1).url, '/chat/conversations/conversation-1/documents');
+  assert.equal(calls.at(-1).method, undefined);
 });

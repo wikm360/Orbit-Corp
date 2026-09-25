@@ -45,4 +45,5 @@ export type GroupEvent =
   | { event: "message"; message: ChatMessage }
   | { event: "assistant_start"; reply_to_message_id: string }
   | ({ event: "assistant_status"; reply_to_message_id: string } & AgentStatus)
-  | { event: "assistant_delta"; reply_to_message_id: string; delta: string };
+  | { event: "assistant_delta"; reply_to_message_id: string; delta: string }
+  | { event: "document_status"; document_id: string; status: "ready" | "failed"; filename: string };

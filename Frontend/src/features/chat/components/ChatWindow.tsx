@@ -1,6 +1,7 @@
 import { KeyboardEvent, useEffect, useRef, useState } from "react";
 
 import { OrbitIcon, OrbitIconName } from "@/shared/components/ui/OrbitIcon";
+import { Document } from "@/features/documents/types";
 import { AgentActivity, ChatMessage } from "../types";
 import { MessageBubble } from "./MessageBubble";
 import { MentionDropdown, MentionItem } from "./MentionDropdown";
@@ -20,11 +21,13 @@ interface ChatWindowProps {
   onSend: (text: string) => void;
   senderNames?: Record<string, string>;
   group?: boolean;
-  onUpload?: (file: File) => Promise<void>;
+  onUpload?: (file: File) => Promise<Document>;
   availableDocuments?: AvailableDoc[];
   agentActivities?: AgentActivity[];
   isSending?: boolean;
   isUploadingDocument?: boolean;
+  isDocumentProcessing?: boolean;
+  conversationDocuments?: Document[];
   onStop?: () => void;
   userName?: string;
 }
@@ -52,6 +55,8 @@ export function ChatWindow({
   agentActivities = [],
   isSending = false,
   isUploadingDocument = false,
+  isDocumentProcessing = false,
+  conversationDocuments = [],
   onStop,
   userName,
 }: ChatWindowProps) {
@@ -59,13 +64,14 @@ export function ChatWindow({
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
-  const [attachedFiles, setAttachedFiles] = useState<string[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
   const stickToBottomRef = useRef(true);
   const composerBusy = isSending || (!group && isStreaming) || isLoadingConversation || uploading || isUploadingDocument;
+  const sendBlocked = composerBusy || isDocumentProcessing;
+  const failedDocuments = conversationDocuments.filter((document) => document.status === "failed");
 
   // Mention State
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -152,7 +158,7 @@ export function ChatWindow({
   }, [messages, isStreaming, agentActivities]);
 
   function submit() {
-    if (!draft.trim() || composerBusy) return;
+    if (!draft.trim() || sendBlocked) return;
     stickToBottomRef.current = true;
     onSend(draft.trim());
     setDraft("");
@@ -246,6 +252,11 @@ export function ChatWindow({
               {uploadSuccess}
             </div>
           )}
+          {failedDocuments.map((document) => (
+            <div key={document.id} role="alert" className="mx-auto w-full max-w-2xl rounded-xl border border-red-100 bg-red-50 px-4 py-2.5 text-center text-xs leading-6 text-red-700">
+              پردازش سند «{document.filename}» ناموفق بود{document.error_message ? `: ${document.error_message}` : "."}
+            </div>
+          ))}
         </div>
       </div>
 
@@ -265,19 +276,23 @@ export function ChatWindow({
           />
         )}
 
-        {attachedFiles.length > 0 && (
+        {conversationDocuments.length > 0 && (
           <div className="mx-auto mb-2 flex max-w-3xl flex-wrap items-center gap-2 px-1">
-            <span className="text-xs text-gray-500">پیوست‌های ارسال‌شده:</span>
-            {attachedFiles.map((name) => (
+            <span className="text-xs text-gray-500">پیوست‌های این گفتگو:</span>
+            {conversationDocuments.map((document) => (
               <span
-                key={name}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs text-gray-700"
+                key={document.id}
+                title={document.error_message ?? undefined}
+                className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs ${document.status === "failed" ? "border-red-200 bg-red-50 text-red-700" : document.status === "ready" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-800"}`}
               >
                 <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-3.5 w-3.5 text-brand-600">
                   <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
                   <path d="M14 2v6h6M8 13h8M8 17h6" />
                 </svg>
-                <span className="max-w-[180px] truncate">{name}</span>
+                <span className="max-w-[180px] truncate">{document.filename}</span>
+                {document.status === "processing" && <span className="h-3 w-3 animate-spin rounded-full border-2 border-amber-300 border-t-amber-700" aria-label="در حال پردازش" />}
+                {document.status === "ready" && <span aria-label="آماده" className="text-emerald-600">✓</span>}
+                {document.status === "failed" && <span aria-label="ناموفق" className="text-red-600">!</span>}
 
               </span>
             ))}
@@ -328,10 +343,15 @@ export function ChatWindow({
               setUploading(true);
               try {
                 if (onUpload) {
-                  await onUpload(file);
+                  const document = await onUpload(file);
+                  if (document.status === "failed") {
+                    setUploadError(document.error_message || `پردازش سند «${file.name}» ناموفق بود.`);
+                    return;
+                  }
+                  setUploadSuccess(document.status === "ready"
+                    ? `سند «${file.name}» آمادهٔ استفاده در این گفتگو است.`
+                    : `سند «${file.name}» بارگذاری شد؛ تا پایان پردازش، ارسال پیام غیرفعال است.`);
                 }
-                setAttachedFiles((prev) => (prev.includes(file.name) ? prev : [...prev, file.name]));
-                setUploadSuccess(`سند «${file.name}» بارگذاری شد؛ پس از پردازش، برای پاسخ‌گویی در دسترس است.`);
                 setTimeout(() => setUploadSuccess(null), 5000);
               } catch (err) {
                 setUploadError(err instanceof Error ? err.message : "آپلود ناموفق بود.");
@@ -350,7 +370,7 @@ export function ChatWindow({
             placeholder={
               group
                 ? `پیام پروژه؛ برای دستیار با ${AI_TRIGGER_TOKEN} شروع کنید یا با @ سندی منشن کنید...`
-                : attachedFiles.length > 0
+                : conversationDocuments.length > 0
                 ? "درباره سند پیوست‌شده بپرسید..."
                 : "سؤالتان را بنویسید یا سندی پیوست کنید…"
             }
@@ -362,8 +382,8 @@ export function ChatWindow({
           <button
             type={!group && isStreaming ? "button" : "submit"}
             onClick={!group && isStreaming ? onStop : undefined}
-            disabled={!group && isStreaming ? false : !draft.trim() || composerBusy}
-            aria-label={!group && isStreaming ? "توقف دریافت پاسخ" : "ارسال پیام"}
+            disabled={!group && isStreaming ? false : !draft.trim() || sendBlocked}
+            aria-label={!group && isStreaming ? "توقف دریافت پاسخ" : isDocumentProcessing ? "در حال پردازش فایل‌ها" : "ارسال پیام"}
             className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#163b48] text-white transition hover:bg-teal-700 disabled:bg-slate-200 disabled:text-slate-400"
           >
             {!group && isStreaming ? (
@@ -376,7 +396,7 @@ export function ChatWindow({
           </button>
         </div>
         <p className="mx-auto mt-2 max-w-3xl text-center text-[11px] leading-5 text-gray-400">
-          با @ به اسناد اشاره کنید · Enter ارسال · Shift + Enter خط جدید
+          {isDocumentProcessing ? "فایل در حال پردازش است؛ پس از آماده‌شدن می‌توانید پیام را ارسال کنید." : "با @ به اسناد اشاره کنید · Enter ارسال · Shift + Enter خط جدید"}
         </p>
       </form>
     </div>

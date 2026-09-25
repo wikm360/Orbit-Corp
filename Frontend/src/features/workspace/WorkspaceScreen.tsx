@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useAuthStore } from "@/features/auth/hooks/useAuthStore";
 import { Button } from "@/shared/components/ui/Button";
 import { Input } from "@/shared/components/ui/Input";
+import { Select } from "@/shared/components/ui/Select";
 import { friendlyErrorMessage } from "@/shared/lib/errorMessages";
 import { loadWorkspace, workspaceApi, WorkspaceOverview } from "@/shared/lib/workspaceApi";
 import { ProjectMembership, TeamMembership } from "@/shared/types";
@@ -93,7 +94,7 @@ export function WorkspaceScreen() {
     {overview && overview.teams.length > 0 && <>
       <section className="rounded-2xl border border-gray-200 bg-white p-5">
         <label htmlFor="workspace-team" className="mb-2 block text-sm font-medium">تیم</label>
-        <select id="workspace-team" value={teamId} onChange={(event) => setTeamId(event.target.value)} className="w-full max-w-sm rounded-lg border border-gray-200 p-2 text-sm">{overview.teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</select>
+        <Select id="workspace-team" value={teamId} onChange={(event) => setTeamId(event.target.value)} className="max-w-sm">{overview.teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</Select>
         {selectedTeam?.description && <p className="mt-2 text-sm text-gray-500">{selectedTeam.description}</p>}
         <h2 className="mt-5 font-semibold">اعضای تیم</h2>
         <div className="mt-2 space-y-2">{visibleTeamMembers.map((membership) => <div key={membership.user.id} className="flex flex-wrap items-center gap-2 text-sm"><span className="flex-1 break-all">{membership.user.full_name || membership.user.email} — {membership.role === "leader" ? "سرپرست" : "عضو"}</span>{canManage && membership.role === "member" && <Button type="button" variant="ghost" size="sm" disabled={isBusy} onClick={() => void mutate(() => workspaceApi.removeTeamMember(teamId, membership.user.id))}>حذف</Button>}</div>)}</div>
@@ -103,11 +104,11 @@ export function WorkspaceScreen() {
         <h2 className="mb-3 font-semibold">پروژه‌های تیم</h2>
         {canManage && <form onSubmit={createProject} className="mb-4 flex flex-wrap gap-2"><Input aria-label="نام پروژه جدید" placeholder="نام پروژه جدید" value={newProjectName} onChange={(event) => setNewProjectName(event.target.value)} /><Button type="submit" disabled={isBusy || !newProjectName.trim()}>ایجاد پروژه</Button></form>}
         {teamProjects.length === 0 ? <p className="text-sm text-gray-500">پروژه‌ای برای این تیم در دسترس نیست.</p> : <>
-          <select aria-label="پروژه" value={activeProjectId} onChange={(event) => setProjectId(event.target.value)} className="w-full max-w-sm rounded-lg border border-gray-200 p-2 text-sm">{teamProjects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select>
+          <Select aria-label="پروژه" value={activeProjectId} onChange={(event) => setProjectId(event.target.value)} className="max-w-sm">{teamProjects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</Select>
           {selectedProject?.description && <p className="mt-2 text-sm text-gray-500">{selectedProject.description}</p>}
           <h3 className="mt-5 font-medium">اعضای پروژه</h3>
           <div className="mt-2 space-y-2">{visibleProjectMembers.map((membership) => <div key={membership.user.id} className="flex flex-wrap items-center gap-2 text-sm"><span className="flex-1 break-all">{membership.user.full_name || membership.user.email}</span>{canManage && <Button type="button" variant="ghost" size="sm" disabled={isBusy} onClick={() => void mutate(() => workspaceApi.removeProjectMember(activeProjectId, membership.user.id))}>حذف</Button>}</div>)}</div>
-          {canManage && <form onSubmit={addProjectMember} className="mt-4 flex flex-wrap gap-2"><select aria-label="عضو جدید پروژه" value={newProjectMemberId} onChange={(event) => setNewProjectMemberId(event.target.value)} className="rounded-lg border border-gray-200 p-2 text-sm"><option value="">انتخاب عضو تیم</option>{visibleTeamMembers.filter((member) => !visibleProjectMembers.some((projectMember) => projectMember.user.id === member.user.id)).map((member) => <option key={member.user.id} value={member.user.id}>{member.user.full_name || member.user.email}</option>)}</select><Button type="submit" disabled={isBusy || !newProjectMemberId}>افزودن به پروژه</Button></form>}
+          {canManage && <form onSubmit={addProjectMember} className="mt-4 flex flex-wrap gap-2"><Select aria-label="عضو جدید پروژه" value={newProjectMemberId} onChange={(event) => setNewProjectMemberId(event.target.value)} className="min-w-56 flex-1 sm:flex-none"><option value="">انتخاب عضو تیم</option>{visibleTeamMembers.filter((member) => !visibleProjectMembers.some((projectMember) => projectMember.user.id === member.user.id)).map((member) => <option key={member.user.id} value={member.user.id}>{member.user.full_name || member.user.email}</option>)}</Select><Button type="submit" disabled={isBusy || !newProjectMemberId}>افزودن به پروژه</Button></form>}
         </>}
       </section>
     </>}

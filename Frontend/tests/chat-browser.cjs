@@ -13,7 +13,7 @@ const conversations = [
   { id: 'g1', type: 'project_group', title: 'هماهنگی تیم پروژه', project_id: 'p1', linked_project_id: null },
 ];
 conversations.forEach((item) => Object.assign(item, { created_by: 'u1', created_at: '2026-09-25T08:00:00Z', messages: [] }));
-const requests = [], sockets = new Map(), errors = [];
+const requests = [], sockets = new Map(), errors = [], conversationDocuments = new Map();
 let lateChatRoute;
 function message(id, content, replyId = null, sender = 'assistant') {
   return { id, sender_type: sender, sender_id: sender === 'user' ? 'u1' : null, content, sources: [], reply_to_message_id: replyId, created_at: new Date().toISOString() };
@@ -39,7 +39,16 @@ function frame(name, data) { return `event: ${name}\ndata: ${JSON.stringify(data
       if (endpoint === '/teams/mine') return json([{ id: 't1', name: 'تیم مهندسی', description: '' }]);
       if (endpoint === '/projects/mine' || endpoint === '/teams/t1/projects') return json([project]);
       if (endpoint.endsWith('/members')) return json([{ user, role: 'leader' }]);
-      if (endpoint.includes('documents')) return json(method === 'POST' ? { document: { id: 'd1', filename: 'sample.txt', status: 'processing' }, message: 'ok' } : []);
+      if (endpoint.startsWith('/chat/conversations/') && endpoint.endsWith('/documents')) {
+        const conversationId = endpoint.split('/')[3];
+        if (method === 'POST') {
+          const document = { id: `d-${conversationId}`, filename: 'sample.txt', content_type: 'text/plain', status: 'processing', error_message: null, project_id: null, conversation_id: conversationId, uploaded_by: 'u1', created_at: new Date().toISOString() };
+          conversationDocuments.set(conversationId, [document]);
+          return json({ document, message: 'Document accepted for processing' });
+        }
+        return json(conversationDocuments.get(conversationId) || []);
+      }
+      if (endpoint.includes('documents')) return json([]);
       if (endpoint === '/chat/conversations' && method === 'GET') return json(conversations);
       if (endpoint === '/chat/conversations' && method === 'POST') {
         const item = { id: `new-${conversations.length}`, ...body, title: body.title || 'New group conversation', linked_project_id: body.linked_project_id ?? null, project_id: body.project_id ?? null, messages: [], created_by: 'u1', created_at: new Date().toISOString() };
@@ -170,10 +179,20 @@ function frame(name, data) { return `event: ${name}\ndata: ${JSON.stringify(data
     console.log('PASS: explicit stop releases composer');
 
     await page.getByLabel('فایل پیوست گفتگو').setInputFiles({ name: 'sample.txt', mimeType: 'text/plain', buffer: Buffer.from('Example document') });
-    await page.getByText('سند «sample.txt» بارگذاری شد؛ پس از پردازش، برای پاسخ‌گویی در دسترس است.', { exact: true }).waitFor();
+    await page.getByText('سند «sample.txt» بارگذاری شد؛ تا پایان پردازش، ارسال پیام غیرفعال است.', { exact: true }).waitFor();
     await page.getByRole('heading', { name: 'sample.txt', exact: true }).waitFor();
     assert.equal(await page.getByRole('textbox', { name: 'پیام', exact: true }).isEnabled(), true);
+    await page.getByRole('textbox', { name: 'پیام', exact: true }).fill('پرسش درباره سند');
+    assert.equal(await page.getByRole('button', { name: 'در حال پردازش فایل‌ها', exact: true }).isDisabled(), true);
     assert.ok(requests.some((request) => request.endpoint.includes('/chat/conversations/') && request.endpoint.endsWith('/documents') && request.method === 'POST'));
+    const uploadedConversationId = new URL(page.url()).searchParams.get('conversation');
+    const uploadedSocket = sockets.get(uploadedConversationId);
+    assert.ok(uploadedSocket, 'personal chat websocket is available for document status');
+    const uploadedDocuments = conversationDocuments.get(uploadedConversationId);
+    uploadedDocuments[0].status = 'ready';
+    uploadedSocket.send(JSON.stringify({ event: 'document_status', document_id: uploadedDocuments[0].id, status: 'ready', filename: 'sample.txt' }));
+    await page.getByRole('button', { name: 'ارسال پیام', exact: true }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'ارسال پیام', exact: true }).isEnabled(), true);
     await page.getByRole('button', { name: 'گفتگوی جدید', exact: true }).first().click();
     await page.getByRole('heading', { name: /دانش سازمان/ }).waitFor();
     console.log('PASS: uploading into a new conversation retains the attachment state');

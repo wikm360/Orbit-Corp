@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/shared/components/ui/Button";
 import { Modal } from "@/shared/components/ui/Modal";
+import { Select } from "@/shared/components/ui/Select";
 import { useAuthStore } from "@/features/auth/hooks/useAuthStore";
 import { friendlyErrorMessage } from "@/shared/lib/errorMessages";
 import { loadWorkspace, WorkspaceOverview } from "@/shared/lib/workspaceApi";
@@ -158,21 +159,20 @@ export function DocumentsScreen() {
                 <label htmlFor="documents-project" className="text-sm font-medium text-gray-700">
                   انتخاب پروژه
                 </label>
-                <select
+                <Select
                   id="documents-project"
                   value={projectId ?? ""}
                   onChange={(event) => {
                     setPendingDeleteId(null);
                     setProjectId(event.target.value);
                   }}
-                  className="h-11 rounded-xl border border-gray-200 bg-white px-3 text-sm"
                 >
                   {workspace.projects.map((project) => (
                     <option key={project.id} value={project.id}>
                       {project.name}
                     </option>
                   ))}
-                </select>
+                </Select>
               </div>
 
               {canManageProject && (

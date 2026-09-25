@@ -3,6 +3,7 @@
 import { FormEvent, useState } from "react";
 
 import { Button } from "@/shared/components/ui/Button";
+import { Select } from "@/shared/components/ui/Select";
 import { friendlyErrorMessage } from "@/shared/lib/errorMessages";
 
 import type { MemoryCategory, ProjectMemoryCreate } from "../types";
@@ -67,14 +68,13 @@ export function MemoryForm({ initialValue, submitLabel, isSubmitting, onCancel, 
 
       <div>
         <label htmlFor="memory-category" className="mb-2 block text-sm font-medium text-gray-700">دسته‌بندی</label>
-        <select
+        <Select
           id="memory-category"
           value={category}
           onChange={(event) => setCategory(event.target.value as MemoryCategory)}
-          className="h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm text-gray-800 shadow-sm focus:border-teal-400 focus:outline-none focus:ring-4 focus:ring-teal-100"
         >
           {CATEGORY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-        </select>
+        </Select>
       </div>
 
       {error && <p role="alert" className="rounded-xl bg-red-50 px-3 py-2.5 text-sm text-red-700">{error}</p>}

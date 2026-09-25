@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { friendlyErrorMessage } from "@/shared/lib/errorMessages";
 import { useAuthStore } from "@/features/auth/hooks/useAuthStore";
+import { Document } from "@/features/documents/types";
 
 import { chatApi, streamChat } from "../api/chatApi";
 import { normalizeAgentStatus } from "../lib/agentStatus";
@@ -29,6 +30,7 @@ export function useChat() {
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [conversationDocuments, setConversationDocuments] = useState<Document[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [activities, setActivities] = useState<Record<string, AgentStatus | null>>({});
   const [connectionState, setConnectionState] = useState<"connecting" | "connected" | "reconnecting">("connecting");
@@ -41,6 +43,7 @@ export function useChat() {
   const sendingRef = useRef(false);
   const latestMessageIdRef = useRef<string | undefined>(undefined);
   const token = useAuthStore((state) => state.token);
+  const conversationType = conversation?.type;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -62,6 +65,7 @@ export function useChat() {
     setConversation(null);
     setConversationId(null);
     setMessages([]);
+    setConversationDocuments([]);
     setError(null);
     setIsSending(false);
     setActivities({});
@@ -74,11 +78,15 @@ export function useChat() {
     const session = reset();
     setIsLoadingConversation(true);
     try {
-      const detail = await chatApi.getConversation(id);
+      const [detail, documents] = await Promise.all([
+        chatApi.getConversation(id),
+        chatApi.listDocuments(id).catch(() => [] as Document[]),
+      ]);
       if (!mountedRef.current || session !== sessionRef.current) return;
       setConversation(detail);
       setConversationId(detail.id);
       setMessages(detail.messages);
+      setConversationDocuments(documents);
       latestMessageIdRef.current = detail.messages.at(-1)?.id;
     } catch (err) {
       if (mountedRef.current && session === sessionRef.current) setError(friendlyErrorMessage(err, "بارگذاری گفتگو ناموفق بود."));
@@ -90,7 +98,8 @@ export function useChat() {
   const startNewConversation = useCallback(() => { reset(); }, [reset]);
 
   useEffect(() => {
-    if (!conversationId || conversation?.type !== "project_group" || !token) return;
+    if (!conversationId || !conversationType || !token) return;
+    const isGroupConversation = conversationType === "project_group";
     const session = sessionRef.current;
     let stopped = false;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -116,27 +125,40 @@ export function useChat() {
         socket.onopen = async () => {
           if (!active()) return;
           setConnectionState("connected");
-          try {
-            const missed = await chatApi.listMessages(conversationId, latestMessageIdRef.current);
-            if (active()) missed.forEach(receiveMessage);
-          } catch (err) {
-            if (active()) setError(friendlyErrorMessage(err, "همگام‌سازی پیام‌ها ناموفق بود."));
+          const documentSync = chatApi.listDocuments(conversationId).then((documents) => {
+            if (active()) setConversationDocuments(documents);
+          }).catch(() => {});
+          if (isGroupConversation) {
+            try {
+              const missed = await chatApi.listMessages(conversationId, latestMessageIdRef.current);
+              if (active()) missed.forEach(receiveMessage);
+            } catch (err) {
+              if (active()) setError(friendlyErrorMessage(err, "همگام‌سازی پیام‌ها ناموفق بود."));
+            }
           }
+          await documentSync;
         };
         socket.onmessage = (event) => {
           if (!active()) return;
           let payload: GroupEvent;
           try { payload = JSON.parse(event.data) as GroupEvent; } catch { return; }
           if (!payload || typeof payload !== "object") return;
-          if (payload.event === "message" && payload.message) {
+          if (payload.event === "document_status") {
+            setConversationDocuments((current) => current.map((document) => document.id === payload.document_id ? { ...document, status: payload.status } : document));
+            if (payload.status === "failed") {
+              void chatApi.listDocuments(conversationId).then((documents) => {
+                if (active()) setConversationDocuments(documents);
+              }).catch(() => {});
+            }
+          } else if (isGroupConversation && payload.event === "message" && payload.message) {
             receiveMessage(payload.message);
-          } else if (payload.event === "assistant_start") {
+          } else if (isGroupConversation && payload.event === "assistant_start") {
             setActivities((current) => ({ ...current, [payload.reply_to_message_id]: { status: "preparing" } }));
             setMessages((current) => current.some((item) => item.id === `pending-${payload.reply_to_message_id}`) ? current : [...current, pendingMessage(payload.reply_to_message_id)]);
-          } else if (payload.event === "assistant_status") {
+          } else if (isGroupConversation && payload.event === "assistant_status") {
             const status = normalizeAgentStatus(payload);
             if (status) setActivities((current) => ({ ...current, [payload.reply_to_message_id]: status }));
-          } else if (payload.event === "assistant_delta") {
+          } else if (isGroupConversation && payload.event === "assistant_delta") {
             setActivities((current) => ({ ...current, [payload.reply_to_message_id]: null }));
             setMessages((current) => {
               const pending = pendingMessage(payload.reply_to_message_id);
@@ -149,15 +171,17 @@ export function useChat() {
         socket.onclose = () => {
           if (!active()) return;
           setConnectionState("reconnecting");
-          setActivities({});
-          // Catch-up will restore final messages after reconnection.
-          setMessages((current) => current.filter((message) => !message.id.startsWith("pending-")));
+          if (isGroupConversation) {
+            setActivities({});
+            // Catch-up will restore final messages after reconnection.
+            setMessages((current) => current.filter((message) => !message.id.startsWith("pending-")));
+          }
           retryTimer = setTimeout(connect, 2500);
         };
       } catch (err) {
         if (active()) {
           setConnectionState("reconnecting");
-          setError(friendlyErrorMessage(err, "اتصال گفتگوی گروهی ناموفق بود."));
+          setError(friendlyErrorMessage(err, "اتصال گفتگو ناموفق بود."));
           retryTimer = setTimeout(connect, 2500);
         }
       }
@@ -168,7 +192,33 @@ export function useChat() {
       if (retryTimer) clearTimeout(retryTimer);
       socket?.close();
     };
-  }, [conversationId, conversation?.type, token]);
+  }, [conversationId, conversationType, token]);
+
+  const hasProcessingDocuments = conversationDocuments.some((document) => document.status === "processing");
+
+  useEffect(() => {
+    if (!conversationId || !hasProcessingDocuments) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      try {
+        const documents = await chatApi.listDocuments(conversationId);
+        if (!cancelled) setConversationDocuments(documents);
+      } catch {
+        // The WebSocket remains the primary channel; polling retries quietly.
+      }
+      if (!cancelled) timer = setTimeout(poll, 3000);
+    };
+    timer = setTimeout(poll, 3000);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [conversationId, hasProcessingDocuments]);
+
+  const registerDocument = useCallback((document: Document) => {
+    setConversationDocuments((current) => [document, ...current.filter((item) => item.id !== document.id)]);
+  }, []);
 
   const sendMessage = useCallback(async (text: string, linkedProjectId: string | null = null) => {
     if (sendingRef.current || !text.trim() || isLoadingConversation) return;
@@ -265,8 +315,8 @@ export function useChat() {
 
   const agentActivities: AgentActivity[] = Object.entries(activities).map(([replyId, status]) => ({ replyId, status }));
   return {
-    conversation, conversationId, messages, isStreaming: isSending || agentActivities.length > 0,
+    conversation, conversationId, messages, conversationDocuments, hasProcessingDocuments, isStreaming: isSending || agentActivities.length > 0,
     isSending, agentActivities, connectionState, isLoadingConversation, error,
-    sendMessage, loadConversation, startNewConversation, linkProject, renameConversation, stopResponse,
+    sendMessage, loadConversation, startNewConversation, linkProject, renameConversation, stopResponse, registerDocument,
   };
 }

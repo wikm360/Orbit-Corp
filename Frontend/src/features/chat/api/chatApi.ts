@@ -111,6 +111,7 @@ export const chatApi = {
     formData.append("file", file);
     return apiRequest<{ document: Document; message: string }>(`/chat/conversations/${id}/documents`, { method: "POST", formData });
   },
+  listDocuments: (id: string) => apiRequest<Document[]>(`/chat/conversations/${id}/documents`),
   websocketUrl: (id: string, token: string) => {
     const wsBase = API_BASE_URL.startsWith("https://")
       ? API_BASE_URL.replace("https://", "wss://")
