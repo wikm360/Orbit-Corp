@@ -17,6 +17,11 @@ class Settings(BaseSettings):
     debug: bool = True
     api_prefix: str = "/api/v1"
 
+    # Structured HTTP traffic logs written to the backend CLI. JSON bodies are
+    # included up to the limit; credentials and token-like fields are redacted.
+    request_logging_enabled: bool = True
+    request_log_body_limit_bytes: int = 65_536
+
     # CORS
     # `NoDecode` stops pydantic-settings from JSON-decoding this env var
     # itself before our validator runs — without it, any value that isn't

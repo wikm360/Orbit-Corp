@@ -16,6 +16,7 @@ type IconName =
   | "chat"
   | "search"
   | "document"
+  | "memory"
   | "workspace"
   | "admin"
   | "logout"
@@ -27,6 +28,7 @@ const paths: Record<IconName, React.ReactNode> = {
   chat: <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/>,
   search: <><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></>,
   document: <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h6"/></>,
+  memory: <><path d="M9.5 4.5A3.5 3.5 0 0 0 6 8v1a3 3 0 0 0-1 5.83V16a4 4 0 0 0 4 4h1V4.5h-.5ZM14.5 4.5A3.5 3.5 0 0 1 18 8v1a3 3 0 0 1 1 5.83V16a4 4 0 0 1-4 4h-1V4.5h.5Z"/><path d="M7 10h3M14 10h3M7 15h3M14 15h3"/></>,
   workspace: <><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 9v12"/></>,
   admin: <><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></>,
   logout: <><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></>,
@@ -53,6 +55,7 @@ function Icon({ name, className }: { name: IconName; className?: string }) {
 const NAV_ITEMS = [
   { href: "/chat", label: "دستیار", icon: "chat" as const },
   { href: "/documents", label: "اسناد", icon: "document" as const },
+  { href: "/memories", label: "حافظه پروژه", icon: "memory" as const },
   { href: "/workspace", label: "فضای کاری", icon: "workspace" as const },
   { href: "/admin", label: "مدیریت", icon: "admin" as const, adminOnly: true },
 ];

@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core import model_registry  # noqa: F401 - registers all models on Base.metadata
 from app.core.config import get_settings
+from app.core.request_logging import RequestResponseLoggingMiddleware, configure_request_logger
 from app.features.access_control.router import router as teams_router
 from app.features.admin.router import router as admin_router
 from app.features.auth.router import router as auth_router
@@ -22,6 +23,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+if settings.request_logging_enabled:
+    configure_request_logger()
+    app.add_middleware(
+        RequestResponseLoggingMiddleware,
+        max_body_bytes=settings.request_log_body_limit_bytes,
+    )
 
 app.include_router(auth_router, prefix=settings.api_prefix)
 app.include_router(teams_router, prefix=settings.api_prefix)

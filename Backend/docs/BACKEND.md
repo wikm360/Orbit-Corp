@@ -231,8 +231,12 @@ Backend/
 | `AI_TRIGGER_TOKEN` | پیشوند صدا زدن AI در چت گروهی (`@bot`) |
 | `MAX_UPLOAD_SIZE_MB`, `UPLOAD_DIR` | آپلود |
 | `CORS_ORIGINS` | آدرس‌های مجاز فرانت |
+| `REQUEST_LOGGING_ENABLED` | فعال/غیرفعال کردن لاگ ساخت‌یافتهٔ تمام درخواست‌ها و پاسخ‌های HTTP در CLI (پیش‌فرض `true`) |
+| `REQUEST_LOG_BODY_LIMIT_BYTES` | سقف ثبت بدنهٔ هر درخواست/پاسخ؛ دادهٔ بیشتر به‌صورت truncated مشخص می‌شود (پیش‌فرض ۶۵۵۳۶ بایت) |
 
 > تغییر `EMBEDDING_DIMENSIONS` بعد از ایندکس اسناد، ستون برداری را ناسازگار می‌کند و نیاز به migration و ایندکس مجدد دارد.
+
+لاگ ترافیک با دو رویداد `HTTP_REQUEST` و `HTTP_RESPONSE` و یک `request_id` مشترک در خروجی backend نوشته می‌شود. متد، مسیر، query، headerها، status، زمان پاسخ و بدنهٔ JSON در آن موجود است؛ فیلدهای حساس مانند Authorization، cookie، password، secret و token به‌طور خودکار با `[REDACTED]` جایگزین می‌شوند. آپلودهای multipart به‌جای محتوای باینری با نام فیلدها، نام فایل و اندازه گزارش می‌شوند.
 
 ---
 
