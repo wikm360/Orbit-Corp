@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
+from app.core.exceptions import BadRequestError, NotFoundError
 from app.features.documents.ingestion.parser import SUPPORTED_EXTENSIONS
 from app.features.documents.models import Document, DocumentChunk, DocumentStatus
 from app.features.retrieval.access_filter import accessible_documents_filter
@@ -229,49 +229,6 @@ async def delete_document(db: AsyncSession, document_id: uuid.UUID) -> None:
             path.unlink()
 
 
-async def list_personal_documents(db: AsyncSession, user_id: uuid.UUID) -> list[Document]:
-    """All personal documents uploaded by this user (not attached to any project or conversation)."""
-    result = await db.execute(
-        select(Document)
-        .where(
-            Document.uploaded_by == user_id,
-            Document.project_id.is_(None),
-            Document.conversation_id.is_(None),
-        )
-        .order_by(Document.created_at.desc())
-    )
-    return list(result.scalars().all())
-
-
-async def upload_personal_document(
-    db: AsyncSession,
-    filename: str,
-    content_type: str,
-    file_bytes: bytes,
-    uploaded_by: uuid.UUID,
-) -> Document:
-    """Uploads a personal document belonging directly to the user."""
-    return await _create_document(
-        db,
-        filename=filename,
-        content_type=content_type,
-        file_bytes=file_bytes,
-        uploaded_by=uploaded_by,
-        project_id=None,
-        conversation_id=None,
-    )
-
-
-async def delete_personal_document(db: AsyncSession, document_id: uuid.UUID, user_id: uuid.UUID) -> None:
-    """Deletes a personal document, verifying ownership."""
-    document = await get_document(db, document_id)
-    if document.project_id is not None or document.conversation_id is not None:
-        raise BadRequestError("This is not a personal document")
-    if document.uploaded_by != user_id:
-        raise ForbiddenError("You can only delete your own personal documents")
-    await delete_document(db, document_id)
-
-
 # ---------------------------------------------------------------------------
 # Structured reads for the chat agent (outline / page range / full content)
 # ---------------------------------------------------------------------------
@@ -283,13 +240,11 @@ async def _get_accessible_document(
     *,
     project_id: uuid.UUID | None,
     conversation_id: uuid.UUID,
-    user_id: uuid.UUID | None,
 ) -> Document:
     """Fetches a document scoped to exactly what's visible from the calling
     conversation - the same rule `accessible_documents_filter` applies to
     list queries, applied here to a single lookup so an agent tool can't be
-    pointed at a document outside its current project/conversation/personal
-    library.
+    pointed at a document outside its current project or conversation.
 
     `conversation_id` is the *calling* conversation's own id, not the
     document's - it's required (not Optional) because
@@ -299,7 +254,7 @@ async def _get_accessible_document(
     scoping."""
     stmt = select(Document).where(
         Document.id == document_id,
-        accessible_documents_filter(project_id, conversation_id, user_id=user_id),
+        accessible_documents_filter(project_id, conversation_id),
     )
     result = await db.execute(stmt)
     document = result.scalar_one_or_none()
@@ -314,14 +269,13 @@ async def get_document_outline(
     *,
     project_id: uuid.UUID | None,
     conversation_id: uuid.UUID,
-    user_id: uuid.UUID | None,
 ) -> dict:
     """Total page count (chunk count is the practical stand-in for "page"
     until the ingestion pipeline tracks real page boundaries) plus whatever
     heading/section metadata a chunk carries, if any - lets the agent decide
     which page range is worth reading instead of pulling the whole document."""
     document = await _get_accessible_document(
-        db, document_id, project_id=project_id, conversation_id=conversation_id, user_id=user_id
+        db, document_id, project_id=project_id, conversation_id=conversation_id
     )
 
     total_pages = (
@@ -359,7 +313,6 @@ async def get_document_page_range(
     *,
     project_id: uuid.UUID | None,
     conversation_id: uuid.UUID,
-    user_id: uuid.UUID | None,
 ) -> str:
     """Continuous text for pages `start_page..end_page` (1-indexed,
     inclusive; a "page" is one chunk)."""
@@ -367,7 +320,7 @@ async def get_document_page_range(
         raise BadRequestError("start_page must be >= 1 and end_page must be >= start_page")
 
     document = await _get_accessible_document(
-        db, document_id, project_id=project_id, conversation_id=conversation_id, user_id=user_id
+        db, document_id, project_id=project_id, conversation_id=conversation_id
     )
 
     result = await db.execute(
@@ -394,7 +347,6 @@ async def get_full_document_content(
     *,
     project_id: uuid.UUID | None,
     conversation_id: uuid.UUID,
-    user_id: uuid.UUID | None,
     max_tokens: int = 30_000,
 ) -> str | dict:
     """Every page of the document, in order. Guards against blowing the
@@ -402,7 +354,7 @@ async def get_full_document_content(
     the text so the agent falls back to `get_document_outline` +
     `get_document_page_range` for a targeted read."""
     document = await _get_accessible_document(
-        db, document_id, project_id=project_id, conversation_id=conversation_id, user_id=user_id
+        db, document_id, project_id=project_id, conversation_id=conversation_id
     )
 
     result = await db.execute(

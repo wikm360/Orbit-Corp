@@ -35,7 +35,6 @@ class Retriever(ABC):
         conversation_id: uuid.UUID,
         query_embedding: list[float],
         top_k: int,
-        user_id: uuid.UUID | None = None,
     ) -> list[RetrievedChunk]:
         ...
 
@@ -50,7 +49,6 @@ class VectorRetriever(Retriever):
         conversation_id: uuid.UUID,
         query_embedding: list[float],
         top_k: int,
-        user_id: uuid.UUID | None = None,
     ) -> list[RetrievedChunk]:
         distance = DocumentChunk.embedding.cosine_distance(query_embedding)
         stmt = (
@@ -60,7 +58,7 @@ class VectorRetriever(Retriever):
                 distance.label("distance"),
             )
             .join(Document, Document.id == DocumentChunk.document_id)
-            .where(accessible_documents_filter(project_id, conversation_id, user_id=user_id))
+            .where(accessible_documents_filter(project_id, conversation_id))
             .order_by(distance)
             .limit(top_k)
         )

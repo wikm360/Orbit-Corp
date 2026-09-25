@@ -24,15 +24,18 @@ class Document(Base):
 
     - `project_id`: part of a project's shared knowledge base (visible to every
       project member).
-    - `conversation_id`: uploaded ad hoc into one chat, visible only there.
+    - `conversation_id`: uploaded ad hoc into one chat (personal or group),
+      visible only there.
+
+    There is deliberately no third "personal library" scope: `uploaded_by` is
+    audit metadata only and never grants access to a document.
     """
 
     __tablename__ = "documents"
     __table_args__ = (
         CheckConstraint(
             "(project_id IS NOT NULL AND conversation_id IS NULL) OR "
-            "(project_id IS NULL AND conversation_id IS NOT NULL) OR "
-            "(project_id IS NULL AND conversation_id IS NULL AND uploaded_by IS NOT NULL)",
+            "(project_id IS NULL AND conversation_id IS NOT NULL)",
             name="ck_document_single_scope",
         ),
     )

@@ -43,7 +43,6 @@ class GetDocumentOutlineTool(BaseTool):
             _parse_document_id(document_id),
             project_id=resolve_retrieval_scope(context, conversation),
             conversation_id=conversation.id,
-            user_id=context.id,
         )
         return ToolExecutionResult(text=json.dumps(outline, ensure_ascii=False))
 
@@ -79,7 +78,6 @@ class ReadDocumentPagesTool(BaseTool):
             int(end_page),
             project_id=resolve_retrieval_scope(context, conversation),
             conversation_id=conversation.id,
-            user_id=context.id,
         )
         return ToolExecutionResult(text=text)
 
@@ -103,7 +101,6 @@ class ReadEntireDocumentTool(BaseTool):
             _parse_document_id(document_id),
             project_id=resolve_retrieval_scope(context, conversation),
             conversation_id=conversation.id,
-            user_id=context.id,
         )
         if isinstance(result, dict):
             return ToolExecutionResult(text=json.dumps(result, ensure_ascii=False))
@@ -114,9 +111,8 @@ class SearchKnowledgeBaseTool(BaseTool):
     name = "search_knowledge_base"
     description = (
         "Semantic search across every document visible in this conversation - the "
-        "project's knowledge base, files uploaded to this chat, and the user's "
-        "personal library - for content relevant to a query. Always scoped to what "
-        "this conversation can already see."
+        "project's knowledge base and the files uploaded to this chat - for content "
+        "relevant to a query. Always scoped to what this conversation can already see."
     )
     parameters = {
         "type": "object",
@@ -136,7 +132,6 @@ class SearchKnowledgeBaseTool(BaseTool):
             conversation.id,
             query_embedding,
             top_k=settings.retrieval_top_k,
-            user_id=context.id,
         )
 
         if not chunks or chunks[0].score < settings.retrieval_score_threshold:

@@ -12,6 +12,7 @@ from app.features.agent.schemas import AgentTurnResult, SourceCitation
 from app.features.agent.tools.registry import ToolRegistry, build_default_registry
 from app.features.auth.models import User
 from app.features.chat.models import Conversation, ConversationType, Message, SenderType
+from app.features.documents import service as documents_service
 from app.providers.llm_provider import ChatMessage, get_llm_provider
 
 logger = logging.getLogger(__name__)
@@ -22,12 +23,18 @@ settings = get_settings()
 # whatever it has learned so far rather than looping forever.
 MAX_STEPS = 4
 
+# Caps the attachment metadata injected into the prompt each turn.
+_MAX_LISTED_ATTACHMENTS = 50
+
 SYSTEM_PROMPT = (
     "You are the internal AI assistant for this organization. Answer clearly and "
     "concisely. You have tools to search the knowledge base, read documents, list "
     "projects and attachments, and recall or save project memory - use them "
     "whenever they would give a better-grounded answer than your own knowledge, "
-    "rather than guessing or asking the user to look something up themselves."
+    "rather than guessing or asking the user to look something up themselves. "
+    "You can only see two kinds of files: this chat's own uploads and the "
+    "project's knowledge base. Never claim to have read a file you did not open "
+    "with a tool, and never describe a file that a tool did not return."
 )
 
 # Tools whose `agent_activity` status should read "reading_documents" rather
@@ -130,6 +137,19 @@ class AgentEngine:
         history = await _load_history(db, conversation.id)
 
         system_content = SYSTEM_PROMPT
+
+        # Metadata only - never file content. The model decides which of
+        # these to open, and in what order, using the document tools.
+        attachments = await documents_service.list_conversation_documents(db, conversation.id)
+        if attachments:
+            listing = "\n".join(
+                f"- {doc.filename} (document_id: {doc.id}, status: {doc.status.value})"
+                for doc in attachments[:_MAX_LISTED_ATTACHMENTS]
+            )
+            system_content += (
+                "\n\nFiles uploaded to this chat (metadata only; read one with your "
+                "document tools when it is relevant to the question):\n" + listing
+            )
         group = conversation.type == ConversationType.PROJECT_GROUP
         if group:
             system_content += (

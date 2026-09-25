@@ -89,7 +89,6 @@ async def test_get_document_outline_reports_page_count_and_headings(client, db_s
         document.id,
         project_id=uuid.UUID(project_id),
         conversation_id=conversation.id,
-        user_id=uuid.UUID(leader_id),
     )
 
     assert outline["total_pages"] == 2
@@ -111,7 +110,6 @@ async def test_get_document_page_range_returns_only_requested_pages(client, db_s
         2,
         project_id=uuid.UUID(project_id),
         conversation_id=conversation.id,
-        user_id=uuid.UUID(leader_id),
     )
 
     assert "beta content" in text
@@ -131,7 +129,6 @@ async def test_get_full_document_content_concatenates_all_pages(client, db_sessi
         document.id,
         project_id=uuid.UUID(project_id),
         conversation_id=conversation.id,
-        user_id=uuid.UUID(leader_id),
     )
 
     assert "alpha content" in text
@@ -150,7 +147,6 @@ async def test_get_full_document_content_guards_against_oversized_documents(clie
         document.id,
         project_id=uuid.UUID(project_id),
         conversation_id=conversation.id,
-        user_id=uuid.UUID(leader_id),
         max_tokens=5,
     )
 
@@ -175,5 +171,4 @@ async def test_document_reads_are_scoped_to_accessible_projects(client, db_sessi
             document.id,
             project_id=uuid.UUID(other_project_id),
             conversation_id=other_conversation.id,
-            user_id=uuid.UUID(leader_id),
         )
