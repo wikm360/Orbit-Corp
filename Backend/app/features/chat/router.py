@@ -93,7 +93,9 @@ async def update_conversation(
     conversation: Conversation = Depends(require_conversation_access),
     db: AsyncSession = Depends(get_db),
 ):
-    return await service.update_conversation(db, context, conversation, payload.linked_project_id)
+    return await service.update_conversation(
+        db, context, conversation, title=payload.title, linked_project_id=payload.linked_project_id
+    )
 
 
 @router.post("/conversations/{conversation_id}/messages", response_model=MessageRead)

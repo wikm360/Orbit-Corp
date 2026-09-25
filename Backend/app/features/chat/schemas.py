@@ -3,15 +3,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
+from app.features.agent.schemas import SourceCitation  # noqa: F401 - re-exported for existing importers
 from app.features.chat.models import ConversationType, SenderType
-
-
-class SourceCitation(BaseModel):
-    document_id: str
-    document_filename: str
-    chunk_index: int
-    snippet: str
-    score: float
 
 
 class MessageRead(BaseModel):
@@ -62,14 +55,16 @@ class ConversationCreate(BaseModel):
 
 
 class ConversationUpdate(BaseModel):
-    """Only a personal conversation's linked project can be changed after creation.
-
-    `linked_project_id` is required (but nullable) so the caller must be
-    explicit about attaching vs. clearing it, rather than an omitted field
-    silently clearing it.
+    """`title` can be changed on any conversation - group or personal - and
+    is left untouched if omitted. `linked_project_id` only applies to
+    personal conversations; it's required (but nullable) so the caller must
+    be explicit about attaching vs. clearing it, rather than an omitted
+    field silently clearing it - a group conversation's PATCH must still
+    send it as `null`.
     """
 
     linked_project_id: uuid.UUID | None
+    title: str | None = None
 
 
 class ChatRequest(BaseModel):

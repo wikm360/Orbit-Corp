@@ -25,8 +25,10 @@ os.environ["DATABASE_URL"] = _test_url.render_as_string(hide_password=False)
 
 from app.core import model_registry  # noqa: E402,F401 - registers all models
 from app.core.database import Base, async_session_factory, engine, get_db  # noqa: E402
-from app.features.chat import service as chat_service  # noqa: E402
+from app.features.agent import engine as agent_engine_module  # noqa: E402
+from app.features.agent.tools import document_tools as agent_document_tools  # noqa: E402
 from app.features.chat.ws import manager as ws_manager  # noqa: E402
+from app.features.memory import service as memory_service  # noqa: E402
 from app.main import app  # noqa: E402
 
 # These tests need a real Postgres with the `vector` extension available
@@ -74,9 +76,13 @@ async def _reset_schema() -> AsyncGenerator[None, None]:
 
 
 class _StubLLMProvider:
-    async def stream_chat(self, messages) -> AsyncIterator[str]:
+    """Speaks the `StreamEvent` protocol (see `providers/llm_provider.py`):
+    plain content deltas, never a tool call - so a test that doesn't script
+    its own provider still gets a deterministic, tool-free answer."""
+
+    async def stream_chat(self, messages, tools=None) -> AsyncIterator[dict]:
         for token in ["Hello", ", ", "world!"]:
-            yield token
+            yield {"type": "content", "delta": token}
 
 
 class _StubEmbeddingProvider:
@@ -88,8 +94,9 @@ class _StubEmbeddingProvider:
 @pytest.fixture(autouse=True)
 def _stub_providers(monkeypatch):
     # Keeps the suite offline: no test may reach a real LLM/embedding API.
-    monkeypatch.setattr(chat_service, "get_llm_provider", lambda: _StubLLMProvider())
-    monkeypatch.setattr(chat_service, "get_embedding_provider", lambda: _StubEmbeddingProvider())
+    monkeypatch.setattr(agent_engine_module, "get_llm_provider", lambda: _StubLLMProvider())
+    monkeypatch.setattr(agent_document_tools, "get_embedding_provider", lambda: _StubEmbeddingProvider())
+    monkeypatch.setattr(memory_service, "get_embedding_provider", lambda: _StubEmbeddingProvider())
 
 
 @pytest_asyncio.fixture

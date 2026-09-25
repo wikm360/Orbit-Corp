@@ -1,20 +1,44 @@
 import hashlib
+import logging
 import uuid
 from pathlib import Path
 
 from redis import Redis
 from rq import Queue
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
 from app.features.documents.ingestion.parser import SUPPORTED_EXTENSIONS
 from app.features.documents.models import Document, DocumentChunk, DocumentStatus
+from app.features.retrieval.access_filter import accessible_documents_filter
 
 settings = get_settings()
 _redis_conn = Redis.from_url(settings.redis_url)
 _queue = Queue(settings.ingestion_queue_name, connection=_redis_conn)
+
+logger = logging.getLogger(__name__)
+
+try:
+    import tiktoken
+
+    _token_encoding = tiktoken.get_encoding("cl100k_base")
+except Exception as exc:  # pragma: no cover - offline environments
+    logger.warning("Tiktoken encoding cl100k_base not available offline (%s). Using word-count estimate.", exc)
+    _token_encoding = None
+
+
+def _count_tokens(text: str) -> int:
+    if not text:
+        return 0
+    if _token_encoding is not None:
+        try:
+            return len(_token_encoding.encode(text))
+        except Exception:
+            pass
+    # Same 0.75 words/token estimate used by the ingestion chunker's offline fallback.
+    return int(len(text.split()) / 0.75)
 
 
 async def list_project_documents(db: AsyncSession, project_id: uuid.UUID) -> list[Document]:
@@ -246,4 +270,160 @@ async def delete_personal_document(db: AsyncSession, document_id: uuid.UUID, use
     if document.uploaded_by != user_id:
         raise ForbiddenError("You can only delete your own personal documents")
     await delete_document(db, document_id)
+
+
+# ---------------------------------------------------------------------------
+# Structured reads for the chat agent (outline / page range / full content)
+# ---------------------------------------------------------------------------
+
+
+async def _get_accessible_document(
+    db: AsyncSession,
+    document_id: uuid.UUID,
+    *,
+    project_id: uuid.UUID | None,
+    conversation_id: uuid.UUID,
+    user_id: uuid.UUID | None,
+) -> Document:
+    """Fetches a document scoped to exactly what's visible from the calling
+    conversation - the same rule `accessible_documents_filter` applies to
+    list queries, applied here to a single lookup so an agent tool can't be
+    pointed at a document outside its current project/conversation/personal
+    library.
+
+    `conversation_id` is the *calling* conversation's own id, not the
+    document's - it's required (not Optional) because
+    `accessible_documents_filter` matches it with `==`, which SQLAlchemy
+    turns into `IS NULL` for a bare `None`; passing `None` here would match
+    any document with no conversation_id at all and silently defeat project
+    scoping."""
+    stmt = select(Document).where(
+        Document.id == document_id,
+        accessible_documents_filter(project_id, conversation_id, user_id=user_id),
+    )
+    result = await db.execute(stmt)
+    document = result.scalar_one_or_none()
+    if document is None:
+        raise NotFoundError("Document not found or not accessible")
+    return document
+
+
+async def get_document_outline(
+    db: AsyncSession,
+    document_id: uuid.UUID,
+    *,
+    project_id: uuid.UUID | None,
+    conversation_id: uuid.UUID,
+    user_id: uuid.UUID | None,
+) -> dict:
+    """Total page count (chunk count is the practical stand-in for "page"
+    until the ingestion pipeline tracks real page boundaries) plus whatever
+    heading/section metadata a chunk carries, if any - lets the agent decide
+    which page range is worth reading instead of pulling the whole document."""
+    document = await _get_accessible_document(
+        db, document_id, project_id=project_id, conversation_id=conversation_id, user_id=user_id
+    )
+
+    total_pages = (
+        await db.scalar(
+            select(func.count(DocumentChunk.id)).where(DocumentChunk.document_id == document.id)
+        )
+    ) or 0
+
+    sections: list[dict] = []
+    if total_pages:
+        result = await db.execute(
+            select(DocumentChunk.chunk_index, DocumentChunk.chunk_metadata)
+            .where(DocumentChunk.document_id == document.id)
+            .order_by(DocumentChunk.chunk_index)
+        )
+        for chunk_index, metadata in result.all():
+            heading = (metadata or {}).get("heading") or (metadata or {}).get("section")
+            if heading:
+                sections.append({"page": chunk_index + 1, "heading": heading})
+
+    return {
+        "document_id": str(document.id),
+        "filename": document.filename,
+        "status": document.status.value,
+        "total_pages": total_pages,
+        "sections": sections,
+    }
+
+
+async def get_document_page_range(
+    db: AsyncSession,
+    document_id: uuid.UUID,
+    start_page: int,
+    end_page: int,
+    *,
+    project_id: uuid.UUID | None,
+    conversation_id: uuid.UUID,
+    user_id: uuid.UUID | None,
+) -> str:
+    """Continuous text for pages `start_page..end_page` (1-indexed,
+    inclusive; a "page" is one chunk)."""
+    if start_page < 1 or end_page < start_page:
+        raise BadRequestError("start_page must be >= 1 and end_page must be >= start_page")
+
+    document = await _get_accessible_document(
+        db, document_id, project_id=project_id, conversation_id=conversation_id, user_id=user_id
+    )
+
+    result = await db.execute(
+        select(DocumentChunk)
+        .where(
+            DocumentChunk.document_id == document.id,
+            DocumentChunk.chunk_index.between(start_page - 1, end_page - 1),
+        )
+        .order_by(DocumentChunk.chunk_index)
+    )
+    chunks = list(result.scalars().all())
+    if not chunks:
+        return f"[سند: {document.filename}] این بازه صفحه‌ای برای سند یافت نشد."
+
+    parts = [f"=== مستند: {document.filename} ==="]
+    for chunk in chunks:
+        parts.append(f"[صفحه {chunk.chunk_index + 1}]\n{chunk.content}")
+    return "\n\n".join(parts)
+
+
+async def get_full_document_content(
+    db: AsyncSession,
+    document_id: uuid.UUID,
+    *,
+    project_id: uuid.UUID | None,
+    conversation_id: uuid.UUID,
+    user_id: uuid.UUID | None,
+    max_tokens: int = 30_000,
+) -> str | dict:
+    """Every page of the document, in order. Guards against blowing the
+    model's context: past `max_tokens`, returns a structured error instead of
+    the text so the agent falls back to `get_document_outline` +
+    `get_document_page_range` for a targeted read."""
+    document = await _get_accessible_document(
+        db, document_id, project_id=project_id, conversation_id=conversation_id, user_id=user_id
+    )
+
+    result = await db.execute(
+        select(DocumentChunk)
+        .where(DocumentChunk.document_id == document.id)
+        .order_by(DocumentChunk.chunk_index)
+    )
+    chunks = list(result.scalars().all())
+    if not chunks:
+        return f"[سند: {document.filename}] این سند هنوز پردازش نشده یا متنی ندارد."
+
+    full_text = "\n\n".join(chunk.content for chunk in chunks)
+    if _count_tokens(full_text) > max_tokens:
+        return {
+            "error": "DOCUMENT_TOO_LARGE",
+            "total_pages": len(chunks),
+            "message": (
+                "سند بیش از حد مجاز طولانی است. لطفاً ابتدا فهرست را بررسی کرده و "
+                "بازه صفحات را با read_document_pages بخوانید."
+            ),
+        }
+
+    return full_text
 

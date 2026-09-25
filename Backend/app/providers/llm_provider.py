@@ -1,16 +1,51 @@
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from functools import lru_cache
-from typing import TypedDict
+from typing import Literal, TypedDict
 
 from openai import AsyncOpenAI
 
 from app.core.config import get_settings
 
 
-class ChatMessage(TypedDict):
+class ToolCall(TypedDict):
+    id: str
+    name: str
+    arguments: str  # raw JSON string, not yet parsed - the caller decides how
+
+
+# The OpenAI function-tool schema: {"type": "function", "function": {"name":
+# ..., "description": ..., "parameters": <JSON Schema>}}. Left as a plain
+# dict (not modeled field-by-field) since providers only ever pass it through
+# to the vendor SDK verbatim.
+ToolSpec = dict
+
+
+class ChatMessage(TypedDict, total=False):
     role: str
-    content: str
+    content: str | None
+    # Set on an assistant message that called tools instead of (or before)
+    # answering, so it can be replayed back into history on the next turn.
+    # This is the OpenAI wire format (not the flat `ToolCall` shape `stream_chat`
+    # reports in a `tool_calls` event): a list of
+    # {"id": ..., "type": "function", "function": {"name": ..., "arguments": ...}}
+    # - callers building this from a `ToolCall` need to re-nest it.
+    tool_calls: list[dict]
+    # Set on a `role: "tool"` message: which call this is the result of.
+    tool_call_id: str
+
+
+class ContentEvent(TypedDict):
+    type: Literal["content"]
+    delta: str
+
+
+class ToolCallsEvent(TypedDict):
+    type: Literal["tool_calls"]
+    calls: list[ToolCall]
+
+
+StreamEvent = ContentEvent | ToolCallsEvent
 
 
 class LLMProvider(ABC):
@@ -21,8 +56,18 @@ class LLMProvider(ABC):
     """
 
     @abstractmethod
-    def stream_chat(self, messages: list[ChatMessage]) -> AsyncIterator[str]:
-        """Yield response text deltas as they arrive from the model."""
+    def stream_chat(
+        self, messages: list[ChatMessage], tools: list[ToolSpec] | None = None
+    ) -> AsyncIterator[StreamEvent]:
+        """Streams the model's turn as it arrives.
+
+        Yields zero or more `content` events (text deltas, in order), then -
+        only if the model chose to call one or more tools instead of (or
+        before) finishing its answer - a single trailing `tool_calls` event
+        once the call(s) are fully accumulated. A turn never mixes further
+        content after a `tool_calls` event; the caller runs the tools and
+        starts a new `stream_chat` turn with the results appended to history.
+        """
 
 
 async def _strip_tag_blocks(
@@ -122,21 +167,81 @@ class OpenAICompatibleLLMProvider(LLMProvider):
         self._disable_thinking = disable_thinking
         self._strip_tags = strip_tags or []
 
-    async def _raw_stream(self, messages: list[ChatMessage]) -> AsyncIterator[str]:
+    async def _raw_content_stream(
+        self,
+        messages: list[ChatMessage],
+        tools: list[ToolSpec] | None,
+        tool_calls_out: list[ToolCall],
+    ) -> AsyncIterator[str]:
+        """Yields content deltas only (for `_strip_tag_blocks` to filter).
+
+        Tool-call fragments are accumulated as a side effect instead of
+        yielded, since the OpenAI streaming API splits one logical call's
+        `id`/`function.name`/`function.arguments` across many chunks, keyed
+        by an `index` that identifies which (possibly parallel) call a
+        fragment belongs to. Once a chunk's `finish_reason` confirms the
+        model is done (`"tool_calls"`), the fully-assembled calls are
+        appended to `tool_calls_out` for the caller to pick up after this
+        generator is exhausted.
+        """
         extra_body = {"enable_thinking": False} if self._disable_thinking else None
+        kwargs: dict = {}
+        if tools:
+            kwargs["tools"] = tools
+            kwargs["tool_choice"] = "auto"
         stream = await self._client.chat.completions.create(
             model=self._model,
             messages=messages,  # type: ignore[arg-type]
             stream=True,
             extra_body=extra_body,
+            **kwargs,
         )
-        async for chunk in stream:
-            delta = chunk.choices[0].delta.content if chunk.choices else None
-            if delta:
-                yield delta
 
-    def stream_chat(self, messages: list[ChatMessage]) -> AsyncIterator[str]:
-        return _strip_tag_blocks(self._raw_stream(messages), self._strip_tags)
+        accumulated: dict[int, dict[str, str]] = {}
+        async for chunk in stream:
+            if not chunk.choices:
+                continue
+            choice = chunk.choices[0]
+            delta = choice.delta
+
+            if delta.content:
+                yield delta.content
+
+            if delta.tool_calls:
+                for tc_delta in delta.tool_calls:
+                    entry = accumulated.setdefault(
+                        tc_delta.index, {"id": "", "name": "", "arguments": ""}
+                    )
+                    if tc_delta.id:
+                        entry["id"] = tc_delta.id
+                    if tc_delta.function is not None:
+                        if tc_delta.function.name:
+                            entry["name"] += tc_delta.function.name
+                        if tc_delta.function.arguments:
+                            entry["arguments"] += tc_delta.function.arguments
+
+            if choice.finish_reason == "tool_calls":
+                for _, entry in sorted(accumulated.items()):
+                    tool_calls_out.append(
+                        {"id": entry["id"], "name": entry["name"], "arguments": entry["arguments"]}
+                    )
+
+    async def _stream_events(
+        self, messages: list[ChatMessage], tools: list[ToolSpec] | None
+    ) -> AsyncIterator[StreamEvent]:
+        tool_calls: list[ToolCall] = []
+        content_stream = self._raw_content_stream(messages, tools, tool_calls)
+        async for stripped in _strip_tag_blocks(content_stream, self._strip_tags):
+            yield {"type": "content", "delta": stripped}
+        # `content_stream` is now fully drained, so `tool_calls` (populated
+        # as a side effect while draining it) is final.
+        if tool_calls:
+            yield {"type": "tool_calls", "calls": tool_calls}
+
+    def stream_chat(
+        self, messages: list[ChatMessage], tools: list[ToolSpec] | None = None
+    ) -> AsyncIterator[StreamEvent]:
+        return self._stream_events(messages, tools)
 
 
 @lru_cache
