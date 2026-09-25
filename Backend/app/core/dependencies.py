@@ -15,7 +15,7 @@ from app.features.auth.models import User, UserRole
 from app.features.projects.models import Project
 from app.features.projects.service import get_user_project_ids
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")
 
 ADMIN_ROLES = (UserRole.SUPER_ADMIN, UserRole.ADMIN)
 
