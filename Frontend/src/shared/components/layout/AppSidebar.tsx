@@ -3,12 +3,13 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { chatApi } from "@/features/chat/api/chatApi";
 import { Conversation } from "@/features/chat/types";
-import { User } from "@/shared/types";
+import { Project, User } from "@/shared/types";
 import { cn } from "@/shared/lib/utils";
+import { loadWorkspace } from "@/shared/lib/workspaceApi";
 
 type IconName =
   | "panel"
@@ -18,6 +19,8 @@ type IconName =
   | "document"
   | "memory"
   | "workspace"
+  | "folder"
+  | "chevron"
   | "admin"
   | "logout"
   | "close";
@@ -30,6 +33,8 @@ const paths: Record<IconName, React.ReactNode> = {
   document: <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h6"/></>,
   memory: <><path d="M9.5 4.5A3.5 3.5 0 0 0 6 8v1a3 3 0 0 0-1 5.83V16a4 4 0 0 0 4 4h1V4.5h-.5ZM14.5 4.5A3.5 3.5 0 0 1 18 8v1a3 3 0 0 1 1 5.83V16a4 4 0 0 1-4 4h-1V4.5h.5Z"/><path d="M7 10h3M14 10h3M7 15h3M14 15h3"/></>,
   workspace: <><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 9v12"/></>,
+  folder: <><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z"/><path d="M3 10h18"/></>,
+  chevron: <path d="m6 9 6 6 6-6"/>,
   admin: <><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></>,
   logout: <><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></>,
   close: <path d="m18 6-12 12M6 6l12 12"/>,
@@ -82,23 +87,70 @@ export function AppSidebar({
   const searchParams = useSearchParams();
   const activeConversationId = searchParams.get("conversation");
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [openProjectIds, setOpenProjectIds] = useState<Set<string>>(new Set());
   const [isLoading, setIsLoading] = useState(false);
   const [hasError, setHasError] = useState(false);
   const [search, setSearch] = useState("");
-  const visibleConversations = conversations.filter((item) => item.title.toLocaleLowerCase("fa-IR").includes(search.trim().toLocaleLowerCase("fa-IR")));
+  const normalizedSearch = search.trim().toLocaleLowerCase("fa-IR");
+
+  const { projectSections, otherConversations, hasVisibleResult } = useMemo(() => {
+    const projectIds = new Set(projects.map((project) => project.id));
+    const matchesConversation = (conversation: Conversation) =>
+      !normalizedSearch || conversation.title.toLocaleLowerCase("fa-IR").includes(normalizedSearch);
+    const sections = projects.map((project) => {
+      const conversationsForProject = conversations.filter(
+        (conversation) => (conversation.project_id || conversation.linked_project_id) === project.id
+      );
+      const projectMatches = project.name.toLocaleLowerCase("fa-IR").includes(normalizedSearch);
+      const visibleConversations = projectMatches
+        ? conversationsForProject
+        : conversationsForProject.filter(matchesConversation);
+      return {
+        project,
+        conversations: conversationsForProject,
+        visibleConversations,
+        isVisible: !normalizedSearch || projectMatches || visibleConversations.length > 0,
+      };
+    });
+    const other = conversations.filter((conversation) => {
+      const projectId = conversation.project_id || conversation.linked_project_id;
+      return (!projectId || !projectIds.has(projectId)) && matchesConversation(conversation);
+    });
+    return {
+      projectSections: sections,
+      otherConversations: other,
+      hasVisibleResult: sections.some((section) => section.isVisible) || other.length > 0,
+    };
+  }, [conversations, normalizedSearch, projects]);
 
   const loadConversations = useCallback(async () => {
     if (pathname !== "/chat") return;
     setIsLoading(true);
     try {
-      setConversations(await chatApi.listConversations());
+      const [items, workspace] = await Promise.all([
+        chatApi.listConversations(),
+        user ? loadWorkspace(user) : Promise.resolve(null),
+      ]);
+      setConversations(items);
+      setProjects(workspace?.projects ?? []);
+      const activeConversation = items.find((item) => item.id === activeConversationId);
+      const activeProjectId = activeConversation?.project_id || activeConversation?.linked_project_id;
+      if (activeProjectId) {
+        setOpenProjectIds((current) => {
+          if (current.has(activeProjectId)) return current;
+          const next = new Set(current);
+          next.add(activeProjectId);
+          return next;
+        });
+      }
       setHasError(false);
     } catch {
       setHasError(true);
     } finally {
       setIsLoading(false);
     }
-  }, [pathname]);
+  }, [activeConversationId, pathname, user]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void loadConversations(), 0);
@@ -117,6 +169,39 @@ export function AppSidebar({
   function startNewConversation() {
     router.push(`/chat?new=${Date.now()}`);
     onClose();
+  }
+
+  function toggleProject(projectId: string) {
+    setOpenProjectIds((current) => {
+      const next = new Set(current);
+      if (next.has(projectId)) next.delete(projectId);
+      else next.add(projectId);
+      return next;
+    });
+  }
+
+  function selectConversation(conversationId: string) {
+    router.push(`/chat?conversation=${conversationId}`);
+    onClose();
+  }
+
+  function conversationButton(conversation: Conversation) {
+    return (
+      <button
+        key={conversation.id}
+        type="button"
+        aria-label={conversation.title}
+        onClick={() => selectConversation(conversation.id)}
+        className={cn(
+          "mb-1 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-right text-[12px] text-slate-400 transition hover:bg-white/[0.06] hover:text-white",
+          conversation.id === activeConversationId && "bg-white/10 font-medium text-white"
+        )}
+      >
+        <Icon name={conversation.type === "project_group" ? "workspace" : "chat"} className="h-3.5 w-3.5 text-slate-500" />
+        <span className="min-w-0 flex-1 truncate">{conversation.title}</span>
+        {conversation.type === "project_group" && <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-teal-400" />}
+      </button>
+    );
   }
 
   return (
@@ -201,15 +286,15 @@ export function AppSidebar({
         {pathname === "/chat" ? (
           <div className="flex h-full min-h-0 flex-col">
             <div className="flex items-center justify-between px-3 pb-2">
-              <span className="text-xs font-medium text-slate-400">گفتگوهای اخیر</span>
+              <span className="text-xs font-medium text-slate-400">پروژه‌ها و گفتگوها</span>
               <span className="text-[10px] text-slate-500">{conversations.length.toLocaleString("fa-IR")}</span>
             </div>
             <label className="mx-1 mb-3 flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-2.5 py-2 text-slate-400">
               <Icon name="search" className="h-3.5 w-3.5" />
-              <input aria-label="جست‌وجوی گفتگوها" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="جست‌وجوی گفتگوها" className="min-w-0 flex-1 bg-transparent text-[11px] text-slate-200 outline-none placeholder:text-slate-500" />
+              <input aria-label="جست‌وجوی گفتگوها" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="جست‌وجوی پروژه یا گفتگو" className="min-w-0 flex-1 bg-transparent text-[11px] text-slate-200 outline-none placeholder:text-slate-500" />
             </label>
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-1 pb-2">
-              {isLoading && conversations.length === 0 && (
+              {isLoading && conversations.length === 0 && projects.length === 0 && (
                 <div className="space-y-2 px-2 py-1" aria-label="در حال دریافت گفتگوها">
                   {[0, 1, 2].map((item) => <div key={item} className="h-8 animate-pulse rounded-lg bg-black/[0.045]" />)}
                 </div>
@@ -219,26 +304,60 @@ export function AppSidebar({
                   دریافت تاریخچه ناموفق بود؛ تلاش دوباره
                 </button>
               )}
-              {!isLoading && !hasError && conversations.length === 0 && (
-                <p className="px-3 py-3 text-xs leading-6 text-slate-400">گفتگوهای شما اینجا نمایش داده می‌شوند.</p>
+              {!isLoading && !hasError && conversations.length === 0 && projects.length === 0 && (
+                <p className="px-3 py-3 text-xs leading-6 text-slate-400">پروژه‌ها و گفتگوهای شما اینجا نمایش داده می‌شوند.</p>
               )}
-              {!isLoading && !hasError && search && visibleConversations.length === 0 && <p className="px-3 py-4 text-xs text-slate-400">گفتگویی با این عنوان پیدا نشد.</p>}
-              {visibleConversations.map((conversation) => (
-                <button
-                  key={conversation.id}
-                  type="button"
-                  onClick={() => {
-                    router.push(`/chat?conversation=${conversation.id}`);
-                    onClose();
-                  }}
-                  className={cn(
-                    "mb-1 flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-right text-[13px] text-slate-300 transition hover:bg-white/[0.06] hover:text-white",
-                    conversation.id === activeConversationId && "bg-white/10 font-medium text-white"
-                  )}
-                >
-                  <Icon name={conversation.type === "project_group" ? "workspace" : "chat"} className="h-3.5 w-3.5 text-slate-400" /><span className="truncate">{conversation.title}</span>
-                </button>
-              ))}
+              {!isLoading && !hasError && normalizedSearch && !hasVisibleResult && <p className="px-3 py-4 text-xs text-slate-400">پروژه یا گفتگویی با این عنوان پیدا نشد.</p>}
+
+              {!hasError && projectSections.some((section) => section.isVisible) && (
+                <div className="mb-3">
+                  <p className="px-2 pb-1.5 text-[10px] font-medium tracking-wide text-slate-500">پروژه‌ها</p>
+                  <div className="space-y-1">
+                    {projectSections.filter((section) => section.isVisible).map(({ project, conversations: projectConversations, visibleConversations }) => {
+                      const isExpanded = Boolean(normalizedSearch) || openProjectIds.has(project.id);
+                      const regionId = `project-conversations-${project.id}`;
+                      return (
+                        <section key={project.id} className="rounded-xl border border-white/[0.04] bg-black/[0.04]">
+                          <button
+                            type="button"
+                            aria-expanded={isExpanded}
+                            aria-controls={regionId}
+                            onClick={() => toggleProject(project.id)}
+                            className={cn(
+                              "flex w-full items-center gap-2 rounded-xl px-2.5 py-2.5 text-right text-xs font-medium text-slate-300 transition hover:bg-white/[0.06] hover:text-white",
+                              isExpanded && "text-white"
+                            )}
+                          >
+                            <span className={cn("grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-white/[0.06] text-slate-400", isExpanded && "bg-teal-500/15 text-teal-300")}>
+                              <Icon name="folder" className="h-4 w-4" />
+                            </span>
+                            <span className="min-w-0 flex-1 truncate">{project.name}</span>
+                            <span className="min-w-5 rounded-full bg-white/[0.06] px-1.5 py-0.5 text-center text-[9px] text-slate-500">{projectConversations.length.toLocaleString("fa-IR")}</span>
+                            <Icon name="chevron" className={cn("h-3.5 w-3.5 text-slate-500 transition-transform", isExpanded && "rotate-180")} />
+                          </button>
+                          {isExpanded && (
+                            <div id={regionId} className="mx-2 mb-2 border-r border-white/10 pr-2">
+                              {visibleConversations.length > 0
+                                ? visibleConversations.map(conversationButton)
+                                : <p className="px-2 py-2 text-[11px] leading-5 text-slate-500">هنوز گفتگویی برای این پروژه ثبت نشده است.</p>}
+                            </div>
+                          )}
+                        </section>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {!hasError && otherConversations.length > 0 && (
+                <div>
+                  <div className="flex items-center justify-between px-2 pb-1.5">
+                    <span className="text-[10px] font-medium tracking-wide text-slate-500">گفتگوهای بدون پروژه</span>
+                    <span className="text-[9px] text-slate-600">{otherConversations.length.toLocaleString("fa-IR")}</span>
+                  </div>
+                  {otherConversations.map(conversationButton)}
+                </div>
+              )}
             </div>
           </div>
         ) : (

@@ -77,6 +77,13 @@ function frame(name, data) { return `event: ${name}\ndata: ${JSON.stringify(data
     await page.screenshot({ path: path.join(artifactDir, 'desktop.png'), fullPage: true });
     console.log('PASS: desktop, editable suggestions');
 
+    const projectToggle = page.getByRole('button', { name: /توسعهٔ زیرساخت/ }).first();
+    assert.equal(await page.getByRole('button', { name: 'هماهنگی تیم پروژه', exact: true }).count(), 0, 'project chats start collapsed');
+    await projectToggle.click();
+    await page.getByRole('button', { name: 'هماهنگی تیم پروژه', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'بررسی قرارداد پیمانکار', exact: true }).waitFor();
+    console.log('PASS: project conversations are nested under their project');
+
     await page.getByRole('textbox', { name: 'جست‌وجوی گفتگوها' }).fill('قرارداد');
     assert.equal(await page.getByRole('button', { name: 'هماهنگی تیم پروژه', exact: true }).count(), 0);
     await page.getByRole('button', { name: 'بررسی قرارداد پیمانکار', exact: true }).click();

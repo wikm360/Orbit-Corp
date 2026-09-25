@@ -252,6 +252,7 @@ export function useChat() {
     const session = sessionRef.current;
     const updated = await chatApi.linkProject(conversationId, projectId);
     if (mountedRef.current && session === sessionRef.current) setConversation(updated);
+    window.dispatchEvent(new Event("orbit:conversations-changed"));
   }, [conversationId]);
 
   const renameConversation = useCallback(async (title: string) => {
