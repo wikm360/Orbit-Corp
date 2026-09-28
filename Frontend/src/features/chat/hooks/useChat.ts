@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { friendlyErrorMessage } from "@/shared/lib/errorMessages";
+import { generateUUID } from "@/shared/lib/uuid";
 import { useAuthStore } from "@/features/auth/hooks/useAuthStore";
 import { Document } from "@/features/documents/types";
 
@@ -252,7 +253,7 @@ export function useChat() {
         setConversationId(created.id);
         window.dispatchEvent(new Event("orbit:conversations-changed"));
       }
-      const replyId = crypto.randomUUID();
+      const replyId = generateUUID();
       const userMessage: ChatMessage = { id: `local-${replyId}`, sender_type: "user", sender_id: null, content: text, sources: [], reply_to_message_id: null, created_at: new Date().toISOString() };
       const assistantMessage = { ...pendingMessage(replyId), reply_to_message_id: null };
       setMessages((current) => [...current, userMessage, assistantMessage]);
