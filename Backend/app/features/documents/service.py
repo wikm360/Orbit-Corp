@@ -1,11 +1,13 @@
 import hashlib
 import logging
 import uuid
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Protocol
 
 from redis import Redis
 from rq import Queue
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -210,6 +212,89 @@ async def upload_conversation_document(
         project_id=None,
         conversation_id=conversation_id,
     )
+
+
+class UploadedFileLike(Protocol):
+    """The slice of FastAPI's `UploadFile` the batch uploader needs."""
+
+    filename: str | None
+    content_type: str | None
+
+    async def read(self) -> bytes: ...
+
+
+_MAX_FILENAME_LENGTH = 500
+
+
+async def upload_documents_batch(
+    db: AsyncSession,
+    files: Sequence[UploadedFileLike],
+    *,
+    uploaded_by: uuid.UUID,
+    project_id: uuid.UUID | None,
+    conversation_id: uuid.UUID | None,
+) -> list[tuple[str, Document | None, str | None]]:
+    """Ingests many files into one scope, returning `(filename, document,
+    error)` per file in input order.
+
+    A file that fails validation (unsupported type, too large, empty, name
+    too long) is reported as rejected without affecting the others. Files are
+    read and stored one at a time, so peak memory is one file, not the whole
+    batch. Each accepted file becomes its own queue job, so the worker pool
+    drains the batch in parallel.
+    """
+    if len(files) > settings.max_batch_upload_files:
+        raise BadRequestError(
+            f"At most {settings.max_batch_upload_files} files per request; send the rest in another request"
+        )
+
+    max_bytes = settings.max_upload_size_mb * 1024 * 1024
+    results: list[tuple[str, Document | None, str | None]] = []
+    for upload in files:
+        filename = upload.filename or "untitled"
+        if len(filename) > _MAX_FILENAME_LENGTH:
+            results.append((filename[:80] + "…", None, "File name is too long"))
+            continue
+
+        file_bytes = await upload.read()
+        if not file_bytes:
+            results.append((filename, None, "File is empty"))
+            continue
+        if len(file_bytes) > max_bytes:
+            results.append((filename, None, "File exceeds the maximum allowed upload size"))
+            continue
+
+        try:
+            document = await _create_document(
+                db,
+                filename=filename,
+                content_type=upload.content_type or "application/octet-stream",
+                file_bytes=file_bytes,
+                uploaded_by=uploaded_by,
+                project_id=project_id,
+                conversation_id=conversation_id,
+            )
+        except BadRequestError as exc:  # raised by validation, before any DB write
+            results.append((filename, None, str(exc.detail)))
+            continue
+        results.append((filename, document, None))
+    return results
+
+
+async def retry_failed_document(db: AsyncSession, document: Document) -> Document:
+    """Re-queues a document whose ingestion failed (e.g. an embedding API
+    rate limit during a big batch) without re-uploading it."""
+    if document.status != DocumentStatus.FAILED:
+        raise BadRequestError("Only a failed document can be retried")
+
+    # A failure after chunks were persisted would otherwise leave duplicates.
+    await db.execute(delete(DocumentChunk).where(DocumentChunk.document_id == document.id))
+    document.status = DocumentStatus.PROCESSING
+    document.error_message = None
+    await db.commit()
+    await db.refresh(document)
+    _enqueue_ingestion(document)
+    return document
 
 
 async def delete_document(db: AsyncSession, document_id: uuid.UUID) -> None:

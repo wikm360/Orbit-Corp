@@ -8,7 +8,12 @@ from app.core.database import get_db
 from app.core.dependencies import UserContext, get_current_user_context, require_project_access, require_project_manager
 from app.core.exceptions import BadRequestError
 from app.features.documents import service
-from app.features.documents.schemas import DocumentRead, DocumentUploadResponse
+from app.features.documents.schemas import (
+    BatchUploadItem,
+    BatchUploadResponse,
+    DocumentRead,
+    DocumentUploadResponse,
+)
 from app.features.projects.models import Project
 
 router = APIRouter(tags=["documents"])
@@ -44,6 +49,43 @@ async def upload_project_document(
         uploaded_by=context.id,
     )
     return DocumentUploadResponse(document=document)
+
+
+@router.post("/projects/{project_id}/documents/batch", response_model=BatchUploadResponse)
+async def upload_project_documents_batch(
+    files: list[UploadFile] = File(...),
+    project: Project = Depends(require_project_manager),
+    context: UserContext = Depends(get_current_user_context),
+    db: AsyncSession = Depends(get_db),
+):
+    """Uploads several files at once. Each accepted file is queued for
+    ingestion independently; a rejected file doesn't fail the others."""
+    results = await service.upload_documents_batch(
+        db, files, uploaded_by=context.id, project_id=project.id, conversation_id=None
+    )
+    return BatchUploadResponse.from_items(
+        [
+            BatchUploadItem(
+                filename=filename,
+                status="accepted" if document is not None else "rejected",
+                document=document,
+                error=error,
+            )
+            for filename, document, error in results
+        ]
+    )
+
+
+@router.post("/projects/{project_id}/documents/{document_id}/retry", response_model=DocumentRead)
+async def retry_project_document(
+    document_id: uuid.UUID,
+    project: Project = Depends(require_project_manager),
+    db: AsyncSession = Depends(get_db),
+):
+    document = await service.get_document(db, document_id)
+    if document.project_id != project.id:
+        raise BadRequestError("This document does not belong to the given project")
+    return await service.retry_failed_document(db, document)
 
 
 @router.delete("/projects/{project_id}/documents/{document_id}", status_code=204)

@@ -18,6 +18,41 @@ from app.features.projects.service import get_project
 
 settings = get_settings()
 
+DEFAULT_PERSONAL_TITLE = "New conversation"
+DEFAULT_GROUP_TITLE = "New group conversation"
+_PLACEHOLDER_TITLES = {DEFAULT_PERSONAL_TITLE, DEFAULT_GROUP_TITLE}
+_MAX_TITLE_LENGTH = 80
+
+
+def _title_from_message(text: str) -> str:
+    """A short title from a chat's first message: the AI trigger token is
+    dropped (it's routing, not content) and whitespace collapsed."""
+    cleaned = text.strip()
+    if cleaned.lower().startswith(settings.ai_trigger_token.lower()):
+        cleaned = cleaned[len(settings.ai_trigger_token) :]
+    cleaned = " ".join(cleaned.split())
+    return cleaned[:_MAX_TITLE_LENGTH]
+
+
+async def _auto_title_on_first_message(
+    db: AsyncSession, conversation: Conversation, first_message: str
+) -> bool:
+    """Names a conversation after its first message, but only if nobody named
+    it: a chat created up front (a group chat, or a personal chat linked to a
+    project) starts with a placeholder title and no messages. A title the user
+    chose is never overwritten. Returns whether the title changed; the caller
+    commits."""
+    if conversation.title not in _PLACEHOLDER_TITLES:
+        return False
+    has_messages = await db.scalar(
+        select(Message.id).where(Message.conversation_id == conversation.id).limit(1)
+    )
+    title = _title_from_message(first_message)
+    if has_messages is not None or not title:
+        return False
+    conversation.title = title
+    return True
+
 _agent_engine = AgentEngine()
 
 
@@ -35,14 +70,14 @@ async def create_conversation(
             raise ForbiddenError("You are not a member of this project")
         # Deliberately not `project.name` - a group chat's title is its own
         # independent, editable field, not a stand-in for the project name.
-        title = payload.title or "New group conversation"
+        title = payload.title or DEFAULT_GROUP_TITLE
         linked_project_id = None
     else:
         if payload.linked_project_id is not None and not context.is_project_member(
             payload.linked_project_id
         ):
             raise ForbiddenError("You are not a member of the project you're trying to link")
-        title = payload.title or "New conversation"
+        title = payload.title or DEFAULT_PERSONAL_TITLE
         linked_project_id = payload.linked_project_id
 
     conversation = Conversation(
@@ -137,7 +172,7 @@ async def get_or_create_personal_conversation(
     conversation = Conversation(
         type=ConversationType.PERSONAL,
         created_by=context.id,
-        title=first_message[:80],
+        title=_title_from_message(first_message) or DEFAULT_PERSONAL_TITLE,
     )
     db.add(conversation)
     await db.commit()
@@ -174,6 +209,7 @@ async def _stream_chat_events(
 ) -> AsyncIterator[str]:
     conversation = await get_or_create_personal_conversation(db, context, conversation_id, user_message)
 
+    await _auto_title_on_first_message(db, conversation, user_message)
     db.add(
         Message(
             conversation_id=conversation.id,
@@ -184,7 +220,7 @@ async def _stream_chat_events(
     )
     await db.commit()
 
-    yield _sse_event("start", {"conversation_id": str(conversation.id)})
+    yield _sse_event("start", {"conversation_id": str(conversation.id), "title": conversation.title})
 
     # The engine runs as a background task (same pattern this used for tool
     # status before): only that task ever touches `db`, this loop just
@@ -243,6 +279,7 @@ async def post_group_message(
     """Persists then broadcasts a human message. If it starts with the AI
     trigger token, schedules the assistant's reply as a background task that
     streams and broadcasts on its own (not part of this response)."""
+    retitled = await _auto_title_on_first_message(db, conversation, content)
     message = Message(
         conversation_id=conversation.id,
         sender_type=SenderType.USER,
@@ -256,6 +293,15 @@ async def post_group_message(
     await ws_manager.broadcast(
         conversation.id, {"event": "message", "message": _serialize_message(message)}
     )
+    if retitled:
+        await ws_manager.broadcast(
+            conversation.id,
+            {
+                "event": "conversation_updated",
+                "conversation_id": str(conversation.id),
+                "title": conversation.title,
+            },
+        )
 
     stripped = content.strip()
     if stripped.lower().startswith(settings.ai_trigger_token.lower()):

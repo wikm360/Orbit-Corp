@@ -71,6 +71,10 @@ services:
   worker:
     <<: *app
     command: python -m workers.ingestion_worker
+    # Each worker ingests one document at a time; more replicas drain a big
+    # bulk upload faster (bounded in practice by the embedding API's rate limit).
+    deploy:
+      replicas: ${WORKER_REPLICAS:-3}
     volumes:
       - uploads_data:/app/data/uploads
     depends_on:

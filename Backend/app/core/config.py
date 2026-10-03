@@ -70,6 +70,8 @@ class Settings(BaseSettings):
     # File storage
     upload_dir: str = "./data/uploads"
     max_upload_size_mb: int = 50
+    # Cap on files per batch-upload request (clients send bigger sets in several requests).
+    max_batch_upload_files: int = 20
 
     # Embedding provider (BGE-M3 via OpenAI-compatible /v1/embeddings endpoint)
     embedding_api_base_url: str = "https://api.example.com/v1"

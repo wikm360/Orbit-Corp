@@ -27,7 +27,12 @@ from app.features.chat.schemas import (
 )
 from app.features.chat.ws import manager as ws_manager
 from app.features.documents import service as documents_service
-from app.features.documents.schemas import DocumentRead, DocumentUploadResponse
+from app.features.documents.schemas import (
+    BatchUploadItem,
+    BatchUploadResponse,
+    DocumentRead,
+    DocumentUploadResponse,
+)
 from app.features.projects.models import Project
 from app.features.projects.service import get_user_project_ids
 
@@ -131,6 +136,29 @@ async def upload_conversation_document(
         uploaded_by=context.id,
     )
     return DocumentUploadResponse(document=document)
+
+
+@router.post("/conversations/{conversation_id}/documents/batch", response_model=BatchUploadResponse)
+async def upload_conversation_documents_batch(
+    files: list[UploadFile] = File(...),
+    context: UserContext = Depends(get_current_user_context),
+    conversation: Conversation = Depends(require_conversation_access),
+    db: AsyncSession = Depends(get_db),
+):
+    results = await documents_service.upload_documents_batch(
+        db, files, uploaded_by=context.id, project_id=None, conversation_id=conversation.id
+    )
+    return BatchUploadResponse.from_items(
+        [
+            BatchUploadItem(
+                filename=filename,
+                status="accepted" if document is not None else "rejected",
+                document=document,
+                error=error,
+            )
+            for filename, document, error in results
+        ]
+    )
 
 
 @router.get("/conversations/{conversation_id}/documents", response_model=list[DocumentRead])
