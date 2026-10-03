@@ -75,7 +75,7 @@ class Settings(BaseSettings):
     embedding_api_base_url: str = "https://api.example.com/v1"
     embedding_api_key: str = ""
     embedding_model: str = "bge-m3"
-    embedding_dimensions: int = 1024
+    embedding_dimensions: int = 1536
 
     # LLM provider (OpenAI-compatible chat completions endpoint)
     llm_api_base_url: str = "https://api.openai.com/v1"
