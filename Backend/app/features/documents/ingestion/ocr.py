@@ -98,3 +98,4 @@ async def extract_text_from_image(image_bytes: bytes, image_format: str = "png")
     except Exception as exc:
         logger.warning("Vision OCR request failed for image (%s): %s", image_format, exc)
         return ""
+
