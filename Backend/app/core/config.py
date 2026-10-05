@@ -91,6 +91,13 @@ class Settings(BaseSettings):
     # honored, so these tag names (without angle brackets) are stripped out
     # of the streamed content client-side, block and all. Empty by default.
     llm_strip_content_tags: Annotated[list[str], NoDecode] = []
+    # Dedicated vision-capable model for OCR and image analysis (falls back to llm_model if None)
+    llm_vision_model: str | None = None
+
+    # Ingestion OCR
+    ocr_enabled: bool = True
+    ocr_max_images_per_doc: int = 50
+    ocr_min_image_dimension: int = 60
 
     # Chunking
     chunk_size_tokens: int = 500

@@ -67,7 +67,7 @@ async def extract_text_from_image(image_bytes: bytes, image_format: str = "png")
         optimized_bytes, mime_type = optimize_image_for_ocr(image_bytes)
         b64_img = base64.b64encode(optimized_bytes).decode("utf-8")
 
-        vision_model = settings.llm_vision_model or settings.llm_model
+        vision_model = getattr(settings, "llm_vision_model", None) or getattr(settings, "llm_model", "gpt-4o")
         client = AsyncOpenAI(base_url=settings.llm_api_base_url, api_key=settings.llm_api_key)
 
         response = await client.chat.completions.create(

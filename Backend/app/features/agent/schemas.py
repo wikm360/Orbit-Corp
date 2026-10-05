@@ -9,6 +9,7 @@ class SourceCitation(BaseModel):
     chunk_index: int
     snippet: str
     score: float
+    page: int | None = None
 
 
 class AgentActivityEvent(BaseModel):
