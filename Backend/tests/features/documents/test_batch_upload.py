@@ -33,7 +33,7 @@ async def test_batch_upload_accepts_valid_files_and_reports_rejected_ones_indivi
             # A folder upload sends the relative path as the file name.
             ("files", ("policies/hr/leave.txt", b"leave policy", "text/plain")),
             ("files", ("policies/finance/travel.txt", b"travel policy", "text/plain")),
-            ("files", ("logo.png", b"\x89PNG", "image/png")),
+            ("files", ("archive.zip", b"PK\x03\x04", "application/zip")),
             ("files", ("empty.txt", b"", "text/plain")),
         ],
         headers=admin,
@@ -48,8 +48,8 @@ async def test_batch_upload_accepts_valid_files_and_reports_rejected_ones_indivi
     assert by_name["policies/hr/leave.txt"]["document"]["status"] == "processing"
     assert by_name["policies/hr/leave.txt"]["document"]["project_id"] == project_id
     assert by_name["policies/finance/travel.txt"]["status"] == "accepted"
-    assert by_name["logo.png"]["status"] == "rejected"
-    assert "Unsupported file type" in by_name["logo.png"]["error"]
+    assert by_name["archive.zip"]["status"] == "rejected"
+    assert "Unsupported file type" in by_name["archive.zip"]["error"]
     assert by_name["empty.txt"] == {
         "filename": "empty.txt",
         "status": "rejected",

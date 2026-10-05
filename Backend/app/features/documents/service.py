@@ -13,6 +13,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.exceptions import BadRequestError, NotFoundError
 from app.features.documents.ingestion.parser import SUPPORTED_EXTENSIONS
+from app.features.documents.ingestion.reconstructor import (
+    cleanup_reconstructed_files,
+    get_reconstructed_txt_path,
+    load_reconstructed_document,
+)
 from app.features.documents.models import Document, DocumentChunk, DocumentStatus
 from app.features.retrieval.access_filter import accessible_documents_filter
 
@@ -312,6 +317,7 @@ async def delete_document(db: AsyncSession, document_id: uuid.UUID) -> None:
         path = Path(file_path)
         if path.exists():
             path.unlink()
+        cleanup_reconstructed_files(file_path)
 
 
 # ---------------------------------------------------------------------------
@@ -355,31 +361,39 @@ async def get_document_outline(
     project_id: uuid.UUID | None,
     conversation_id: uuid.UUID,
 ) -> dict:
-    """Total page count (chunk count is the practical stand-in for "page"
-    until the ingestion pipeline tracks real page boundaries) plus whatever
-    heading/section metadata a chunk carries, if any - lets the agent decide
+    """Total page count and any section headings - lets the agent decide
     which page range is worth reading instead of pulling the whole document."""
     document = await _get_accessible_document(
         db, document_id, project_id=project_id, conversation_id=conversation_id
     )
 
-    total_pages = (
-        await db.scalar(
-            select(func.count(DocumentChunk.id)).where(DocumentChunk.document_id == document.id)
-        )
-    ) or 0
+    recon = load_reconstructed_document(document.file_path)
+    total_pages = recon.get("total_pages") if recon else None
+
+    result = await db.execute(
+        select(DocumentChunk.chunk_index, DocumentChunk.chunk_metadata)
+        .where(DocumentChunk.document_id == document.id)
+        .order_by(DocumentChunk.chunk_index)
+    )
+    chunk_rows = result.all()
 
     sections: list[dict] = []
-    if total_pages:
-        result = await db.execute(
-            select(DocumentChunk.chunk_index, DocumentChunk.chunk_metadata)
-            .where(DocumentChunk.document_id == document.id)
-            .order_by(DocumentChunk.chunk_index)
-        )
-        for chunk_index, metadata in result.all():
-            heading = (metadata or {}).get("heading") or (metadata or {}).get("section")
-            if heading:
-                sections.append({"page": chunk_index + 1, "heading": heading})
+    max_meta_page = 0
+    has_page_metadata = False
+
+    for chunk_index, metadata in chunk_rows:
+        meta = metadata or {}
+        p_num = meta.get("page")
+        if p_num is not None:
+            has_page_metadata = True
+            max_meta_page = max(max_meta_page, int(p_num))
+        heading = meta.get("heading") or meta.get("section")
+        if heading:
+            display_page = p_num if p_num is not None else (chunk_index + 1)
+            sections.append({"page": display_page, "heading": heading})
+
+    if total_pages is None:
+        total_pages = max_meta_page if has_page_metadata and max_meta_page > 0 else len(chunk_rows)
 
     return {
         "document_id": str(document.id),
@@ -399,8 +413,7 @@ async def get_document_page_range(
     project_id: uuid.UUID | None,
     conversation_id: uuid.UUID,
 ) -> str:
-    """Continuous text for pages `start_page..end_page` (1-indexed,
-    inclusive; a "page" is one chunk)."""
+    """Continuous text for pages `start_page..end_page` (1-indexed, inclusive)."""
     if start_page < 1 or end_page < start_page:
         raise BadRequestError("start_page must be >= 1 and end_page must be >= start_page")
 
@@ -408,20 +421,52 @@ async def get_document_page_range(
         db, document_id, project_id=project_id, conversation_id=conversation_id
     )
 
+    # 1. Try reading directly from the reconstructed JSON file if available
+    recon = load_reconstructed_document(document.file_path)
+    if recon and "pages" in recon:
+        matching_pages = [
+            p for p in recon["pages"] if start_page <= p.get("page", 0) <= end_page
+        ]
+        if matching_pages:
+            parts = [f"=== مستند: {document.filename} ==="]
+            for p in matching_pages:
+                parts.append(f"[صفحه {p['page']}]\n{p['text']}")
+            return "\n\n".join(parts)
+
+    # 2. Query chunks from DB
     result = await db.execute(
         select(DocumentChunk)
-        .where(
-            DocumentChunk.document_id == document.id,
-            DocumentChunk.chunk_index.between(start_page - 1, end_page - 1),
-        )
+        .where(DocumentChunk.document_id == document.id)
         .order_by(DocumentChunk.chunk_index)
     )
-    chunks = list(result.scalars().all())
-    if not chunks:
+    all_chunks = list(result.scalars().all())
+    if not all_chunks:
+        return f"[سند: {document.filename}] این بازه صفحه‌ای برای سند یافت نشد."
+
+    # Check if chunks have real page metadata
+    has_page_meta = any((c.chunk_metadata or {}).get("page") is not None for c in all_chunks)
+    if has_page_meta:
+        pages_content: dict[int, list[str]] = {}
+        for c in all_chunks:
+            p_num = (c.chunk_metadata or {}).get("page")
+            if p_num is not None and start_page <= int(p_num) <= end_page:
+                pages_content.setdefault(int(p_num), []).append(c.content)
+
+        if not pages_content:
+            return f"[سند: {document.filename}] این بازه صفحه‌ای برای سند یافت نشد."
+
+        parts = [f"=== مستند: {document.filename} ==="]
+        for p_num in sorted(pages_content.keys()):
+            parts.append(f"[صفحه {p_num}]\n" + "\n\n".join(pages_content[p_num]))
+        return "\n\n".join(parts)
+
+    # 3. Fallback for legacy documents without page metadata (chunk_index as stand-in)
+    legacy_chunks = [c for c in all_chunks if (start_page - 1) <= c.chunk_index <= (end_page - 1)]
+    if not legacy_chunks:
         return f"[سند: {document.filename}] این بازه صفحه‌ای برای سند یافت نشد."
 
     parts = [f"=== مستند: {document.filename} ==="]
-    for chunk in chunks:
+    for chunk in legacy_chunks:
         parts.append(f"[صفحه {chunk.chunk_index + 1}]\n{chunk.content}")
     return "\n\n".join(parts)
 
@@ -441,6 +486,25 @@ async def get_full_document_content(
     document = await _get_accessible_document(
         db, document_id, project_id=project_id, conversation_id=conversation_id
     )
+
+    recon_txt_path = get_reconstructed_txt_path(document.file_path)
+    if recon_txt_path.exists():
+        try:
+            full_text = recon_txt_path.read_text(encoding="utf-8")
+            if _count_tokens(full_text) > max_tokens:
+                recon_json = load_reconstructed_document(document.file_path)
+                total_pages = recon_json.get("total_pages", 1) if recon_json else 1
+                return {
+                    "error": "DOCUMENT_TOO_LARGE",
+                    "total_pages": total_pages,
+                    "message": (
+                        "سند بیش از حد مجاز طولانی است. لطفاً ابتدا فهرست را بررسی کرده و "
+                        "بازه صفحات را با read_document_pages بخوانید."
+                    ),
+                }
+            return full_text
+        except Exception:
+            pass
 
     result = await db.execute(
         select(DocumentChunk)
@@ -463,4 +527,5 @@ async def get_full_document_content(
         }
 
     return full_text
+
 

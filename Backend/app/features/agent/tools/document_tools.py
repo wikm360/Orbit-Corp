@@ -137,18 +137,19 @@ class SearchKnowledgeBaseTool(BaseTool):
         if not chunks or chunks[0].score < settings.retrieval_score_threshold:
             return ToolExecutionResult(text="No relevant results found in the knowledge base.")
 
-        context_text = "\n\n".join(
-            f"[Source {i + 1}: {chunk.document_filename}]\n{chunk.content}"
-            for i, chunk in enumerate(chunks)
-        )
-        citations = [
-            SourceCitation(
-                document_id=chunk.document_id,
-                document_filename=chunk.document_filename,
-                chunk_index=chunk.chunk_index,
-                snippet=chunk.content[:300],
-                score=round(chunk.score, 4),
+        context_parts = []
+        citations = []
+        for i, chunk in enumerate(chunks):
+            page_info = f" (صفحه {chunk.page_number})" if chunk.page_number else ""
+            context_parts.append(f"[Source {i + 1}: {chunk.document_filename}{page_info}]\n{chunk.content}")
+            citations.append(
+                SourceCitation(
+                    document_id=chunk.document_id,
+                    document_filename=chunk.document_filename,
+                    chunk_index=chunk.chunk_index,
+                    snippet=chunk.content[:300],
+                    score=round(chunk.score, 4),
+                    page=chunk.page_number,
+                )
             )
-            for chunk in chunks
-        ]
-        return ToolExecutionResult(text=context_text, citations=citations)
+        return ToolExecutionResult(text="\n\n".join(context_parts), citations=citations)
