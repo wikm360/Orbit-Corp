@@ -116,9 +116,13 @@ export const chatApi = {
   },
   listDocuments: (id: string) => apiRequest<Document[]>(`/chat/conversations/${id}/documents`),
   websocketUrl: (id: string, token: string) => {
-    const wsBase = API_BASE_URL.startsWith("https://")
-      ? API_BASE_URL.replace("https://", "wss://")
-      : API_BASE_URL.replace("http://", "ws://");
+    // A relative base ("/api/v1", the same-origin proxy setup) must be resolved against the page origin first.
+    const absoluteBase = API_BASE_URL.startsWith("/") && typeof window !== "undefined"
+      ? `${window.location.origin}${API_BASE_URL}`
+      : API_BASE_URL;
+    const wsBase = absoluteBase.startsWith("https://")
+      ? absoluteBase.replace("https://", "wss://")
+      : absoluteBase.replace("http://", "ws://");
     return `${wsBase}/chat/conversations/${id}/ws?token=${encodeURIComponent(token)}`;
   },
 };
