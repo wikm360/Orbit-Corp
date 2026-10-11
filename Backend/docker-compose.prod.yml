@@ -182,7 +182,7 @@ services:
     environment:
       SITE_ADDRESS: ${SITE_ADDRESS:-localhost}
     ports:
-      - "${BIND_IP:-127.0.0.1}:443:8443"
+      - "${BIND_IP:-127.0.0.1}:${PUBLIC_PORT:-443}:8443"
     networks: [app, edge]
     volumes:
       - caddy_data:/data
