@@ -5,5 +5,5 @@ FROM caddy:2.11.7-alpine
 RUN addgroup -S -g 10001 caddy2 && adduser -S -u 10001 -G caddy2 -H caddy2 \
     && mkdir -p /data/caddy /config/caddy \
     && chown -R 10001:10001 /data /config
-COPY Caddyfile /etc/caddy/Caddyfile
+COPY Caddyfile Caddyfile.http app.caddy /etc/caddy/
 USER 10001:10001

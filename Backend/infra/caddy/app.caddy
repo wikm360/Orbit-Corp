@@ -1,0 +1,28 @@
+# Shared routing, imported by Caddyfile (HTTPS) and Caddyfile.http (plain HTTP).
+	header {
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		Content-Security-Policy-Report-Only "default-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; object-src 'none'"
+		-Server
+	}
+
+	# API documentation / schema must never be reachable from outside.
+	@blocked path /docs /docs/* /redoc /redoc/* /openapi.json /api/docs /api/docs/* /api/redoc /api/redoc/* /api/openapi.json /api/v1/openapi.json
+	handle @blocked {
+		respond 404
+	}
+
+	# Backend (REST + SSE chat stream). No compression and no buffering so SSE events flush immediately.
+	handle /api/* {
+		request_body {
+			max_size 60MB
+		}
+		reverse_proxy backend:8000 {
+			flush_interval -1
+		}
+	}
+
+	handle {
+		encode zstd gzip
+		reverse_proxy frontend:3000
+	}

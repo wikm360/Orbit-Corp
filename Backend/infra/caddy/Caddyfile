@@ -1,5 +1,5 @@
 {
-	# Container listens on 8443; compose publishes it as ${BIND_IP}:443.
+	# Container listens on 8443; compose publishes it as ${BIND_IP}:${PUBLIC_PORT}.
 	https_port 8443
 	http_port 8080
 	auto_https disable_redirects
@@ -12,35 +12,8 @@
 {$SITE_ADDRESS:localhost} {
 	# Internal CA. Switch to a real certificate (ACME) once a public domain exists.
 	tls internal
-
-	header {
-		Strict-Transport-Security "max-age=31536000; includeSubDomains"
-		X-Content-Type-Options "nosniff"
-		Referrer-Policy "no-referrer"
-		Content-Security-Policy-Report-Only "default-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; object-src 'none'"
-		-Server
-	}
-
-	# API documentation / schema must never be reachable from outside.
-	@blocked path /docs /docs/* /redoc /redoc/* /openapi.json /api/docs /api/docs/* /api/redoc /api/redoc/* /api/openapi.json /api/v1/openapi.json
-	handle @blocked {
-		respond 404
-	}
-
-	# Backend (REST + SSE chat stream). No compression and no buffering so SSE events flush immediately.
-	handle /api/* {
-		request_body {
-			max_size 60MB
-		}
-		reverse_proxy backend:8000 {
-			flush_interval -1
-		}
-	}
-
-	handle {
-		encode zstd gzip
-		reverse_proxy frontend:3000
-	}
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	import /etc/caddy/app.caddy
 }
 
 # Container-internal health probe (port 8080 is never published).

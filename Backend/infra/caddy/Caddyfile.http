@@ -1,0 +1,16 @@
+# PLAIN HTTP variant (CADDY_CONFIG=Caddyfile.http in .env). Passwords, tokens and financial data cross the network
+# UNENCRYPTED - only acceptable behind a strict source-IP allow-list. Prefer the HTTPS Caddyfile.
+{
+	auto_https off
+	admin off
+}
+
+# Serves plain HTTP on 8443 inside the container (compose publishes it as ${BIND_IP}:${PUBLIC_PORT}).
+:8443 {
+	import /etc/caddy/app.caddy
+}
+
+# Container-internal health probe (port 8080 is never published).
+:8080 {
+	respond /healthz "ok" 200
+}
