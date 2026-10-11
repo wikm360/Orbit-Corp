@@ -4,6 +4,8 @@
 	http_port 8080
 	auto_https disable_redirects
 	admin off
+	# Clients that connect to a bare IP (company users via router IP:port) send no SNI: serve the site certificate anyway.
+	default_sni {$SITE_ADDRESS:localhost}
 }
 
 # SITE_ADDRESS = hostname or IP users type in the browser (default: localhost).
@@ -21,7 +23,9 @@
 
 	# API documentation / schema must never be reachable from outside.
 	@blocked path /docs /docs/* /redoc /redoc/* /openapi.json /api/docs /api/docs/* /api/redoc /api/redoc/* /api/openapi.json /api/v1/openapi.json
-	respond @blocked 404
+	handle @blocked {
+		respond 404
+	}
 
 	# Backend (REST + SSE chat stream). No compression and no buffering so SSE events flush immediately.
 	handle /api/* {
