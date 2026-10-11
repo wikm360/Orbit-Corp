@@ -100,6 +100,26 @@ services:
       - "127.0.0.1:14330:1433"
     volumes:
       - rahkaran_mssql_data:/var/opt/mssql
+      # Drop folder for the company's database export (FULL_/DIFF_ .bak files, any sub-folder). Read-only inside the container.
+      - ${RAHKARAN_BACKUP_DIR:-./data/rahkaran-backups}:/backups:ro
+
+  # One-shot job: loads the newest backup from the drop folder into SQL Server if it is newer than what is loaded
+  # (no-op otherwise), applies the `ai` layer, swaps it in. Runs on every `up`; run it alone with:
+  #   docker compose run --rm rahkaran-refresh [--dry-run|--force]
+  rahkaran-refresh:
+    build: .
+    restart: "no"
+    entrypoint: ["python", "sql/rahkaran/refresh.py"]
+    environment:
+      RAHKARAN_SA_PASSWORD: ${RAHKARAN_SA_PASSWORD:?set RAHKARAN_SA_PASSWORD in .env}
+      RAHKARAN_AI_PASSWORD: ${RAHKARAN_DB_PASSWORD:?set RAHKARAN_DB_PASSWORD in .env}
+      RAHKARAN_HOST: mssql
+      RAHKARAN_PORT: "1433"
+      RAHKARAN_DB: ${RAHKARAN_DB_NAME:-MehvarGostar}
+    volumes:
+      - ${RAHKARAN_BACKUP_DIR:-./data/rahkaran-backups}:/backups:ro
+    depends_on:
+      - mssql
 
 volumes:
   postgres_data:

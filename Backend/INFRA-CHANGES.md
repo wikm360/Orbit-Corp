@@ -49,3 +49,17 @@ First start on a new server: `docker volume create rahkaran_mssql_data` (the vol
 - `egress` lets backend/worker reach any internet host; add an allow-list (firewall/proxy) for the LLM host as a follow-up. Image digest pinning is also a follow-up.
 - Backend runs as uid 10001 now: an existing dev `uploads_data` volume created by the old root image must be `chown 10001:10001` (none existed here). Dev redis/backend/mssql ports are now localhost-only (LAN access to them stops).
 - Dev default for `MSSQL_PID` is now Express; set `MSSQL_PID=Developer` in your local `.env` to keep the old dev behavior.
+
+## Updating the accounting database (drop folder)
+Put the company's export (the `FULL_...bak` / `DIFF_...bak` files, in any sub-folder, e.g. keep their `FULL/ DIFF/ LOG/` layout) into **`Backend/data/rahkaran-backups/`** (override the location with `RAHKARAN_BACKUP_DIR` in `.env`). The folder is mounted read-only at `/backups` in the `mssql` container. Files must be readable by everyone (`chmod -R a+rX`). Then:
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d        # or: ... run --rm rahkaran-refresh
+```
+The one-shot `rahkaran-refresh` service (`sql/rahkaran/refresh.py`) runs on every `up`:
+1. picks the newest FULL and the newest DIFF whose base LSN matches it (older / unrelated files and `.trn` logs are ignored);
+2. exits with "already up to date" if exactly those files (name + size) were already loaded (marker table `master.dbo.rahkaran_restore_state`);
+3. restores into a side database `MehvarGostar_new`, re-applies the `ai` layer + the reader login (`apply.py`), smoke-tests it;
+4. swaps it in (old one renamed aside, dropped only after the new one is live; rolled back on failure) and sets it READ_ONLY.
+The live database is untouched until step 4; the app sees a few seconds of downtime during the swap. Options: `run --rm rahkaran-refresh --dry-run` (show what it would load), `--force` (reload even if unchanged). Tested here on SQL Server Express with the real FULL 2026-10-02 + DIFF 2026-10-05 pair (about 10 s on SSD).
+Notes: needs free disk for a second copy during the restore; in dev the first run after enabling it reloads once (no marker yet); the DIFF/FULL must come from the same SQL Server backup chain.
+This replaces the manual "make a backup on the laptop and carry it over" step: only the company's export is ever copied, straight into the folder on the server.

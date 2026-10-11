@@ -140,6 +140,17 @@ services:
     mem_limit: 2g
     pids_limit: 512
 
+  rahkaran-refresh:
+    <<: *hardened
+    user: "10001:10001"
+    restart: "no"
+    networks: !override [data]
+    mem_limit: 512m
+    pids_limit: 128
+    depends_on:
+      mssql:
+        condition: service_healthy
+
   frontend:
     <<: *hardened
     build:
