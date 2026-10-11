@@ -10,7 +10,7 @@ x-app: &app
   build: .
   env_file: .env
   environment:
-    DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-org_rag}
+    DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-org_rag}
     REDIS_URL: redis://redis:6379/0
     RAHKARAN_DB_HOST: mssql
     RAHKARAN_DB_PORT: 1433
@@ -18,11 +18,11 @@ x-app: &app
 
 services:
   postgres:
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:0.8.7-pg16-bookworm
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:-org_rag}
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -33,7 +33,7 @@ services:
       retries: 10
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.4.11-alpine
     restart: unless-stopped
     volumes:
       - redis_data:/data
@@ -55,7 +55,7 @@ services:
     <<: *app
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - uploads_data:/app/data/uploads
     depends_on:
@@ -86,16 +86,18 @@ services:
         condition: service_healthy
 
   mssql:
-    image: mcr.microsoft.com/mssql/server:2022-latest
+    image: mcr.microsoft.com/mssql/server:2022-CU27-ubuntu-22.04
     restart: unless-stopped
     container_name: rahkaran-mssql
     environment:
       ACCEPT_EULA: "Y"
-      MSSQL_SA_PASSWORD: ${RAHKARAN_SA_PASSWORD:-Rk1!74becb967fae6ec3}
-      MSSQL_PID: "Developer"
+      MSSQL_SA_PASSWORD: ${RAHKARAN_SA_PASSWORD:?set RAHKARAN_SA_PASSWORD in .env}
+      # Express is the free production-licensed edition (10 GB/DB cap). "Developer" is NOT licensed for production;
+      # set MSSQL_PID=Developer in your local .env only for development.
+      MSSQL_PID: ${MSSQL_PID:-Express}
       MSSQL_MEMORY_LIMIT_MB: "8192"
     ports:
-      - "14330:1433"
+      - "127.0.0.1:14330:1433"
     volumes:
       - rahkaran_mssql_data:/var/opt/mssql
 

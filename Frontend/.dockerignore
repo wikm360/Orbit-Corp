@@ -2,3 +2,12 @@ node_modules
 .next
 .git
 my-app
+.env
+.env.*
+!.env.example
+secrets/
+*.bak
+*.trn
+*.pem
+*.key
+tsconfig.tsbuildinfo
