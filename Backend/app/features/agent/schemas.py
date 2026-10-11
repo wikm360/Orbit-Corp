@@ -30,9 +30,12 @@ class ToolExecutionResult:
 
     text: str
     citations: list[SourceCitation] = field(default_factory=list)
+    # Structured evidence for the client (e.g. the exact SQL + rows of a database answer), stored on the assistant message.
+    artifacts: list[dict] = field(default_factory=list)
 
 
 @dataclass
 class AgentTurnResult:
     content: str
     citations: list[SourceCitation] = field(default_factory=list)
+    artifacts: list[dict] = field(default_factory=list)

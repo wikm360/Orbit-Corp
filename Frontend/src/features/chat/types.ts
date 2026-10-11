@@ -6,12 +6,36 @@ export interface SourceCitation {
   score: number;
 }
 
+export type ColumnKind = "money" | "ratio" | "number" | "date" | "text";
+
+/** The exact SQL and rows an accounting-database answer was based on (attached to the assistant message by the server). */
+export interface SqlResultArtifact {
+  type: "sql_result";
+  version: number;
+  query_id: string;
+  question: string;
+  sql: string;
+  columns: { name: string; kind: ColumnKind }[];
+  rows: (string | number | boolean | null)[][];
+  row_count: number;
+  total_exact?: boolean;
+  rows_shown: number;
+  truncated: boolean;
+  duration_ms: number;
+  executed_at: string;
+  data_as_of: Record<string, string>;
+  currency: "IRR";
+}
+
+export type MessageArtifact = SqlResultArtifact | { type: string; [key: string]: unknown };
+
 export interface ChatMessage {
   id: string;
   sender_type: "user" | "assistant";
   sender_id: string | null;
   content: string;
   sources: SourceCitation[];
+  artifacts?: MessageArtifact[];
   reply_to_message_id: string | null;
   created_at: string;
 }

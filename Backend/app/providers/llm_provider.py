@@ -3,9 +3,28 @@ from collections.abc import AsyncIterator
 from functools import lru_cache
 from typing import Literal, TypedDict
 
+import asyncio
+import logging
+
+import httpx
+import openai
 from openai import AsyncOpenAI
 
 from app.core.config import get_settings
+
+
+logger = logging.getLogger(__name__)
+
+_STREAM_ATTEMPTS = 3
+_TRANSIENT_STREAM_ERRORS = (
+    httpx.RemoteProtocolError,
+    httpx.ReadError,
+    httpx.ReadTimeout,
+    httpx.ConnectError,
+    httpx.ConnectTimeout,
+    openai.APIConnectionError,
+    openai.APITimeoutError,
+)
 
 
 class ToolCall(TypedDict):
@@ -229,14 +248,26 @@ class OpenAICompatibleLLMProvider(LLMProvider):
     async def _stream_events(
         self, messages: list[ChatMessage], tools: list[ToolSpec] | None
     ) -> AsyncIterator[StreamEvent]:
-        tool_calls: list[ToolCall] = []
-        content_stream = self._raw_content_stream(messages, tools, tool_calls)
-        async for stripped in _strip_tag_blocks(content_stream, self._strip_tags):
-            yield {"type": "content", "delta": stripped}
-        # `content_stream` is now fully drained, so `tool_calls` (populated
-        # as a side effect while draining it) is final.
-        if tool_calls:
-            yield {"type": "tool_calls", "calls": tool_calls}
+        # Gateways sometimes drop a connection ("incomplete chunked read"). If that happens before a single token was delivered
+        # to the caller, nothing is lost by asking again; once content has been yielded it cannot be replayed, so the error is raised.
+        for attempt in range(1, _STREAM_ATTEMPTS + 1):
+            tool_calls: list[ToolCall] = []
+            delivered = False
+            try:
+                content_stream = self._raw_content_stream(messages, tools, tool_calls)
+                async for stripped in _strip_tag_blocks(content_stream, self._strip_tags):
+                    delivered = True
+                    yield {"type": "content", "delta": stripped}
+                # `content_stream` is now fully drained, so `tool_calls` (populated
+                # as a side effect while draining it) is final.
+                if tool_calls:
+                    yield {"type": "tool_calls", "calls": tool_calls}
+                return
+            except _TRANSIENT_STREAM_ERRORS as exc:
+                if delivered or attempt == _STREAM_ATTEMPTS:
+                    raise
+                logger.warning("LLM stream interrupted before any output (attempt %d/%d): %s", attempt, _STREAM_ATTEMPTS, exc)
+                await asyncio.sleep(1.5 * attempt)
 
     def stream_chat(
         self, messages: list[ChatMessage], tools: list[ToolSpec] | None = None
@@ -251,6 +282,18 @@ def get_llm_provider() -> LLMProvider:
         base_url=settings.llm_api_base_url,
         api_key=settings.llm_api_key,
         model=settings.llm_model,
+        disable_thinking=settings.llm_disable_thinking,
+        strip_tags=settings.llm_strip_content_tags,
+    )
+
+
+def get_sql_llm_provider() -> LLMProvider:
+    """Provider for writing SQL: `llm_sql_model` when set, otherwise the default chat model."""
+    settings = get_settings()
+    return OpenAICompatibleLLMProvider(
+        base_url=settings.llm_api_base_url,
+        api_key=settings.llm_api_key,
+        model=settings.llm_sql_model or settings.llm_model,
         disable_thinking=settings.llm_disable_thinking,
         strip_tags=settings.llm_strip_content_tags,
     )

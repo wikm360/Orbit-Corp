@@ -18,7 +18,7 @@ function addMessage(current: ChatMessage[], message: ChatMessage): ChatMessage[]
 }
 
 function pendingMessage(replyId: string): ChatMessage {
-  return { id: `pending-${replyId}`, sender_type: "assistant", sender_id: null, content: "", sources: [], reply_to_message_id: replyId, created_at: new Date().toISOString() };
+  return { id: `pending-${replyId}`, sender_type: "assistant", sender_id: null, content: "", sources: [], artifacts: [], reply_to_message_id: replyId, created_at: new Date().toISOString() };
 }
 
 function settlePending(messages: ChatMessage[]) {
@@ -254,7 +254,7 @@ export function useChat() {
         window.dispatchEvent(new Event("orbit:conversations-changed"));
       }
       const replyId = generateUUID();
-      const userMessage: ChatMessage = { id: `local-${replyId}`, sender_type: "user", sender_id: null, content: text, sources: [], reply_to_message_id: null, created_at: new Date().toISOString() };
+      const userMessage: ChatMessage = { id: `local-${replyId}`, sender_type: "user", sender_id: null, content: text, sources: [], artifacts: [], reply_to_message_id: null, created_at: new Date().toISOString() };
       const assistantMessage = { ...pendingMessage(replyId), reply_to_message_id: null };
       setMessages((current) => [...current, userMessage, assistantMessage]);
       setActivities({ [replyId]: { status: "preparing" } });
@@ -265,15 +265,24 @@ export function useChat() {
           setConversationId(id);
         },
         onStatus: (status) => { if (active()) setActivities({ [replyId]: status }); },
+        onArtifact: (artifact) => {
+          if (!active()) return;
+          setMessages((current) => current.map((item) => {
+            const known = item.artifacts ?? [];
+            const id = (artifact as { query_id?: string }).query_id;
+            if (item.id !== assistantMessage.id || (id && known.some((a) => (a as { query_id?: string }).query_id === id))) return item;
+            return { ...item, artifacts: [...known, artifact] };
+          }));
+        },
         onDelta: (delta) => {
           if (!active()) return;
           setActivities({ [replyId]: null });
           setMessages((current) => current.map((item) => item.id === assistantMessage.id ? { ...item, content: item.content + delta } : item));
         },
-        onDone: (sources, messageId) => {
+        onDone: (sources, messageId, artifacts) => {
           if (!active()) return;
           setActivities({});
-          setMessages((current) => current.map((item) => item.id === assistantMessage.id ? { ...item, id: messageId, sources } : item));
+          setMessages((current) => current.map((item) => item.id === assistantMessage.id ? { ...item, id: messageId, sources, artifacts } : item));
           if (targetId) void chatApi.getConversation(targetId).then((detail) => { if (active()) setConversation(detail); }).catch(() => {});
           window.dispatchEvent(new Event("orbit:conversations-changed"));
         },

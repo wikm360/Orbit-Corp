@@ -11,13 +11,15 @@ import { Document } from "@/features/documents/types";
 import { normalizeAgentStatus } from "../lib/agentStatus";
 import { createEventStreamParser } from "../lib/eventStream";
 
-import { AgentStatus, ChatMessage, Conversation, ConversationDetail, SourceCitation } from "../types";
+import { AgentStatus, ChatMessage, Conversation, ConversationDetail, MessageArtifact, SourceCitation } from "../types";
 
 export interface ChatStreamHandlers {
   onStart?: (conversationId: string) => void;
   onStatus?: (status: AgentStatus) => void;
   onDelta: (text: string) => void;
-  onDone?: (sources: SourceCitation[], messageId: string) => void;
+  /** A tool produced evidence (e.g. a database result): shown immediately, even if the model's summary later fails. */
+  onArtifact?: (artifact: MessageArtifact) => void;
+  onDone?: (sources: SourceCitation[], messageId: string, artifacts: MessageArtifact[]) => void;
   onError?: (message: string) => void;
 }
 
@@ -48,9 +50,10 @@ export async function streamChat(
         const status = normalizeAgentStatus(data);
         if (status) handlers.onStatus?.(status);
       } else if (eventName === "delta" && typeof data.content === "string") handlers.onDelta(data.content);
+      else if (eventName === "artifact" && data.artifact && typeof data.artifact === "object") handlers.onArtifact?.(data.artifact as MessageArtifact);
       else if (eventName === "done" && typeof data.message_id === "string") {
         completed = true;
-        handlers.onDone?.((data.sources ?? []) as SourceCitation[], data.message_id);
+        handlers.onDone?.((data.sources ?? []) as SourceCitation[], data.message_id, (Array.isArray(data.artifacts) ? data.artifacts : []) as MessageArtifact[]);
       } else if (eventName === "error") {
         throw new Error(typeof data.message === "string" ? data.message : "پاسخ‌گویی با خطا متوقف شد.");
       }

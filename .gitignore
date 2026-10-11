@@ -16,8 +16,14 @@ out/
 # Data
 Backend/data/uploads/*
 !Backend/data/uploads/.gitkeep
+# Rahkaran SQL Server backups (.bak/.trn, ~12 GB) - never commit
+Backend/data/WIN-*/
+Backend/data/**/*.bak
+Backend/data/**/*.trn
 
 # Editors / OS
 .DS_Store
 .vscode/
 system Admin CEO Leader.txt
+
+/Assets

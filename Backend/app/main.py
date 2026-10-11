@@ -8,6 +8,7 @@ from app.features.access_control.router import router as teams_router
 from app.features.admin.router import router as admin_router
 from app.features.auth.router import router as auth_router
 from app.features.chat.router import router as chat_router
+from app.features.db_connector.router import router as accounting_db_router
 from app.features.documents.router import router as documents_router
 from app.features.memory.router import router as memory_router
 from app.features.projects.router import router as projects_router
@@ -37,6 +38,7 @@ app.include_router(projects_router, prefix=settings.api_prefix)
 app.include_router(documents_router, prefix=settings.api_prefix)
 app.include_router(memory_router, prefix=settings.api_prefix)
 app.include_router(chat_router, prefix=settings.api_prefix)
+app.include_router(accounting_db_router, prefix=settings.api_prefix)
 app.include_router(admin_router, prefix=settings.api_prefix)
 
 

@@ -3,9 +3,11 @@ import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.dependencies import UserContext
 from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
 from app.features.agent.schemas import ToolExecutionResult
+from app.features.agent.tools.accounting_tools import AskAccountingDbTool
 from app.features.agent.tools.base import BaseTool
 from app.features.agent.tools.document_tools import (
     GetDocumentOutlineTool,
@@ -77,16 +79,17 @@ class ToolRegistry:
 
 
 def build_default_registry() -> ToolRegistry:
-    return ToolRegistry(
-        [
-            GetDocumentOutlineTool(),
-            ReadDocumentPagesTool(),
-            ReadEntireDocumentTool(),
-            SearchKnowledgeBaseTool(),
-            ListUserProjectsTool(),
-            ListProjectDocumentsTool(),
-            GetCurrentChatAttachmentsTool(),
-            RecallProjectInsightsTool(),
-            RememberProjectInsightTool(),
-        ]
-    )
+    tools: list[BaseTool] = [
+        GetDocumentOutlineTool(),
+        ReadDocumentPagesTool(),
+        ReadEntireDocumentTool(),
+        SearchKnowledgeBaseTool(),
+        ListUserProjectsTool(),
+        ListProjectDocumentsTool(),
+        GetCurrentChatAttachmentsTool(),
+        RecallProjectInsightsTool(),
+        RememberProjectInsightTool(),
+    ]
+    if get_settings().rahkaran_db_enabled:
+        tools.append(AskAccountingDbTool())
+    return ToolRegistry(tools)

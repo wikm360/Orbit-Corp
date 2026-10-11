@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.dependencies import UserContext
-from app.features.agent.schemas import AgentTurnResult, SourceCitation
+from app.features.agent.schemas import AgentTurnResult, SourceCitation, ToolExecutionResult
 from app.features.agent.tools.registry import ToolRegistry, build_default_registry
 from app.features.auth.models import User
 from app.features.chat.models import Conversation, ConversationType, Message, SenderType
@@ -80,6 +80,10 @@ class AgentEngine:
         llm_provider = get_llm_provider()
 
         all_citations: list[SourceCitation] = []
+        all_artifacts: list[dict] = []
+        # Identical tool calls (same name + arguments) within one turn run once: the model sometimes issues the same call twice
+        # (in parallel or in consecutive steps); repeating a database question costs two LLM calls and two queries for nothing.
+        executed_calls: dict[tuple[str, str], ToolExecutionResult] = {}
         full_response = ""
 
         for step in range(MAX_STEPS):
@@ -120,7 +124,16 @@ class AgentEngine:
             )
 
             for call in tool_calls:
-                status = "reading_documents" if call["name"] in _DOCUMENT_READ_TOOLS else "searching"
+                call_key = (call["name"], _canonical_args(call["arguments"]))
+                if call_key in executed_calls:
+                    messages.append({"role": "tool", "tool_call_id": call["id"], "content": executed_calls[call_key].text})
+                    continue
+                if call["name"] in _DOCUMENT_READ_TOOLS:
+                    status = "reading_documents"
+                elif call["name"] == "ask_accounting_db":
+                    status = "querying_database"
+                else:
+                    status = "searching"
                 await callback(
                     "agent_activity",
                     {"status": status, "tool": call["name"], "args": _safe_parse_args(call["arguments"])},
@@ -128,10 +141,16 @@ class AgentEngine:
                 result = await self._registry.dispatch(
                     call["name"], call["arguments"], db=db, context=context, conversation=conversation
                 )
+                executed_calls[call_key] = result
                 all_citations.extend(result.citations)
+                all_artifacts.extend(result.artifacts)
+                # Delivered immediately (not only with the final message) so the client can show e.g. the database result
+                # even if the model's closing summary fails to stream.
+                for artifact in result.artifacts:
+                    await callback("artifact", {"artifact": artifact})
                 messages.append({"role": "tool", "tool_call_id": call["id"], "content": result.text})
 
-        return AgentTurnResult(content=full_response, citations=all_citations)
+        return AgentTurnResult(content=full_response, citations=all_citations, artifacts=all_artifacts)
 
     async def _build_messages(self, db: AsyncSession, conversation: Conversation) -> list[ChatMessage]:
         history = await _load_history(db, conversation.id)
@@ -159,6 +178,20 @@ class AgentEngine:
                 f"with the sender's name so you can tell participants apart."
             )
 
+        if settings.rahkaran_db_enabled:
+            system_content += (
+                "\n\nYou have access to the company's official accounting database via the "
+                "'ask_accounting_db' tool. When asked about financial reports, accounts, vouchers, contract costs, "
+                "customer/vendor balances, payroll, employee counts, or company assets, query the database "
+                "with ask_accounting_db. Call it ONCE per question (a self-contained Persian question that includes any "
+                "name, period or contract mentioned earlier in the chat). The user's screen shows the exact SQL and the full result "
+                "table under your reply, so keep your answer short, quote figures exactly as they appear in the returned table, "
+                "state the unit (Rial / Toman) and mention if the data are provisional; never invent numbers. "
+                "Never state how many rows the table has yourself: quote only the 'total rows' figure from the tool result. "
+                "If the tool result says zero rows or that no query could be built, say that the query returned nothing / could not be built "
+                "(and which filters were applied) - never claim that the data does not exist, and never invent a reason."
+            )
+
         sender_names: dict[uuid.UUID, str] = {}
         if group:
             sender_ids = {msg.sender_id for msg in history if msg.sender_id is not None}
@@ -184,6 +217,13 @@ async def _load_history(db: AsyncSession, conversation_id: uuid.UUID, limit: int
         .limit(limit)
     )
     return list(reversed(result.scalars().all()))
+
+
+def _canonical_args(arguments_json: str) -> str:
+    try:
+        return json.dumps(json.loads(arguments_json) if arguments_json else {}, sort_keys=True, ensure_ascii=False)
+    except (json.JSONDecodeError, TypeError):
+        return arguments_json or ""
 
 
 def _safe_parse_args(arguments_json: str) -> dict:

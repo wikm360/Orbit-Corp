@@ -90,7 +90,7 @@ test('real streamChat preserves structured stages, Persian text and final citati
   assert.deepEqual(statuses.map((value) => value.status), ['reading_documents', 'searching', 'generating']);
   assert.deepEqual(statuses[0].args, { page_start: 1 });
   assert.equal(text.join(''), 'پاسخ مستند');
-  assert.deepEqual(completions, [[[source], 'm1']]);
+  assert.deepEqual(completions, [[[source], 'm1', []]]);  // third argument: artifacts (empty when the server sends none)
   assert.deepEqual(errors, []);
 });
 
@@ -134,4 +134,55 @@ test('conversation documents have a dedicated status endpoint', async () => {
   await chatApi.listDocuments('conversation-1');
   assert.equal(calls.at(-1).url, '/chat/conversations/conversation-1/documents');
   assert.equal(calls.at(-1).method, undefined);
+});
+
+// ---- accounting-database reference (SQL result artifact) ----
+const { formatCell, tomanHint, formatDateValue, freshnessNotes } = load('lib/sqlResultFormat.ts');
+
+test('database tool has a Persian activity label and the querying_database status is understood', () => {
+  assert.match(agentStatusLabel(normalizeAgentStatus({ status: 'querying_database', tool: 'ask_accounting_db' })), /پایگاه داده/);
+  assert.match(agentStatusLabel(normalizeAgentStatus({ status: 'querying_database' })), /پایگاه داده/);
+});
+
+test('Rial amounts keep every digit and add a Toman summary; ids/years are not grouped', () => {
+  const money = formatCell('money', 2048558901);
+  assert.equal(money.text.replace(/[\s٬,]/g, ''), '۲۰۴۸۵۵۸۹۰۱');
+  assert.equal(money.hint, '≈ ۲۰۴٫۸۶ میلیون تومان');
+  assert.equal(tomanHint(5e9), '≈ ۵۰۰ میلیون تومان');
+  assert.equal(tomanHint(2e11), '≈ ۲۰ میلیارد تومان');
+  assert.equal(tomanHint(5000), undefined);
+  assert.equal(formatCell('text', 140505).text, '140505');
+  assert.equal(formatCell('ratio', 0.3).text, '۳۰٪');
+  assert.equal(formatCell('number', 517).text, '۵۱۷');
+  assert.equal(formatCell('money', null).text, '—');
+  assert.equal(formatCell('text', 'محمود').text, 'محمود');
+});
+
+test('ISO dates become Jalali, Jalali text is left alone, freshness notes mention provisional documents', () => {
+  assert.equal(formatDateValue('2026-07-22'), '۱۴۰۵/۰۴/۳۱');
+  assert.equal(formatDateValue('1405/04/31'), '1405/04/31');
+  const notes = freshnessNotes({
+    'آخرین تاریخ سند حسابداری معتبر (شامل موقت)': '2026-09-22',
+    'آخرین تاریخ سند بررسی‌شده/قطعی (بعد از آن اسناد موقت‌اند)': '2026-07-22',
+  });
+  assert.deepEqual(notes, ['داده تا ۱۴۰۵/۰۶/۳۱', 'اسناد بعد از ۱۴۰۵/۰۴/۳۱ هنوز موقت‌اند']);
+});
+
+test('the done event delivers artifacts and tolerates servers that do not send them', async () => {
+  const artifact = { type: 'sql_result', query_id: 'q1', sql: 'SELECT 1', columns: [], rows: [] };
+  for (const [payload, expected] of [[{ sources: [], artifacts: [artifact], message_id: 'm1' }, [artifact]], [{ sources: [], message_id: 'm2' }, []]]) {
+    const { streamChat } = apiHarness(sseResponse(`event: delta\ndata: {"content":"x"}\n\nevent: done\ndata: ${JSON.stringify(payload)}\n\n`, 7));
+    let received;
+    await streamChat('q', null, { onDelta() {}, onDone: (_sources, _id, artifacts) => { received = artifacts; } });
+    assert.deepEqual(received, expected);
+  }
+});
+
+test('artifact events are delivered immediately and malformed ones are ignored', async () => {
+  const artifact = { type: 'sql_result', query_id: 'q9', sql: 'SELECT 1' };
+  const wire = `event: artifact\ndata: ${JSON.stringify({ artifact })}\n\nevent: artifact\ndata: {"artifact":null}\n\nevent: delta\ndata: {"content":"x"}\n\nevent: done\ndata: {"sources":[],"message_id":"m"}\n\n`;
+  const { streamChat } = apiHarness(sseResponse(wire, 5));
+  const seen = [];
+  await streamChat('q', null, { onDelta() {}, onArtifact: (a) => seen.push(a) });
+  assert.deepEqual(seen, [artifact]);
 });

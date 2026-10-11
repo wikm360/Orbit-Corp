@@ -8,6 +8,7 @@ since features never import each other's models directly.
 from app.features.access_control import models as _access_control_models  # noqa: F401
 from app.features.auth import models as _auth_models  # noqa: F401
 from app.features.chat import models as _chat_models  # noqa: F401
+from app.features.db_connector import models as _db_connector_models  # noqa: F401
 from app.features.documents import models as _documents_models  # noqa: F401
 from app.features.memory import models as _memory_models  # noqa: F401
 from app.features.projects import models as _projects_models  # noqa: F401

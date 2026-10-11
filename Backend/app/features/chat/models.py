@@ -84,6 +84,8 @@ class Message(Base):
     )
     content: Mapped[str] = mapped_column(Text, nullable=False)
     sources: Mapped[list[dict]] = mapped_column(JSONB, default=list, nullable=False)
+    # Structured evidence attached to an AI reply by tools (e.g. {"type": "sql_result", ...}: exact SQL + rows of a database answer).
+    artifacts: Mapped[list[dict]] = mapped_column(JSONB, default=list, nullable=False)
     # Set on an AI reply to point back at the @-trigger message it answers,
     # so a group chat can show the reply threaded under the right message.
     reply_to_message_id: Mapped[uuid.UUID | None] = mapped_column(

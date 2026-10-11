@@ -10,7 +10,7 @@ function resolveApiBaseUrl(): string {
 
   // ۲. در حالت SSR (سمت سرور نكست)
   if (typeof window === "undefined") {
-    return "http://31.216.62.251:8000/api/v1";
+    return process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
   }
 
   // ۳. فال‌بک برای حالت کلاینت اگر متغیر env ست نشده بود

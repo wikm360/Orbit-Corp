@@ -17,6 +17,7 @@ class RetrievedChunk:
     content: str
     chunk_index: int
     score: float
+    page_number: int | None = None
 
 
 class Retriever(ABC):
@@ -67,6 +68,8 @@ class VectorRetriever(Retriever):
         retrieved: list[RetrievedChunk] = []
         for chunk, filename, dist in result.all():
             similarity = 1 - dist
+            meta = chunk.chunk_metadata or {}
+            page_num = meta.get("page") or meta.get("page_number")
             retrieved.append(
                 RetrievedChunk(
                     chunk_id=str(chunk.id),
@@ -75,6 +78,7 @@ class VectorRetriever(Retriever):
                     content=chunk.content,
                     chunk_index=chunk.chunk_index,
                     score=similarity,
+                    page_number=page_num,
                 )
             )
         return retrieved

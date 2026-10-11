@@ -97,6 +97,9 @@ def _stub_providers(monkeypatch):
     monkeypatch.setattr(agent_engine_module, "get_llm_provider", lambda: _StubLLMProvider())
     monkeypatch.setattr(agent_document_tools, "get_embedding_provider", lambda: _StubEmbeddingProvider())
     monkeypatch.setattr(memory_service, "get_embedding_provider", lambda: _StubEmbeddingProvider())
+    from app.features.db_connector import generator as db_generator, hints as db_hints
+    monkeypatch.setattr(db_hints, "get_embedding_provider", lambda: _StubEmbeddingProvider())
+    monkeypatch.setattr(db_generator, "get_sql_llm_provider", lambda: _StubLLMProvider())
 
 
 @pytest_asyncio.fixture

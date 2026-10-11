@@ -12,6 +12,8 @@ x-app: &app
   environment:
     DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-org_rag}
     REDIS_URL: redis://redis:6379/0
+    RAHKARAN_DB_HOST: mssql
+    RAHKARAN_DB_PORT: 1433
   restart: unless-stopped
 
 services:
@@ -83,7 +85,23 @@ services:
       redis:
         condition: service_healthy
 
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    restart: unless-stopped
+    container_name: rahkaran-mssql
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: ${RAHKARAN_SA_PASSWORD:-Rk1!74becb967fae6ec3}
+      MSSQL_PID: "Developer"
+      MSSQL_MEMORY_LIMIT_MB: "8192"
+    ports:
+      - "14330:1433"
+    volumes:
+      - rahkaran_mssql_data:/var/opt/mssql
+
 volumes:
   postgres_data:
   redis_data:
   uploads_data:
+  rahkaran_mssql_data:
+    external: true

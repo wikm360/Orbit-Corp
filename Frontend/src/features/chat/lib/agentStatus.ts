@@ -10,6 +10,7 @@ const TOOL_LABELS: Record<string, string> = {
   read_entire_document: "مطالعهٔ کامل سند",
   get_current_chat_attachments: "بررسی پیوست‌های گفتگو",
   list_project_documents: "بررسی اسناد پروژه",
+  ask_accounting_db: "پرس‌وجو از پایگاه داده‌ی مالی راهکاران",
 };
 
 export function normalizeAgentStatus(value: unknown): AgentStatus | null {
@@ -29,6 +30,7 @@ export function agentStatusLabel(activity: AgentStatus): string {
   if (activity.tool && TOOL_LABELS[activity.tool]) return TOOL_LABELS[activity.tool]!;
   if (activity.status === "searching") return "جست‌وجو و بررسی اطلاعات";
   if (activity.status === "reading_documents") return "در حال خواندن اسناد";
+  if (activity.status === "querying_database") return "در حال پرس‌وجو از پایگاه داده‌ی مالی";
   // Older servers send a Persian sentence instead of a status code.
   if (/[\u0600-\u06ff]/.test(activity.status)) return activity.status;
   return "در حال بررسی درخواست شما";

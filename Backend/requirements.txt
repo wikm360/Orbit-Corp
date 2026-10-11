@@ -27,5 +27,9 @@ python-pptx==1.0.2
 openpyxl==3.1.5
 pillow==12.3.0
 
+# Rahkaran accounting-database connector
+pymssql==2.4.3
+sqlglot==30.21.0
+
 pytest==8.3.4
 pytest-asyncio==0.25.0

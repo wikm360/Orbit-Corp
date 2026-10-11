@@ -6,3 +6,6 @@ __pycache__
 .pytest_cache
 data/uploads/*
 !data/uploads/.gitkeep
+data/WIN-*
+data/**/*.bak
+data/**/*.trn

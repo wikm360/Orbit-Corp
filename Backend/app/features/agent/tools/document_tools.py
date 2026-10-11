@@ -140,7 +140,8 @@ class SearchKnowledgeBaseTool(BaseTool):
         context_parts = []
         citations = []
         for i, chunk in enumerate(chunks):
-            page_info = f" (صفحه {chunk.page_number})" if chunk.page_number else ""
+            page_num = getattr(chunk, "page_number", None)
+            page_info = f" (صفحه {page_num})" if page_num else ""
             context_parts.append(f"[Source {i + 1}: {chunk.document_filename}{page_info}]\n{chunk.content}")
             citations.append(
                 SourceCitation(
@@ -149,7 +150,7 @@ class SearchKnowledgeBaseTool(BaseTool):
                     chunk_index=chunk.chunk_index,
                     snippet=chunk.content[:300],
                     score=round(chunk.score, 4),
-                    page=chunk.page_number,
+                    page=page_num,
                 )
             )
         return ToolExecutionResult(text="\n\n".join(context_parts), citations=citations)

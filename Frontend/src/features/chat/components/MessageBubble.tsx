@@ -1,7 +1,8 @@
 import { Markdown } from "@/shared/components/ui/Markdown";
 
-import { ChatMessage } from "../types";
+import { ChatMessage, SqlResultArtifact } from "../types";
 import { SourceCitationList } from "./SourceCitation";
+import { SqlResultCard } from "./SqlResultCard";
 
 export function MessageBubble({
   message,
@@ -51,6 +52,9 @@ export function MessageBubble({
           ) : (
             <p className="py-1 text-sm text-gray-400">پاسخی دریافت نشد.</p>
           )}
+          {(message.artifacts ?? [])
+            .filter((artifact): artifact is SqlResultArtifact => artifact.type === "sql_result")
+            .map((artifact) => <SqlResultCard key={artifact.query_id} artifact={artifact} />)}
           <SourceCitationList sources={message.sources} />
       </div>
     </div>

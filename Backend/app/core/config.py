@@ -93,11 +93,32 @@ class Settings(BaseSettings):
     llm_strip_content_tags: Annotated[list[str], NoDecode] = []
     # Dedicated vision-capable model for OCR and image analysis (falls back to llm_model if None)
     llm_vision_model: str | None = None
+    # Dedicated model for writing SQL for the accounting-database connector (falls back to llm_model if None)
+    llm_sql_model: str | None = None
 
     # Ingestion OCR
     ocr_enabled: bool = True
     ocr_max_images_per_doc: int = 50
     ocr_min_image_dimension: int = 60
+
+    # Rahkaran accounting-database connector (read-only SQL Server, schema `ai`).
+    # Off by default: when enabled the agent gets the `ask_accounting_db` tool.
+    rahkaran_db_enabled: bool = False
+    rahkaran_db_host: str = "mssql"
+    rahkaran_db_port: int = 1433
+    rahkaran_db_name: str = "MehvarGostar"
+    rahkaran_db_user: str = "rahkaran_ai_reader"
+    rahkaran_db_password: str = ""
+    rahkaran_db_query_timeout_seconds: int = 60
+    # Hard cap of rows read from SQL Server per query (SET ROWCOUNT), and how many rows are shown to the model.
+    rahkaran_db_max_rows: int = 500
+    rahkaran_db_rows_to_model: int = 60
+    # SQL generation: attempts (initial + repairs after a validation/execution error) and hints retrieved per question.
+    rahkaran_sql_max_attempts: int = 3
+    rahkaran_hints_top_k: int = 8
+    # Rows of a result stored on the chat message for display (the model sees rahkaran_db_rows_to_model); downloads re-run the SQL up to the export cap.
+    rahkaran_artifact_max_rows: int = 100
+    rahkaran_export_max_rows: int = 5000
 
     # Chunking
     chunk_size_tokens: int = 500

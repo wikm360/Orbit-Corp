@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import uuid
 from collections.abc import AsyncIterator
 
@@ -157,6 +158,20 @@ def _serialize_message(message: Message) -> dict:
 # ---------------------------------------------------------------------------
 
 
+logger = logging.getLogger(__name__)
+
+_LLM_FAILURE_WITH_RESULT = (
+    "\n\n⚠️ ارتباط با مدل زبانی در میانهٔ نوشتن پاسخ قطع شد؛ نتیجهٔ دریافت‌شده از پایگاه داده در جدول مرجع زیر آمده است."
+)
+_LLM_FAILURE = "⚠️ ارتباط با مدل زبانی قطع شد و پاسخ کامل نشد. لطفاً دوباره تلاش کنید."
+
+
+def _failed_turn_result(partial_text: str, artifacts: list[dict]) -> AgentTurnResult:
+    """What the user gets when the model stream dies mid-turn: whatever was streamed + an explanation + any tool evidence already produced."""
+    note = _LLM_FAILURE_WITH_RESULT if artifacts else ("\n\n" + _LLM_FAILURE if partial_text else _LLM_FAILURE)
+    return AgentTurnResult(content=partial_text + note, citations=[], artifacts=artifacts)
+
+
 async def get_or_create_personal_conversation(
     db: AsyncSession, context: UserContext, conversation_id: uuid.UUID | None, first_message: str
 ) -> Conversation:
@@ -228,9 +243,16 @@ async def _stream_chat_events(
     # so tokens keep streaming to the client in near-real-time.
     event_queue: asyncio.Queue[tuple[str, dict]] = asyncio.Queue()
 
+    partial_text: list[str] = []
+    seen_artifacts: list[dict] = []
+
     async def on_agent_event(event: str, data: dict) -> None:
         # Wire-compatible with the client's existing SSE event names.
         sse_event = "status" if event == "agent_activity" else event
+        if event == "delta":
+            partial_text.append(data["content"])
+        elif event == "artifact":
+            seen_artifacts.append(data["artifact"])
         await event_queue.put((sse_event, data))
 
     async def run_engine() -> AgentTurnResult:
@@ -248,13 +270,20 @@ async def _stream_chat_events(
         event, data = event_queue.get_nowait()
         yield _sse_event(event, data)
 
-    result = await engine_task
+    try:
+        result = await engine_task
+    except Exception:
+        # Typically the LLM gateway dropped the stream. Keep what we have instead of aborting the HTTP response mid-body.
+        logger.exception("Agent turn failed in conversation %s", conversation.id)
+        result = _failed_turn_result("".join(partial_text), seen_artifacts)
+        yield _sse_event("delta", {"content": result.content[len("".join(partial_text)) :]})
 
     assistant_message = Message(
         conversation_id=conversation.id,
         sender_type=SenderType.ASSISTANT,
         content=result.content,
         sources=[s.model_dump() for s in result.citations],
+        artifacts=result.artifacts,
     )
     db.add(assistant_message)
     await db.commit()
@@ -263,6 +292,7 @@ async def _stream_chat_events(
         "done",
         {
             "sources": [s.model_dump() for s in result.citations],
+            "artifacts": result.artifacts,
             "message_id": str(assistant_message.id),
         },
     )
@@ -328,8 +358,14 @@ async def _generate_group_ai_reply(
             {"event": "assistant_start", "reply_to_message_id": str(trigger_message_id)},
         )
 
+        partial_text: list[str] = []
+        seen_artifacts: list[dict] = []
+
         async def on_agent_event(event: str, data: dict) -> None:
             # Wire-compatible with the client's existing broadcast event names.
+            if event == "artifact":
+                seen_artifacts.append(data["artifact"])  # delivered with the final message
+                return
             if event == "agent_activity":
                 await ws_manager.broadcast(
                     conversation_id,
@@ -340,6 +376,7 @@ async def _generate_group_ai_reply(
                     },
                 )
             else:  # "delta"
+                partial_text.append(data["content"])
                 await ws_manager.broadcast(
                     conversation_id,
                     {
@@ -349,13 +386,18 @@ async def _generate_group_ai_reply(
                     },
                 )
 
-        result = await _agent_engine.run_agent_loop(db, conversation, context, on_agent_event)
+        try:
+            result = await _agent_engine.run_agent_loop(db, conversation, context, on_agent_event)
+        except Exception:
+            logger.exception("Group agent turn failed in conversation %s", conversation_id)
+            result = _failed_turn_result("".join(partial_text), seen_artifacts)
 
         assistant_message = Message(
             conversation_id=conversation_id,
             sender_type=SenderType.ASSISTANT,
             content=result.content,
             sources=[s.model_dump() for s in result.citations],
+            artifacts=result.artifacts,
             reply_to_message_id=trigger_message_id,
         )
         db.add(assistant_message)

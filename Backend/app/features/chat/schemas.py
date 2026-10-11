@@ -15,6 +15,7 @@ class MessageRead(BaseModel):
     sender_id: uuid.UUID | None
     content: str
     sources: list[SourceCitation]
+    artifacts: list[dict] = []
     reply_to_message_id: uuid.UUID | None
     created_at: datetime
 
