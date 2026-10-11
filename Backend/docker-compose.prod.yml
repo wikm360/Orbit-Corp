@@ -1,0 +1,193 @@
+# Production overlay. Use ONLY with explicit -f flags (this also keeps docker-compose.override.yml, which opens Redis, out):
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+# Nothing publishes a port except `caddy` (${BIND_IP:-127.0.0.1}:443). Secrets come from .env (single source);
+# postgres / redis / mssql receive them as Docker secrets (files under /run/secrets), not as container env vars.
+
+x-hardened: &hardened
+  restart: unless-stopped
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop: [ALL]
+  security_opt:
+    - no-new-privileges:true
+  logging: &log
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
+
+networks:
+  data:      # postgres / redis / mssql - no route to the outside world
+    internal: true
+  app:       # caddy <-> frontend <-> backend/worker - no route to the outside world
+    internal: true
+  egress:    # outbound internet for backend/worker only (LLM / embedding API). Databases are never attached here.
+  edge:      # the only network with a published port (caddy)
+
+secrets:
+  postgres_password:
+    environment: POSTGRES_PASSWORD
+  redis_password:
+    environment: REDIS_PASSWORD
+  mssql_sa_password:
+    environment: RAHKARAN_SA_PASSWORD
+
+services:
+  # ---------------------------------------------------------------- data tier
+  postgres:
+    ports: !reset []
+    networks: !override [data]
+    secrets: [postgres_password]
+    environment:
+      POSTGRES_PASSWORD: !reset null
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    restart: unless-stopped
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]   # needed by the entrypoint (chown + gosu)
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp", "/var/run/postgresql"]
+    mem_limit: 2g
+    pids_limit: 512
+    logging: *log
+
+  redis:
+    ports: !reset []
+    networks: !override [data]
+    secrets: [redis_password]
+    user: redis
+    command:
+      - sh
+      - -c
+      - exec redis-server --requirepass "$$(cat /run/secrets/redis_password)" --appendonly yes
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$(cat /run/secrets/redis_password)\" redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    # no read_only here: compose cannot inject an environment-sourced secret into a read-only rootfs
+    tmpfs: ["/tmp"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    pids_limit: 128
+    logging: *log
+
+  mssql:
+    ports: !reset []
+    container_name: !reset null
+    networks: !override [data]
+    secrets: [mssql_sa_password]
+    environment:
+      MSSQL_SA_PASSWORD: !reset null
+    # The image has no *_FILE support: load the password from the secret file and exec sqlservr.
+    command:
+      - /bin/bash
+      - -c
+      - export MSSQL_SA_PASSWORD="$$(cat /run/secrets/mssql_sa_password)"; exec /opt/mssql/bin/sqlservr
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"$$(cat /run/secrets/mssql_sa_password)\" -Q 'SELECT 1' -b -o /dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 90s
+    restart: unless-stopped
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]   # sqlservr carries cap_net_bind_service=ep as a file capability; without it exec fails (EPERM)
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 10g
+    pids_limit: 2048
+    logging: *log
+
+  # ---------------------------------------------------------------- app tier
+  migrate:
+    <<: *hardened
+    user: "10001:10001"
+    restart: "no"
+    networks: !override [data]
+    environment: &appenv
+      ENVIRONMENT: production
+      DEBUG: "false"
+      REQUEST_LOGGING_ENABLED: "false"
+      REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}@redis:6379/0
+      # `env_file: .env` would also hand infrastructure-only secrets to the app containers: blank them
+      # (the app builds its DB/Redis connections from DATABASE_URL / REDIS_URL, never from these).
+      RAHKARAN_SA_PASSWORD: ""
+      POSTGRES_PASSWORD: ""
+      REDIS_PASSWORD: ""
+    mem_limit: 512m
+    pids_limit: 128
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  backend:
+    <<: *hardened
+    user: "10001:10001"
+    ports: !reset []
+    expose: ["8000"]
+    networks: !override [app, data, egress]
+    environment: *appenv
+    mem_limit: 2g
+    pids_limit: 512
+
+  worker:
+    <<: *hardened
+    user: "10001:10001"
+    networks: !override [data, egress]
+    environment: *appenv
+    mem_limit: 2g
+    pids_limit: 512
+
+  frontend:
+    <<: *hardened
+    build:
+      context: ../Frontend
+      args:
+        NEXT_PUBLIC_API_URL: /api/v1
+        NEXT_PUBLIC_AI_TRIGGER_TOKEN: ${AI_TRIGGER_TOKEN:-@bot}
+    user: "10001:10001"
+    tmpfs:
+      - /tmp
+      - /app/.next/cache:uid=10001,gid=10001
+    networks: [app]
+    expose: ["3000"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    mem_limit: 512m
+    pids_limit: 256
+
+  # ---------------------------------------------------------------- edge
+  caddy:
+    <<: *hardened
+    build: ./infra/caddy
+    user: "10001:10001"
+    cap_add: [NET_BIND_SERVICE]   # /usr/bin/caddy carries cap_net_bind_service=ep as a file capability (we listen on 8443, but exec needs it)
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-localhost}
+    ports:
+      - "${BIND_IP:-127.0.0.1}:443:8443"
+    networks: [app, edge]
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    depends_on:
+      - frontend
+      - backend
+    mem_limit: 256m
+    pids_limit: 128
+
+volumes:
+  caddy_data:
+  caddy_config:

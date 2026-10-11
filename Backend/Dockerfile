@@ -14,6 +14,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# tiktoken downloads its BPE file on first use; with a read-only rootfs (tmpfs /tmp) that would happen on every
+# container start (and needs outbound internet). Bake it into the image instead.
+ENV TIKTOKEN_CACHE_DIR=/opt/tiktoken
+RUN mkdir -p /opt/tiktoken && python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')" \
+    && chmod -R a+rX /opt/tiktoken
+
 # Non-root runtime user (uid 10001). The upload dir is created and owned here so a fresh
 # named volume mounted at /app/data/uploads inherits the right ownership.
 RUN groupadd --system --gid 10001 app \
