@@ -12,17 +12,20 @@ import { OrbitIcon } from "@/shared/components/ui/OrbitIcon";
 import { Select } from "@/shared/components/ui/Select";
 import { Project } from "@/shared/types";
 import { Document } from "@/features/documents/types";
+import type { BatchUploadHandler } from "@/features/documents/hooks/useBatchUpload";
+import { summarizeBatch, uploadFileBatches, uploadFilename } from "@/features/documents/lib/batchUpload";
 import { documentsApi } from "@/features/documents/api/documentsApi";
 import { chatApi } from "../api/chatApi";
 import { ChatWindow } from "../components/ChatWindow";
 import { useChat } from "../hooks/useChat";
 
 export function ChatScreen() {
-  const { conversation, conversationId, messages, conversationDocuments, hasProcessingDocuments, isStreaming, isSending, agentActivities, connectionState, isLoadingConversation, error, sendMessage, loadConversation, startNewConversation, linkProject, renameConversation, stopResponse, registerDocument } = useChat();
+  const { conversation, conversationId, messages, conversationDocuments, hasProcessingDocuments, isDocumentStatusLoading, isStreaming, isSending, agentActivities, connectionState, isLoadingConversation, error, sendMessage, loadConversation, startNewConversation, linkProject, renameConversation, stopResponse, registerDocument } = useChat();
   const user = useAuthStore((state) => state.user);
   const router = useRouter();
   const searchParams = useSearchParams();
   const lastRouteAction = useRef<string | null>(null);
+  const navigationVersion = useRef(0);
   const [composerKey, setComposerKey] = useState("initial");
   const selectedConversationId = searchParams.get("conversation");
   const newConversationKey = searchParams.get("new");
@@ -47,6 +50,7 @@ export function ChatScreen() {
   useEffect(() => {
     const routeAction = selectedConversationId ? `conversation:${selectedConversationId}` : newConversationKey ? `new:${newConversationKey}` : "empty";
     if (lastRouteAction.current !== routeAction) {
+      navigationVersion.current += 1;
       lastRouteAction.current = routeAction;
       setComposerKey(routeAction);
       setGroupModalOpen(false);
@@ -130,31 +134,42 @@ export function ChatScreen() {
     finally { setLinkingProject(false); }
   }
 
-  async function uploadDocument(file: File): Promise<Document> {
-    let targetId = conversationId;
-    if (!targetId) {
-      try {
-        const created = await chatApi.createPersonal(newLinkedProjectId || null, file.name);
+  const handleUpload: BatchUploadHandler = async (files, onBatch) => {
+    const firstFile = files[0];
+    if (!firstFile) return summarizeBatch([]);
+    const version = navigationVersion.current;
+    const active = () => version === navigationVersion.current;
+    const checkActive = () => {
+      if (!active()) throw new Error("گفتگو هنگام آپلود تغییر کرد.");
+    };
+    setIsUploadingDocument(true);
+    try {
+      let targetId = conversationId;
+      if (!targetId) {
+        const created = await chatApi.createPersonal(newLinkedProjectId || null, uploadFilename(firstFile));
+        checkActive();
         targetId = created.id;
         await loadConversation(created.id);
+        checkActive();
         window.dispatchEvent(new Event("orbit:conversations-changed"));
-      } catch (err) {
-        throw new Error(friendlyErrorMessage(err, "شروع گفتگو برای آپلود سند ناموفق بود."));
       }
+      const id = targetId;
+      return await uploadFileBatches(files, async (batch) => {
+        checkActive();
+        // Preserve the existing single-file endpoint for ordinary one-file selections.
+        const response = files.length === 1 && !firstFile.webkitRelativePath
+          ? summarizeBatch([{ filename: firstFile.name, status: "accepted", document: (await chatApi.uploadDocument(id, firstFile)).document, error: null }])
+          : await chatApi.uploadBatch(id, batch);
+        checkActive();
+        for (const item of response.items) if (item.status === "accepted") registerDocument(item.document);
+        return response;
+      }, onBatch, active);
+    } finally {
+      setIsUploadingDocument(false);
     }
-    const result = await chatApi.uploadDocument(targetId, file);
-    registerDocument(result.document);
-    return result.document;
-  }
-
-  async function handleUpload(file: File): Promise<Document> {
-    setIsUploadingDocument(true);
-    try { return await uploadDocument(file); }
-    finally { setIsUploadingDocument(false); }
-  }
-
+  };
   const availableDocs = [
-    ...conversationDocuments.map((d) => ({ id: d.id, filename: d.filename, isPersonal: false })),
+    ...conversationDocuments.filter((d) => d.status === "ready").map((d) => ({ id: d.id, filename: d.filename, isPersonal: false })),
     ...personalDocs.map((d) => ({ id: d.id, filename: d.filename, isPersonal: true })),
     ...(activeProjectId === loadedDocsProjectId ? projectDocs : []).map((d) => ({ id: d.id, filename: d.filename, isPersonal: false })),
   ];
@@ -207,7 +222,7 @@ export function ChatScreen() {
       <span className="mr-auto hidden text-[11px] text-slate-400 sm:block">پاسخ‌های مستند، تصمیم‌های روشن‌تر</span>
     </div>
     {actionError && <p role="alert" className="mx-4 mt-3 rounded-xl bg-red-50 p-3 text-xs text-red-700">{actionError}</p>}
-    <div className="min-h-0 flex-1"><ChatWindow key={composerKey} messages={messages} isStreaming={isStreaming} isSending={isSending} isUploadingDocument={isUploadingDocument} isDocumentProcessing={hasProcessingDocuments} conversationDocuments={conversationDocuments} isLoadingConversation={isLoadingConversation || linkingProject} error={error} onSend={(text) => void sendMessage(text, newLinkedProjectId || null)} group={group} senderNames={senderNames} onUpload={handleUpload} availableDocuments={availableDocs} agentActivities={agentActivities} onStop={stopResponse} userName={user?.full_name?.split(" ")[0]} /></div>
+    <div className="min-h-0 flex-1"><ChatWindow key={composerKey} messages={messages} isStreaming={isStreaming} isSending={isSending} isUploadingDocument={isUploadingDocument} isDocumentProcessing={hasProcessingDocuments} isDocumentStatusLoading={isDocumentStatusLoading} conversationDocuments={conversationDocuments} isLoadingConversation={isLoadingConversation || linkingProject} error={error} onSend={(text) => void sendMessage(text, newLinkedProjectId || null)} group={group} senderNames={senderNames} onUpload={handleUpload} availableDocuments={availableDocs} agentActivities={agentActivities} onStop={stopResponse} userName={user?.full_name?.split(" ")[0]} /></div>
     <Modal isOpen={groupModalOpen} onClose={closeGroupModal} title="یک گفتگو برای تیم شما">
       <p className="mb-5 text-sm leading-7 text-slate-500">دربارهٔ پروژه گفتگو کنید و با منشن کردن دستیار، از دانش و اسناد پروژه کمک بگیرید.</p>
       <form onSubmit={(event) => { event.preventDefault(); void createGroup(); }} className="space-y-4">

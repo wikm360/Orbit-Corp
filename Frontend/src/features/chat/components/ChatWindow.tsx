@@ -2,6 +2,9 @@ import { KeyboardEvent, useEffect, useRef, useState } from "react";
 
 import { OrbitIcon, OrbitIconName } from "@/shared/components/ui/OrbitIcon";
 import { Document } from "@/features/documents/types";
+import { useBatchUpload, type BatchUploadHandler } from "@/features/documents/hooks/useBatchUpload";
+import { BatchUploadSummary } from "@/features/documents/components/BatchUploadSummary";
+import { DOCUMENT_ACCEPT } from "@/features/documents/lib/batchUpload";
 import { AgentActivity, ChatMessage } from "../types";
 import { MessageBubble } from "./MessageBubble";
 import { MentionDropdown, MentionItem } from "./MentionDropdown";
@@ -21,12 +24,13 @@ interface ChatWindowProps {
   onSend: (text: string) => void;
   senderNames?: Record<string, string>;
   group?: boolean;
-  onUpload?: (file: File) => Promise<Document>;
+  onUpload?: BatchUploadHandler;
   availableDocuments?: AvailableDoc[];
   agentActivities?: AgentActivity[];
   isSending?: boolean;
   isUploadingDocument?: boolean;
   isDocumentProcessing?: boolean;
+  isDocumentStatusLoading?: boolean;
   conversationDocuments?: Document[];
   onStop?: () => void;
   userName?: string;
@@ -56,22 +60,43 @@ export function ChatWindow({
   isSending = false,
   isUploadingDocument = false,
   isDocumentProcessing = false,
+  isDocumentStatusLoading = false,
   conversationDocuments = [],
   onStop,
   userName,
 }: ChatWindowProps) {
   const [draft, setDraft] = useState("");
-  const [uploadError, setUploadError] = useState<string | null>(null);
-  const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
-  const [uploading, setUploading] = useState(false);
+  const { report, isUploading: uploading, run: uploadFiles } = useBatchUpload(onUpload ?? (async () => { throw new Error("آپلود در دسترس نیست."); }));
+  const [uploadMenuOpen, setUploadMenuOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const folderRef = useRef<HTMLInputElement>(null);
+  const attachmentPickerRef = useRef<HTMLDivElement>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
   const stickToBottomRef = useRef(true);
   const composerBusy = isSending || (!group && isStreaming) || isLoadingConversation || uploading || isUploadingDocument;
-  const sendBlocked = composerBusy || isDocumentProcessing;
+  const sendBlocked = composerBusy || isDocumentProcessing || isDocumentStatusLoading;
   const failedDocuments = conversationDocuments.filter((document) => document.status === "failed");
+
+  useEffect(() => {
+    if (!uploadMenuOpen) return;
+    const closeOutside = (event: PointerEvent) => {
+      if (!attachmentPickerRef.current?.contains(event.target as Node)) setUploadMenuOpen(false);
+    };
+    const closeOnEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setUploadMenuOpen(false);
+        attachmentPickerRef.current?.querySelector<HTMLButtonElement>("button[aria-expanded]")?.focus();
+      }
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOutside);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [uploadMenuOpen]);
 
   // Mention State
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -242,14 +267,9 @@ export function ChatWindow({
             })
           )}
           {agentActivities.filter((activity) => activity.status && !messages.some((message) => message.id === `pending-${activity.replyId}`)).map((activity) => <AgentActivityBanner key={activity.replyId} status={activity.status!} />)}
-          {(error || uploadError) && (
+          {error && (
             <div role="alert" className="mx-auto w-full max-w-2xl rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-center text-sm text-red-700">
-              {error ?? uploadError}
-            </div>
-          )}
-          {uploadSuccess && (
-            <div role="status" className="mx-auto w-full max-w-2xl rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-2.5 text-center text-xs text-emerald-800">
-              {uploadSuccess}
+              {error}
             </div>
           )}
           {failedDocuments.map((document) => (
@@ -277,19 +297,19 @@ export function ChatWindow({
         )}
 
         {conversationDocuments.length > 0 && (
-          <div className="mx-auto mb-2 flex max-w-3xl flex-wrap items-center gap-2 px-1">
+          <div className="mx-auto mb-2 flex max-h-32 max-w-3xl flex-wrap items-center gap-2 overflow-y-auto px-1">
             <span className="text-xs text-gray-500">پیوست‌های این گفتگو:</span>
-            {conversationDocuments.map((document) => (
+            {[...conversationDocuments].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).map((document) => (
               <span
                 key={document.id}
-                title={document.error_message ?? undefined}
+                title={`${document.filename}${document.error_message ? `: ${document.error_message}` : ""}`}
                 className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs ${document.status === "failed" ? "border-red-200 bg-red-50 text-red-700" : document.status === "ready" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-800"}`}
               >
                 <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-3.5 w-3.5 text-brand-600">
                   <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
                   <path d="M14 2v6h6M8 13h8M8 17h6" />
                 </svg>
-                <span className="max-w-[180px] truncate">{document.filename}</span>
+                <bdi className="max-w-[240px] break-all">{document.filename}</bdi>
                 {document.status === "processing" && <span className="h-3 w-3 animate-spin rounded-full border-2 border-amber-300 border-t-amber-700" aria-label="در حال پردازش" />}
                 {document.status === "ready" && <span aria-label="آماده" className="text-emerald-600">✓</span>}
                 {document.status === "failed" && <span aria-label="ناموفق" className="text-red-600">!</span>}
@@ -299,10 +319,17 @@ export function ChatWindow({
           </div>
         )}
 
+        {report && <div className="mx-auto mb-2 max-h-48 max-w-3xl overflow-y-auto"><BatchUploadSummary report={report} documents={conversationDocuments} isUploading={uploading} /></div>}
         <div className="mx-auto flex w-full max-w-[820px] items-end gap-2 rounded-[22px] border border-slate-200 bg-white p-3 shadow-[0_8px_32px_-12px_rgba(20,43,64,0.15)] transition focus-within:border-teal-400 focus-within:ring-4 focus-within:ring-teal-50">
+          <div ref={attachmentPickerRef} className="relative shrink-0">
+          {uploadMenuOpen && !composerBusy && <div className="absolute bottom-full right-0 z-20 mb-2 w-40 rounded-xl border border-slate-200 bg-white p-1 shadow-lg">
+            <button type="button" className="w-full rounded-lg p-2 text-right text-xs hover:bg-slate-50" onClick={() => { setUploadMenuOpen(false); fileRef.current?.click(); }}>انتخاب فایل‌ها</button>
+            <button type="button" className="w-full rounded-lg p-2 text-right text-xs hover:bg-slate-50" onClick={() => { setUploadMenuOpen(false); folderRef.current?.click(); }}>انتخاب پوشه</button>
+          </div>}
           <button
             type="button"
-            onClick={() => fileRef.current?.click()}
+            onClick={() => setUploadMenuOpen((current) => !current)}
+            aria-expanded={uploadMenuOpen}
             disabled={composerBusy || !onUpload}
             className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-slate-200 text-slate-500 transition hover:bg-slate-50 disabled:opacity-40"
             aria-label="افزودن سند به این گفتگو"
@@ -316,49 +343,24 @@ export function ChatWindow({
               </svg>
             )}
           </button>
+          </div>
           <input
-            ref={fileRef}
-            type="file"
-            accept=".pdf,.docx,.pptx,.xlsx,.txt"
-            className="hidden"
-            aria-label="فایل پیوست گفتگو"
+            ref={fileRef} type="file" multiple accept={DOCUMENT_ACCEPT} className="hidden" aria-label="فایل پیوست گفتگو" disabled={composerBusy || !onUpload}
             onChange={async (event) => {
+              setUploadMenuOpen(false);
               const input = event.currentTarget;
-              const file = input.files?.[0];
-              if (!file) return;
-              setUploadError(null);
-              setUploadSuccess(null);
-              const ALLOWED = [".pdf", ".docx", ".pptx", ".xlsx", ".txt"];
-              const ext = `.${file.name.split(".").pop()?.toLowerCase()}`;
-              if (!ALLOWED.includes(ext)) {
-                setUploadError("فرمت فایل مجاز نیست (فقط PDF، DOCX، PPTX، XLSX یا TXT).");
-                input.value = "";
-                return;
-              }
-              if (file.size > 50 * 1024 * 1024) {
-                setUploadError("حجم فایل نباید بیشتر از ۵۰ مگابایت باشد.");
-                input.value = "";
-                return;
-              }
-              setUploading(true);
-              try {
-                if (onUpload) {
-                  const document = await onUpload(file);
-                  if (document.status === "failed") {
-                    setUploadError(document.error_message || `پردازش سند «${file.name}» ناموفق بود.`);
-                    return;
-                  }
-                  setUploadSuccess(document.status === "ready"
-                    ? `سند «${file.name}» آمادهٔ استفاده در این گفتگو است.`
-                    : `سند «${file.name}» بارگذاری شد؛ تا پایان پردازش، ارسال پیام غیرفعال است.`);
-                }
-                setTimeout(() => setUploadSuccess(null), 5000);
-              } catch (err) {
-                setUploadError(err instanceof Error ? err.message : "آپلود ناموفق بود.");
-              } finally {
-                setUploading(false);
-                input.value = "";
-              }
+              const files = Array.from(input.files ?? []);
+              await uploadFiles(files);
+              input.value = "";
+            }}
+          />
+          <input
+            ref={folderRef} type="file" {...{ webkitdirectory: "" }} className="hidden" aria-label="پوشهٔ پیوست گفتگو" disabled={composerBusy || !onUpload}
+            onChange={async (event) => {
+              setUploadMenuOpen(false);
+              const input = event.currentTarget;
+              await uploadFiles(Array.from(input.files ?? []));
+              input.value = "";
             }}
           />
           <textarea
@@ -383,7 +385,7 @@ export function ChatWindow({
             type={!group && isStreaming ? "button" : "submit"}
             onClick={!group && isStreaming ? onStop : undefined}
             disabled={!group && isStreaming ? false : !draft.trim() || sendBlocked}
-            aria-label={!group && isStreaming ? "توقف دریافت پاسخ" : isDocumentProcessing ? "در حال پردازش فایل‌ها" : "ارسال پیام"}
+            aria-label={!group && isStreaming ? "توقف دریافت پاسخ" : isDocumentProcessing ? "در حال پردازش فایل‌ها" : isDocumentStatusLoading ? "در حال دریافت وضعیت فایل‌ها" : "ارسال پیام"}
             className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#163b48] text-white transition hover:bg-teal-700 disabled:bg-slate-200 disabled:text-slate-400"
           >
             {!group && isStreaming ? (
@@ -396,7 +398,7 @@ export function ChatWindow({
           </button>
         </div>
         <p className="mx-auto mt-2 max-w-3xl text-center text-[11px] leading-5 text-gray-400">
-          {isDocumentProcessing ? "فایل در حال پردازش است؛ پس از آماده‌شدن می‌توانید پیام را ارسال کنید." : "با @ به اسناد اشاره کنید · Enter ارسال · Shift + Enter خط جدید"}
+          {isDocumentProcessing ? "فایل در حال پردازش است؛ پس از آماده‌شدن می‌توانید پیام را ارسال کنید." : isDocumentStatusLoading ? "در حال دریافت وضعیت پیوست‌های گفتگو…" : "با @ به اسناد اشاره کنید · Enter ارسال · Shift + Enter خط جدید"}
         </p>
       </form>
     </div>

@@ -11,3 +11,13 @@ export interface Document {
   uploaded_by: string | null;
   created_at: string;
 }
+
+export type BatchUploadItem =
+  | { filename: string; status: "accepted"; document: Document; error: null }
+  | { filename: string; status: "rejected"; document: null; error: string };
+
+export interface BatchUploadResponse {
+  accepted: number;
+  rejected: number;
+  items: BatchUploadItem[];
+}

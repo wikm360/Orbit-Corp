@@ -15,6 +15,18 @@ const conversations = [
 conversations.forEach((item) => Object.assign(item, { created_by: 'u1', created_at: '2026-09-25T08:00:00Z', messages: [] }));
 const requests = [], sockets = new Map(), errors = [], conversationDocuments = new Map();
 let lateChatRoute;
+let uploadCount = 0;
+let nextUploadStatus = 'processing';
+let holdNextUpload = false;
+let heldUpload;
+let documentReadFailures = 0;
+async function waitForHeldUpload() {
+  const deadline = Date.now() + 5000;
+  while (!heldUpload) {
+    assert.ok(Date.now() < deadline, 'the delayed upload must reach the mocked server');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
 function message(id, content, replyId = null, sender = 'assistant') {
   return { id, sender_type: sender, sender_id: sender === 'user' ? 'u1' : null, content, sources: [], reply_to_message_id: replyId, created_at: new Date().toISOString() };
 }
@@ -43,9 +55,19 @@ function frame(name, data) { return `event: ${name}\ndata: ${JSON.stringify(data
       if (endpoint.startsWith('/chat/conversations/') && endpoint.endsWith('/documents')) {
         const conversationId = endpoint.split('/')[3];
         if (method === 'POST') {
-          const document = { id: `d-${conversationId}`, filename: 'sample.txt', content_type: 'text/plain', status: 'processing', error_message: null, project_id: null, conversation_id: conversationId, uploaded_by: 'u1', created_at: new Date().toISOString() };
-          conversationDocuments.set(conversationId, [document]);
+          const document = { id: `d-${conversationId}-${++uploadCount}`, filename: 'sample.txt', content_type: 'text/plain', status: nextUploadStatus, error_message: null, project_id: null, conversation_id: conversationId, uploaded_by: 'u1', created_at: new Date().toISOString() };
+          nextUploadStatus = 'processing';
+          conversationDocuments.set(conversationId, [document, ...(conversationDocuments.get(conversationId) || [])]);
+          if (holdNextUpload) {
+            holdNextUpload = false;
+            heldUpload = { document, release: () => json({ document: { ...document, status: 'processing' }, message: 'Document accepted for processing' }) };
+            return;
+          }
           return json({ document, message: 'Document accepted for processing' });
+        }
+        if (documentReadFailures > 0) {
+          documentReadFailures -= 1;
+          return route.fulfill({ contentType: 'application/json', body: '{' });
         }
         return json(conversationDocuments.get(conversationId) || []);
       }
@@ -161,6 +183,28 @@ function frame(name, data) { return `event: ${name}\ndata: ${JSON.stringify(data
     assert.equal(requests.filter((item) => item.method === 'PATCH').at(-1).body.linked_project_id, null);
     console.log('PASS: group creation, structured stages, concurrent replies, group rename');
 
+    await page.getByLabel('فایل پیوست گفتگو').setInputFiles({ name: 'sample.txt', mimeType: 'text/plain', buffer: Buffer.from('Group document') });
+    await page.getByRole('textbox', { name: 'پیام', exact: true }).fill('@bot سند را بخوان');
+    await page.getByRole('button', { name: 'در حال پردازش فایل‌ها', exact: true }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'در حال پردازش فایل‌ها', exact: true }).isDisabled(), true);
+    const groupDocument = conversationDocuments.get(groupId)[0];
+    groupDocument.status = 'ready';
+    send({ event: 'document_status', document_id: groupDocument.id, status: 'ready', filename: 'sample.txt' });
+    await page.getByRole('button', { name: 'ارسال پیام', exact: true }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'ارسال پیام', exact: true }).isEnabled(), true);
+    console.log('PASS: group upload blocks sending until the matching socket event');
+
+    await page.getByLabel('فایل پیوست گفتگو').setInputFiles({ name: 'sample.txt', mimeType: 'text/plain', buffer: Buffer.from('Group reconnect document') });
+    await page.getByRole('button', { name: 'در حال پردازش فایل‌ها', exact: true }).waitFor();
+    socket.close();
+    await page.getByText(/توسعهٔ زیرساخت · در حال اتصال مجدد/).waitFor();
+    conversationDocuments.get(groupId)[0].status = 'ready';
+    await page.getByText(/توسعهٔ زیرساخت · متصل/).waitFor();
+    await page.getByRole('button', { name: 'ارسال پیام', exact: true }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'ارسال پیام', exact: true }).isEnabled(), true);
+    await page.getByRole('textbox', { name: 'پیام', exact: true }).fill('');
+    console.log('PASS: reconnect fetches a document event missed while disconnected');
+
     await page.getByRole('button', { name: 'گفتگوی گروهی جدید', exact: true }).click();
     await page.getByRole('button', { name: 'ساخت گفتگو', exact: true }).click();
     await page.getByRole('heading', { name: 'New group conversation', exact: true }).waitFor();
@@ -189,7 +233,7 @@ function frame(name, data) { return `event: ${name}\ndata: ${JSON.stringify(data
     console.log('PASS: explicit stop releases composer');
 
     await page.getByLabel('فایل پیوست گفتگو').setInputFiles({ name: 'sample.txt', mimeType: 'text/plain', buffer: Buffer.from('Example document') });
-    await page.getByText('سند «sample.txt» بارگذاری شد؛ تا پایان پردازش، ارسال پیام غیرفعال است.', { exact: true }).waitFor();
+    await page.getByText('پایان ارسال: 1 پذیرفته، 0 ردشده', { exact: true }).waitFor();
     await page.getByRole('heading', { name: 'sample.txt', exact: true }).waitFor();
     assert.equal(await page.getByRole('textbox', { name: 'پیام', exact: true }).isEnabled(), true);
     await page.getByRole('textbox', { name: 'پیام', exact: true }).fill('پرسش درباره سند');
@@ -203,9 +247,85 @@ function frame(name, data) { return `event: ${name}\ndata: ${JSON.stringify(data
     uploadedSocket.send(JSON.stringify({ event: 'document_status', document_id: uploadedDocuments[0].id, status: 'ready', filename: 'sample.txt' }));
     await page.getByRole('button', { name: 'ارسال پیام', exact: true }).waitFor();
     assert.equal(await page.getByRole('button', { name: 'ارسال پیام', exact: true }).isEnabled(), true);
+    // Recover current attachment status after reload, then complete without a socket event.
+    uploadedDocuments[0].status = 'processing';
+    await page.reload();
+    await page.getByRole('heading', { name: 'sample.txt', exact: true }).waitFor();
+    await page.getByRole('textbox', { name: 'پیام', exact: true }).fill('وضعیت بازیابی شد');
+    await page.getByRole('button', { name: 'در حال پردازش فایل‌ها', exact: true }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'در حال پردازش فایل‌ها', exact: true }).isDisabled(), true);
+    // Establish socket catch-up before changing the mocked server state.
+    await page.waitForFunction(() => document.readyState === 'complete');
+    uploadedDocuments[0].status = 'ready';
+    await page.getByRole('button', { name: 'ارسال پیام', exact: true }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'ارسال پیام', exact: true }).isEnabled(), true);
+    console.log('PASS: reload catch-up and polling completion without a socket event');
+
+    // Failure event has no reason; the list endpoint supplies it.
+    await page.getByLabel('فایل پیوست گفتگو').setInputFiles({ name: 'sample.txt', mimeType: 'text/plain', buffer: Buffer.from('Broken document') });
+    await page.getByRole('button', { name: 'در حال پردازش فایل‌ها', exact: true }).waitFor();
+    const failedDocument = conversationDocuments.get(uploadedConversationId)[0];
+    failedDocument.status = 'failed';
+    failedDocument.error_message = 'متن سند قابل استخراج نیست';
+    sockets.get(uploadedConversationId).send(JSON.stringify({ event: 'document_status', document_id: failedDocument.id, status: 'failed', filename: 'sample.txt' }));
+    await page.getByRole('alert').filter({ hasText: 'متن سند قابل استخراج نیست' }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'ارسال پیام', exact: true }).isEnabled(), true);
+    console.log('PASS: failed processing fetches error details and releases sending');
+
+    nextUploadStatus = 'ready';
+    await page.getByLabel('فایل پیوست گفتگو').setInputFiles({ name: 'sample.txt', mimeType: 'text/plain', buffer: Buffer.from('Cached document') });
+    await page.getByText('پایان ارسال: 1 پذیرفته، 0 ردشده', { exact: true }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'ارسال پیام', exact: true }).isEnabled(), true);
+    console.log('PASS: immediate ready upload keeps sending enabled');
+
+    holdNextUpload = true;
+    heldUpload = undefined;
+    const accepted = page.waitForRequest((request) => request.method() === 'POST' && request.url().endsWith(`/conversations/${uploadedConversationId}/documents`));
+    await page.getByLabel('فایل پیوست گفتگو').setInputFiles({ name: 'sample.txt', mimeType: 'text/plain', buffer: Buffer.from('Fast ingestion') });
+    await accepted;
+    // The server accepted the upload but its HTTP response is deliberately delayed.
+    await waitForHeldUpload();
+    heldUpload.document.status = 'ready';
+    const syncAfterEvent = page.waitForResponse((response) => response.request().method() === 'GET' && response.url().endsWith(`/conversations/${uploadedConversationId}/documents`));
+    sockets.get(uploadedConversationId).send(JSON.stringify({ event: 'document_status', document_id: heldUpload.document.id, status: 'ready', filename: 'sample.txt' }));
+    await syncAfterEvent;
+    await heldUpload.release();
+    await page.getByRole('textbox', { name: 'پیام', exact: true }).waitFor();
+    await page.getByText('پایان ارسال: 1 پذیرفته، 0 ردشده', { exact: true }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'ارسال پیام', exact: true }).isEnabled(), true);
+    console.log('PASS: ready event before upload response is preserved');
+
+    holdNextUpload = true;
+    heldUpload = undefined;
+    await page.getByLabel('فایل پیوست گفتگو').setInputFiles({ name: 'sample.txt', mimeType: 'text/plain', buffer: Buffer.from('Late upload') });
+    await waitForHeldUpload();
     await page.getByRole('button', { name: 'گفتگوی جدید', exact: true }).first().click();
+    await page.getByText('پیوست‌های این گفتگو:', { exact: true }).waitFor({ state: 'hidden' });
     await page.getByRole('heading', { name: /دانش سازمان/ }).waitFor();
+    const lateUploadResponse = page.waitForResponse((response) => response.request().method() === 'POST' && response.url().endsWith(`/conversations/${uploadedConversationId}/documents`));
+    await heldUpload.release();
+    await lateUploadResponse;
+    await page.getByRole('textbox', { name: 'پیام', exact: true }).fill('گفتگوی دیگری');
+    assert.equal(await page.getByText('پیوست‌های این گفتگو:', { exact: true }).count(), 0);
+    assert.equal(await page.getByRole('button', { name: 'ارسال پیام', exact: true }).isEnabled(), true);
+    await page.getByRole('textbox', { name: 'پیام', exact: true }).fill('');
+    console.log('PASS: late upload response cannot leak into another conversation');
     console.log('PASS: uploading into a new conversation retains the attachment state');
+
+    // A failed initial GET and failed socket catch-up must still be retried,
+    // even though no processing attachment was available to start polling.
+    documentReadFailures = 2;
+    conversationDocuments.set('c1', [{ ...uploadedDocuments[0], id: 'recovered-d1', conversation_id: 'c1', status: 'ready' }]);
+    await page.goto(`${process.env.APP_URL || 'http://127.0.0.1:3000/chat'}?conversation=c1`);
+    await page.getByRole('button', { name: 'در حال دریافت وضعیت فایل‌ها', exact: true }).waitFor();
+    await page.getByRole('textbox', { name: 'پیام', exact: true }).fill('پیوست بازیابی شد');
+    assert.equal(await page.getByRole('button', { name: 'در حال دریافت وضعیت فایل‌ها', exact: true }).isDisabled(), true);
+    await page.getByRole('button', { name: 'ارسال پیام', exact: true }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'ارسال پیام', exact: true }).isEnabled(), true);
+    await page.getByText('پیوست‌های این گفتگو:', { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'گفتگوی جدید', exact: true }).first().click();
+    await page.getByText('پیوست‌های این گفتگو:', { exact: true }).waitFor({ state: 'hidden' });
+    console.log('PASS: failed initial attachment reads retry and recover before sending');
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.screenshot({ path: path.join(artifactDir, 'mobile.png'), fullPage: true });

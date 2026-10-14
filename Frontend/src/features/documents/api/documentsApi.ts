@@ -1,8 +1,11 @@
 import { apiRequest } from "@/shared/lib/apiClient";
-import { Document } from "../types";
+import { BatchUploadResponse, Document } from "../types";
+import { batchFormData } from "../lib/batchUpload";
 
 export const documentsApi = {
   list: (projectId: string) => apiRequest<Document[]>(`/projects/${projectId}/documents`),
+  uploadBatch: (projectId: string, files: File[]) => apiRequest<BatchUploadResponse>(`/projects/${projectId}/documents/batch`, { method: "POST", formData: batchFormData(files) }),
+  retry: (projectId: string, documentId: string) => apiRequest<Document>(`/projects/${projectId}/documents/${documentId}/retry`, { method: "POST" }),
   upload: (projectId: string, file: File) => {
     const formData = new FormData();
     formData.append("file", file);

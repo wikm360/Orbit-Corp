@@ -7,6 +7,7 @@ import { Document } from "@/features/documents/types";
 
 import { chatApi, streamChat } from "../api/chatApi";
 import { normalizeAgentStatus } from "../lib/agentStatus";
+import { ConversationDocumentTracker } from "../lib/conversationDocuments";
 import { AgentActivity, AgentStatus, ChatMessage, Conversation, GroupEvent } from "../types";
 
 function addMessage(current: ChatMessage[], message: ChatMessage): ChatMessage[] {
@@ -32,6 +33,8 @@ export function useChat() {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [conversationDocuments, setConversationDocuments] = useState<Document[]>([]);
+  const [documentsSyncPending, setDocumentsSyncPending] = useState(false);
+  const [isDocumentStatusLoading, setIsDocumentStatusLoading] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [activities, setActivities] = useState<Record<string, AgentStatus | null>>({});
   const [connectionState, setConnectionState] = useState<"connecting" | "connected" | "reconnecting">("connecting");
@@ -43,6 +46,8 @@ export function useChat() {
   const mountedRef = useRef(true);
   const sendingRef = useRef(false);
   const latestMessageIdRef = useRef<string | undefined>(undefined);
+  const documentsRef = useRef(new ConversationDocumentTracker());
+  const activeConversationIdRef = useRef<string | null>(null);
   const token = useAuthStore((state) => state.token);
   const conversationType = conversation?.type;
 
@@ -63,10 +68,14 @@ export function useChat() {
     socketRef.current = null;
     sendingRef.current = false;
     latestMessageIdRef.current = undefined;
+    activeConversationIdRef.current = null;
+    documentsRef.current = new ConversationDocumentTracker();
     setConversation(null);
     setConversationId(null);
     setMessages([]);
     setConversationDocuments([]);
+    setDocumentsSyncPending(false);
+    setIsDocumentStatusLoading(false);
     setError(null);
     setIsSending(false);
     setActivities({});
@@ -81,13 +90,16 @@ export function useChat() {
     try {
       const [detail, documents] = await Promise.all([
         chatApi.getConversation(id),
-        chatApi.listDocuments(id).catch(() => [] as Document[]),
+        chatApi.listDocuments(id).catch(() => null),
       ]);
       if (!mountedRef.current || session !== sessionRef.current) return;
       setConversation(detail);
       setConversationId(detail.id);
+      activeConversationIdRef.current = detail.id;
       setMessages(detail.messages);
-      setConversationDocuments(documents);
+      setConversationDocuments(documentsRef.current.merge(documents ?? []));
+      setDocumentsSyncPending(documents === null);
+      setIsDocumentStatusLoading(documents === null);
       latestMessageIdRef.current = detail.messages.at(-1)?.id;
     } catch (err) {
       if (mountedRef.current && session === sessionRef.current) setError(friendlyErrorMessage(err, "بارگذاری گفتگو ناموفق بود."));
@@ -97,6 +109,22 @@ export function useChat() {
   }, [reset]);
 
   const startNewConversation = useCallback(() => { reset(); }, [reset]);
+
+  const syncDocuments = useCallback(async (id: string, session: number) => {
+    const active = () => mountedRef.current && session === sessionRef.current;
+    try {
+      const documents = await chatApi.listDocuments(id);
+      if (active()) {
+        setConversationDocuments(documentsRef.current.merge(documents));
+        setDocumentsSyncPending(false);
+        setIsDocumentStatusLoading(false);
+      }
+    } catch {
+      // Retry even if the initial list or error-detail request failed and no
+      // processing document is currently known.
+      if (active()) setDocumentsSyncPending(true);
+    }
+  }, []);
 
   useEffect(() => {
     if (!conversationId || !conversationType || !token) return;
@@ -126,9 +154,7 @@ export function useChat() {
         socket.onopen = async () => {
           if (!active()) return;
           setConnectionState("connected");
-          const documentSync = chatApi.listDocuments(conversationId).then((documents) => {
-            if (active()) setConversationDocuments(documents);
-          }).catch(() => {});
+          const documentSync = syncDocuments(conversationId, session);
           if (isGroupConversation) {
             try {
               const missed = await chatApi.listMessages(conversationId, latestMessageIdRef.current);
@@ -145,11 +171,11 @@ export function useChat() {
           try { payload = JSON.parse(event.data) as GroupEvent; } catch { return; }
           if (!payload || typeof payload !== "object") return;
           if (payload.event === "document_status") {
-            setConversationDocuments((current) => current.map((document) => document.id === payload.document_id ? { ...document, status: payload.status } : document));
-            if (payload.status === "failed") {
-              void chatApi.listDocuments(conversationId).then((documents) => {
-                if (active()) setConversationDocuments(documents);
-              }).catch(() => {});
+            const known = documentsRef.current.snapshot.some((document) => document.id === payload.document_id);
+            if (!documentsRef.current.receive(payload)) return;
+            setConversationDocuments(documentsRef.current.snapshot);
+            if (payload.status === "failed" || !known) {
+              void syncDocuments(conversationId, session);
             }
           } else if (isGroupConversation && payload.event === "message" && payload.message) {
             receiveMessage(payload.message);
@@ -193,21 +219,17 @@ export function useChat() {
       if (retryTimer) clearTimeout(retryTimer);
       socket?.close();
     };
-  }, [conversationId, conversationType, token]);
+  }, [conversationId, conversationType, token, syncDocuments]);
 
   const hasProcessingDocuments = conversationDocuments.some((document) => document.status === "processing");
 
   useEffect(() => {
-    if (!conversationId || !hasProcessingDocuments) return;
+    if (!conversationId || (!hasProcessingDocuments && !documentsSyncPending)) return;
+    const session = sessionRef.current;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const poll = async () => {
-      try {
-        const documents = await chatApi.listDocuments(conversationId);
-        if (!cancelled) setConversationDocuments(documents);
-      } catch {
-        // The WebSocket remains the primary channel; polling retries quietly.
-      }
+      await syncDocuments(conversationId, session);
       if (!cancelled) timer = setTimeout(poll, 3000);
     };
     timer = setTimeout(poll, 3000);
@@ -215,14 +237,15 @@ export function useChat() {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [conversationId, hasProcessingDocuments]);
+  }, [conversationId, hasProcessingDocuments, documentsSyncPending, syncDocuments]);
 
   const registerDocument = useCallback((document: Document) => {
-    setConversationDocuments((current) => [document, ...current.filter((item) => item.id !== document.id)]);
+    if (!mountedRef.current || document.conversation_id !== activeConversationIdRef.current) return;
+    setConversationDocuments(documentsRef.current.merge([document]));
   }, []);
 
   const sendMessage = useCallback(async (text: string, linkedProjectId: string | null = null) => {
-    if (sendingRef.current || !text.trim() || isLoadingConversation) return;
+    if (sendingRef.current || !text.trim() || isLoadingConversation || documentsRef.current.hasProcessing || isDocumentStatusLoading) return;
     const session = sessionRef.current;
     sendingRef.current = true;
     setIsSending(true);
@@ -251,6 +274,7 @@ export function useChat() {
         targetId = created.id;
         setConversation(created);
         setConversationId(created.id);
+        activeConversationIdRef.current = created.id;
         window.dispatchEvent(new Event("orbit:conversations-changed"));
       }
       const replyId = generateUUID();
@@ -263,6 +287,7 @@ export function useChat() {
           if (!active()) return;
           targetId = id;
           setConversationId(id);
+          activeConversationIdRef.current = id;
         },
         onStatus: (status) => { if (active()) setActivities({ [replyId]: status }); },
         onArtifact: (artifact) => {
@@ -299,7 +324,7 @@ export function useChat() {
         setMessages(settlePending);
       }
     }
-  }, [conversation, conversationId, isLoadingConversation]);
+  }, [conversation, conversationId, isLoadingConversation, isDocumentStatusLoading]);
 
   const stopResponse = useCallback(() => {
     streamControllerRef.current?.abort();
@@ -325,7 +350,7 @@ export function useChat() {
 
   const agentActivities: AgentActivity[] = Object.entries(activities).map(([replyId, status]) => ({ replyId, status }));
   return {
-    conversation, conversationId, messages, conversationDocuments, hasProcessingDocuments, isStreaming: isSending || agentActivities.length > 0,
+    conversation, conversationId, messages, conversationDocuments, hasProcessingDocuments, isDocumentStatusLoading, isStreaming: isSending || agentActivities.length > 0,
     isSending, agentActivities, connectionState, isLoadingConversation, error,
     sendMessage, loadConversation, startNewConversation, linkProject, renameConversation, stopResponse, registerDocument,
   };

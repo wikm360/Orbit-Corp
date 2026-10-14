@@ -6,7 +6,8 @@ import {
   parseErrorMessage,
 } from "@/shared/lib/apiClient";
 import { friendlyErrorMessage } from "@/shared/lib/errorMessages";
-import { Document } from "@/features/documents/types";
+import { BatchUploadResponse, Document } from "@/features/documents/types";
+import { batchFormData } from "@/features/documents/lib/batchUpload";
 
 import { normalizeAgentStatus } from "../lib/agentStatus";
 import { createEventStreamParser } from "../lib/eventStream";
@@ -115,6 +116,7 @@ export const chatApi = {
     return apiRequest<{ document: Document; message: string }>(`/chat/conversations/${id}/documents`, { method: "POST", formData });
   },
   listDocuments: (id: string) => apiRequest<Document[]>(`/chat/conversations/${id}/documents`),
+  uploadBatch: (id: string, files: File[]) => apiRequest<BatchUploadResponse>(`/chat/conversations/${id}/documents/batch`, { method: "POST", formData: batchFormData(files) }),
   websocketUrl: (id: string, token: string) => {
     // A relative base ("/api/v1", the same-origin proxy setup) must be resolved against the page origin first.
     const absoluteBase = API_BASE_URL.startsWith("/") && typeof window !== "undefined"

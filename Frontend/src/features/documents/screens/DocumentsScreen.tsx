@@ -9,6 +9,7 @@ import { friendlyErrorMessage } from "@/shared/lib/errorMessages";
 import { loadWorkspace, WorkspaceOverview } from "@/shared/lib/workspaceApi";
 import { DocumentList } from "../components/DocumentList";
 import { UploadForm } from "../components/UploadForm";
+import { BatchUploadForm } from "../components/BatchUploadForm";
 import { useDocuments } from "../hooks/useDocuments";
 import { usePersonalDocuments } from "../hooks/usePersonalDocuments";
 
@@ -28,7 +29,10 @@ export function DocumentsScreen() {
     error: projectError,
     deletingId: deletingProjectId,
     refresh: refreshProjectDocs,
-    upload: uploadProjectDoc,
+    uploadBatch: uploadProjectDocs,
+    retry: retryProjectDoc,
+    retryMany: retryProjectDocs,
+    retryingIds,
     remove: removeProjectDoc,
   } = useDocuments(projectId);
 
@@ -46,7 +50,7 @@ export function DocumentsScreen() {
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
 
   const selectedProject = workspace?.projects.find((project) => project.id === projectId);
-  const canManageProject = Boolean(selectedProject && workspace?.managedTeamIds.has(selectedProject.team_id));
+  const canManageProject = Boolean(selectedProject && (user?.role === "admin" || user?.role === "super_admin" || workspace?.managedTeamIds.has(selectedProject.team_id)));
 
   const currentDocs = activeTab === "projects" ? projectDocuments : personalDocuments;
   const pendingDocument = currentDocs.find((document) => document.id === pendingDeleteId);
@@ -173,7 +177,7 @@ export function DocumentsScreen() {
               {canManageProject && (
                 <section className="mb-6 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm sm:p-5">
                   <h2 className="mb-4 font-semibold text-gray-800">افزودن سند جدید به این پروژه</h2>
-                  <UploadForm onUpload={uploadProjectDoc} />
+                  <BatchUploadForm key={projectId} onUpload={uploadProjectDocs} documents={projectDocuments} onRetryFailed={(ids) => void retryProjectDocs(ids)} retrying={retryingIds.length > 0} />
                 </section>
               )}
 
@@ -201,6 +205,8 @@ export function DocumentsScreen() {
                     onDelete={setPendingDeleteId}
                     deletingId={deletingProjectId}
                     canDelete={canManageProject}
+                    onRetry={canManageProject ? (id) => { void retryProjectDoc(id).catch(() => {}); } : undefined}
+                    retryingIds={retryingIds}
                   />
                 )}
               </section>

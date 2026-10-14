@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const ts = require('typescript');
+const { File } = require('node:buffer');
 
 // Exercise the actual TypeScript modules, with only the HTTP boundary replaced.
 function load(relativePath, mocks = {}) {
@@ -14,6 +15,7 @@ function load(relativePath, mocks = {}) {
   const compiledModule = { exports: {} };
   const requireModule = (id) => {
     if (id in mocks) return mocks[id];
+    if (id.startsWith('@/')) return load(path.relative(path.resolve(__dirname, '../src/features/chat'), path.resolve(__dirname, '../src', `${id.slice(2)}.ts`)), mocks);
     if (id.startsWith('.')) return load(path.relative(path.resolve(__dirname, '../src/features/chat'), path.resolve(path.dirname(filename), `${id}.ts`)), mocks);
     return require(id);
   };
@@ -134,6 +136,146 @@ test('conversation documents have a dedicated status endpoint', async () => {
   await chatApi.listDocuments('conversation-1');
   assert.equal(calls.at(-1).url, '/chat/conversations/conversation-1/documents');
   assert.equal(calls.at(-1).method, undefined);
+});
+
+const { ConversationDocumentTracker } = load('lib/conversationDocuments.ts');
+const attachment = (id, status = 'processing', error_message = null) => ({
+  id, status, error_message, filename: `${id}.txt`, conversation_id: 'c1', project_id: null,
+});
+
+test('document completion before upload response is retained and failed details arrive via GET', () => {
+  for (const status of ['ready', 'failed']) {
+    const tracker = new ConversationDocumentTracker();
+    tracker.receive({ event: 'document_status', document_id: 'd1', status });
+    tracker.merge([attachment('d1')]);
+    assert.equal(tracker.snapshot[0].status, status);
+    assert.equal(tracker.hasProcessing, false);
+    tracker.merge([attachment('d1', status, status === 'failed' ? 'Invalid document' : null)]);
+    assert.equal(tracker.snapshot[0].error_message, status === 'failed' ? 'Invalid document' : null);
+  }
+});
+
+test('stale lists cannot remove a new upload or downgrade a terminal status', () => {
+  const tracker = new ConversationDocumentTracker();
+  tracker.merge([attachment('d1'), attachment('d2')]);
+  tracker.merge([]);
+  assert.equal(tracker.hasProcessing, true);
+  tracker.receive({ event: 'document_status', document_id: 'd1', status: 'ready' });
+  tracker.merge([attachment('d1')]);
+  assert.deepEqual(tracker.snapshot.map((item) => item.status), ['ready', 'processing']);
+  tracker.merge([attachment('d2', 'failed', 'Parse failed')]);
+  tracker.merge([attachment('d2')]);
+  assert.equal(tracker.hasProcessing, false);
+  assert.equal(tracker.snapshot[1].error_message, 'Parse failed');
+});
+
+test('polling alone completes multiple uploads; immediate ready uploads never block sending', () => {
+  const tracker = new ConversationDocumentTracker();
+  tracker.merge([attachment('cached', 'ready')]);
+  assert.equal(tracker.hasProcessing, false);
+  tracker.merge([attachment('d1'), attachment('d2')]);
+  tracker.merge([attachment('d1', 'ready')]);
+  assert.equal(tracker.hasProcessing, true);
+  tracker.merge([attachment('d2', 'ready')]);
+  assert.equal(tracker.hasProcessing, false);
+});
+
+test('malformed events cannot release the processing guard and a new session has no old statuses', () => {
+  const tracker = new ConversationDocumentTracker();
+  tracker.merge([attachment('d1')]);
+  for (const payload of [null, {}, { event: 'document_status', status: 'ready' }, { event: 'document_status', document_id: 'd1', status: 'unknown' }]) {
+    assert.equal(tracker.receive(payload), false);
+  }
+  assert.equal(tracker.hasProcessing, true);
+  tracker.receive({ event: 'document_status', document_id: 'd1', status: 'ready' });
+  const next = new ConversationDocumentTracker();
+  next.merge([attachment('d1')]);
+  assert.equal(next.hasProcessing, true);
+});
+
+const { filterUploadFiles, batchFormData, uploadFileBatches, summarizeBatch } = load('../documents/lib/batchUpload.ts');
+
+test('batch validation filters unsupported, temporary, empty, oversized and long-path files', () => {
+  const file = (name, size = 1, webkitRelativePath = '') => ({ name, size, webkitRelativePath });
+  const result = filterUploadFiles([
+    file('leave.PDF', 1, 'policies/hr/leave.PDF'), file('logo.png'), file('.DS_Store'),
+    file('~$draft.docx'), file('empty.txt', 0), file('large.xlsx', 50 * 1024 * 1024 + 1),
+    file('note.txt', 1, `${'a'.repeat(501)}/note.txt`), file('limit.txt', 50 * 1024 * 1024),
+  ]);
+  assert.equal(result.eligible.length, 2);
+  assert.equal(result.skipped.length, 6);
+  assert.match(result.skipped[3].error, /خالی/);
+  assert.equal(result.eligible[0].webkitRelativePath, 'policies/hr/leave.PDF');
+});
+
+test('multipart uses repeated files fields and preserves relative paths for same-named files', () => {
+  const files = ['policies/hr/leave.txt', 'policies/finance/leave.txt'].map((relative) => {
+    const file = new File(['text'], 'leave.txt');
+    Object.defineProperty(file, 'webkitRelativePath', { value: relative });
+    return file;
+  });
+  const form = batchFormData(files);
+  assert.deepEqual([...form.keys()], ['files', 'files']);
+  assert.deepEqual(form.getAll('files').map((file) => file.name), ['policies/hr/leave.txt', 'policies/finance/leave.txt']);
+});
+
+test('500 files are split into 25 batches with at most two in flight and all outcomes retained', async () => {
+  const files = Array.from({ length: 500 }, (_, index) => new File(['x'], `${index}.txt`));
+  const lengths = [], progress = [];
+  let inFlight = 0, peak = 0;
+  const result = await uploadFileBatches(files, async (batch) => {
+    lengths.push(batch.length);
+    peak = Math.max(peak, ++inFlight);
+    await new Promise((resolve) => setImmediate(resolve));
+    inFlight -= 1;
+    return summarizeBatch(batch.map((file) => ({ filename: file.name, status: 'accepted', document: attachment(file.name), error: null })));
+  }, (batch) => progress.push(batch.items.length));
+  assert.equal(lengths.length, 25);
+  assert.ok(lengths.every((length) => length === 20));
+  assert.equal(peak, 2);
+  assert.equal(progress.reduce((sum, count) => sum + count, 0), 500);
+  assert.equal(result.accepted, 500);
+  assert.deepEqual(result.items.map((item) => item.filename), files.map((file) => file.name));
+});
+
+test('partial rejections and a failed HTTP request do not discard successful batches', async () => {
+  const files = Array.from({ length: 45 }, (_, index) => new File(['x'], `${index}.txt`));
+  const result = await uploadFileBatches(files, async (batch) => {
+    if (batch[0].name === '20.txt') throw new Error('request failed');
+    return summarizeBatch(batch.map((file) => file.name === '0.txt'
+      ? { filename: file.name, status: 'rejected', document: null, error: 'backend validation error' }
+      : { filename: file.name, status: 'accepted', document: attachment(file.name, 'ready'), error: null }));
+  });
+  assert.equal(result.accepted, 24);
+  assert.equal(result.rejected, 21);
+  assert.equal(result.items[0].error, 'backend validation error');
+  assert.match(result.items[20].error, /request failed/);
+  assert.equal(result.items[44].status, 'accepted');
+});
+
+test('switching scope stops the scheduler from sending queued batches', async () => {
+  let active = true, count = 0;
+  await uploadFileBatches(Array.from({ length: 500 }, (_, index) => new File(['x'], `${index}.txt`)), async (batch) => {
+    count += 1;
+    active = false;
+    return summarizeBatch(batch.map((file) => ({ filename: file.name, status: 'accepted', document: attachment(file.name), error: null })));
+  }, undefined, () => active);
+  assert.equal(count, 1);
+});
+
+test('project and chat batch APIs use their own scopes; retry uses the project endpoint', async () => {
+  const { chatApi, calls } = apiHarness();
+  const { documentsApi } = load('../documents/api/documentsApi.ts', {
+    '@/shared/lib/apiClient': { apiRequest: async (url, options) => { calls.push({ url, ...options }); return {}; } },
+  });
+  const files = [new File(['x'], 'note.txt')];
+  await chatApi.uploadBatch('c1', files);
+  await documentsApi.uploadBatch('p1', files);
+  await documentsApi.retry('p1', 'd1');
+  assert.deepEqual(calls.map((call) => call.url), ['/chat/conversations/c1/documents/batch', '/projects/p1/documents/batch', '/projects/p1/documents/d1/retry']);
+  assert.ok(calls.every((call) => call.method === 'POST'));
+  assert.equal(calls[0].formData.getAll('files').length, 1);
+  assert.equal(calls[2].formData, undefined);
 });
 
 // ---- accounting-database reference (SQL result artifact) ----

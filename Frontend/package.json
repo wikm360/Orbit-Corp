@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint .",
     "test": "node --test tests/chat-contract.test.cjs",
-    "test:browser": "node tests/chat-browser.cjs"
+    "test:browser": "node tests/chat-browser.cjs",
+    "test:browser:batch": "node tests/batch-upload-browser.cjs"
   },
   "dependencies": {
     "next": "16.3.4",

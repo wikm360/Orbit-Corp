@@ -9,9 +9,11 @@ interface DocumentListProps {
   onDelete: (id: string) => void;
   deletingId?: string | null;
   canDelete?: boolean;
+  onRetry?: (id: string) => void;
+  retryingIds?: string[];
 }
 
-export function DocumentList({ documents, onDelete, deletingId, canDelete = false }: DocumentListProps) {
+export function DocumentList({ documents, onDelete, deletingId, canDelete = false, onRetry, retryingIds = [] }: DocumentListProps) {
   if (documents.length === 0) {
     return <p className="text-sm text-gray-400">هنوز سندی آپلود نشده است.</p>;
   }
@@ -34,19 +36,20 @@ export function DocumentList({ documents, onDelete, deletingId, canDelete = fals
             <td className="py-3">
               <StatusBadge status={doc.status} />
               {doc.status === "failed" && doc.error_message && (
-                <p className="mt-1 max-w-xs truncate text-xs text-red-500">
+                <p className="mt-1 max-w-xs break-words text-xs text-red-500">
                   {doc.error_message}
                 </p>
               )}
             </td>
             <td className="whitespace-nowrap py-3 text-gray-500">{formatDate(doc.created_at)}</td>
             <td className="py-3">
+              {doc.status === "failed" && onRetry && <Button type="button" variant="secondary" size="sm" onClick={() => onRetry(doc.id)} disabled={Boolean(deletingId)} isLoading={retryingIds.includes(doc.id)} aria-label={`تلاش مجدد برای ${doc.filename}`}>تلاش مجدد</Button>}
               {canDelete && (
               <Button
                 variant="ghost"
                 size="sm"
                 isLoading={deletingId === doc.id}
-                disabled={Boolean(deletingId)}
+                disabled={Boolean(deletingId) || retryingIds.includes(doc.id)}
                 className="text-red-600 hover:bg-red-50"
                 onClick={() => onDelete(doc.id)}
               >
