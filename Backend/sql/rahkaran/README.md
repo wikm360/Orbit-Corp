@@ -16,7 +16,7 @@ python sql/rahkaran/apply.py descr         # فقط توضیحات (MS_Descripti
 - idempotent است؛ بعد از **هر ریستور بک‌آپ جدید** دوباره اجرا شود (view ها و جدول تقویم `ai.calendar_data` با ریستور از بین می‌روند).
 - اگر دیتابیس `READ_ONLY` باشد موقتاً `READ_WRITE` می‌شود و در پایان برمی‌گردد.
 - محیط: `RAHKARAN_HOST` (پیش‌فرض 127.0.0.1)، `RAHKARAN_PORT` (14330)، `RAHKARAN_DB` (MehvarGostar)، `RAHKARAN_AI_USER` (rahkaran_ai_reader)، `RAHKARAN_SKIP_TF4138=1` برای نزدن trace flag.
-- ترتیب فایل‌ها: `00_schema` → `10_calendar_lookup` → `20_reference` → `30_ledger` → `40_finance_reports` → `50_hr` → `60_payroll` → `70_assets` → `80_meta`؛ سپس `descriptions.py` (توضیح فارسی هر view و ستون) و ساخت کاربر.
+- ترتیب فایل‌ها: `00_schema` → `10_calendar_lookup` → `15_taxonomy` → `20_reference` → `30_ledger` → `40_finance_reports` → `50_hr` → `60_payroll` → `70_assets` → `80_meta`؛ سپس `descriptions.py` (توضیح فارسی هر view و ستون) و ساخت کاربر.
 - تست: `examples/run.py` (با `RAHKARAN_AI_PASSWORD`) ۶۷ سؤال نمونه ([../../docs/rahkaran/QUESTIONS.md](../../docs/rahkaran/QUESTIONS.md)) را با کاربر فقط‌خواندنی اجرا و زمان/خطا را گزارش می‌کند.
 
 ## قراردادهای نام‌گذاری
@@ -176,3 +176,9 @@ python sql/rahkaran/apply.py descr         # فقط توضیحات (MS_Descripti
 | `ai.glossary` | فرهنگ اصطلاحات کسب‌وکاری (فارسی) و محل پرس‌وجوی داده. |
 | `ai.view_catalog` | فهرست view های لایه‌ی معنایی (ai) با توضیح. |
 | `ai.column_catalog` | فهرست ستون‌های view های ai با نوع داده و توضیح. |
+
+## طبقه‌بندی حسابدار (کلی ← جزئی)
+- فایل حسابدار [mehvargostar_code.xlsx](../../docs/rahkaran/data/mehvargostar_code.xlsx) هر معین درآمد/هزینه را در سه سطح می‌گذارد: `Profit_Loss_Statement` (سرفصل) ← `Detail_Income_Cost` (دسته‌ی تحلیلی، مثل حقوق) ← `Subsidiary_Code` (معین، مثل عیدی و پاداش).
+- `python docs/rahkaran/tools/gen_taxonomy.py` (نیازمند `RAHKARAN_SA_PASSWORD`) از فایل بالا view ثابت `ai.account_taxonomy` را در `15_taxonomy.sql` می‌سازد. معین‌های آینه‌ای که در فایل نیستند (5111xx/5112xx/5114xx و برخی 1117xx/6213xx) با تطبیق پسوند + شباهت عنوان طبقه می‌گیرند (`taxonomy_source = 'derived'`)؛ بقیه در [TAXONOMY_REVIEW.md](../../docs/rahkaran/TAXONOMY_REVIEW.md) برای نظر حسابدار فهرست شده‌اند.
+- ستون‌های `pnl_statement`، `detail_category`، `taxonomy_source` به `ai.accounts` و (دو اولی) به `ledger_lines`/`cost_lines`/`revenue_lines` اضافه شده‌اند؛ view جدید `ai.pnl_by_category_year` جمع سالانه‌ی هر دسته را می‌دهد.
+- بعد از تغییر فایل حسابدار: gen_taxonomy → `python sql/rahkaran/apply.py 15 20 30 40 descr` → `hints/build_hints.py` → ingest مجدد hint ها (endpoint بازنشانی Ingest).

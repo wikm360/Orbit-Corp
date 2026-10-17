@@ -23,7 +23,7 @@ _EMBED_BATCH = 32
 _CACHE_TTL_SECONDS = 300
 _RRF_K = 60
 # Max chunks of each kind in one prompt (view parts of a retrieved view are appended on top of these caps).
-_KIND_CAPS = {"view": 4, "example": 2, "note": 2, "glossary": 2}
+_KIND_CAPS = {"view": 4, "example": 2, "note": 2, "glossary": 2, "taxonomy": 2}
 _MAX_PROMPT_CHARS = 22000
 
 

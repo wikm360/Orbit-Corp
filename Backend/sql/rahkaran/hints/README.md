@@ -8,6 +8,7 @@
 | `view` | 90 | `ai.view_catalog` + `ai.column_catalog` + `VIEW_HINTS` در [notes.py](notes.py) | توضیح هر view، فیلترهای معمول، اشتباهات رایج، کلمات کلیدی فارسی و فهرست ستون‌ها (view های بزرگ در چند chunk) |
 | `example` | 67 | [../examples/questions.py](../examples/questions.py) | سؤال فارسی → SQL تست‌شده (few-shot) |
 | `glossary` | 40 | `ai.glossary` | اصطلاح کسب‌وکاری → view/ستون |
+| `taxonomy` | 25 | `ai.account_taxonomy` (فایل حسابدار) | یک chunk برای هر دسته‌ی تحلیلی (حقوق، سوخت، …) با فهرست معین‌ها؛ پرسش کلی ← دسته، جزئی ← معین |
 | `note` | 17 | `DOMAIN_NOTES` در notes.py | مفاهیم: سال مالی، تاریخ نسبی، وضعیت سند، واحد پول، علامت، قرارداد، هزینه‌ی قرارداد، حقوق، دارایی، بانک، نبودِ داده‌ها، سبک کوئری |
 | پرامپت ثابت | 1 | [out/core_prompt.md](out/core_prompt.md) | قواعد همیشه‌فعال (۱۰ قاعده، حدود ۱۲۰۰ توکن) |
 

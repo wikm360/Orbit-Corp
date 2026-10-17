@@ -60,6 +60,9 @@ SELECT s.SLID AS sl_id,
             WHEN ag.Code = '62' THEN 'other_expense'
        END AS pnl_class,
        CASE WHEN g.Code IN ('1117','5111','5112','5114','6213') THEN RIGHT(s.Code, 2) END AS cost_nature_key,
+       tx.pnl_statement,
+       tx.detail_category,
+       tx.taxonomy_source,
        CASE
             WHEN s.Code = '111001' THEN 'cash'
             WHEN s.Code = '111003' THEN 'petty_cash'
@@ -109,7 +112,8 @@ SELECT s.SLID AS sl_id,
        CASE WHEN EXISTS (SELECT 1 FROM FIN3.VoucherItem i WHERE i.SLRef = s.SLID) THEN 1 ELSE 0 END AS has_postings
 FROM FIN3.SL s
 JOIN FIN3.GL g ON g.GLID = s.GLRef
-JOIN FIN3.AccountGroup ag ON ag.AccountGroupID = g.AccountGroupRef;
+JOIN FIN3.AccountGroup ag ON ag.AccountGroupID = g.AccountGroupRef
+LEFT JOIN ai.account_taxonomy tx ON tx.sl_code = s.Code;
 GO
 
 -- ai.dl_accounts: tafsili (detail) accounts with type, a derived business category (from the DL code prefix) and the resolved reference entity.

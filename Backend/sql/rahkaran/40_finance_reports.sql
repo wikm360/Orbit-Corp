@@ -119,7 +119,7 @@ GO
 -- by contract, equipment, cost nature, counterparty, month ...
 CREATE OR ALTER VIEW ai.revenue_lines AS
 SELECT line_id, voucher_id, voucher_number, fiscal_year, voucher_date, jalali_date, jalali_ym, jalali_month_name, fiscal_month_no,
-       pnl_class, gl_code, gl_title, sl_code, sl_title, credit - debit AS amount, debit, credit,
+       pnl_class, pnl_statement, detail_category, gl_code, gl_title, sl_code, sl_title, credit - debit AS amount, debit, credit,
        contract_dl_code, contract_name, cost_center_dl_code, cost_center_name, project_dl_code, project_name,
        counterparty_dl_code, counterparty_name, other_detail_name, voucher_description, line_description
 FROM ai.ledger_lines
@@ -128,7 +128,7 @@ GO
 
 CREATE OR ALTER VIEW ai.cost_lines AS
 SELECT line_id, voucher_id, voucher_number, fiscal_year, voucher_date, jalali_date, jalali_ym, jalali_month_name, fiscal_month_no,
-       pnl_class, gl_code, gl_title, sl_code, sl_title, cost_nature_key, debit - credit AS amount, debit, credit,
+       pnl_class, pnl_statement, detail_category, gl_code, gl_title, sl_code, sl_title, cost_nature_key, debit - credit AS amount, debit, credit,
        contract_dl_code, contract_name, equipment_dl_code, equipment_name, cost_center_dl_code, cost_center_name,
        project_dl_code, project_name, counterparty_dl_code, counterparty_name, other_detail_name,
        source_system, voucher_description, line_description
@@ -152,6 +152,18 @@ FROM ai.cost_lines c
 LEFT JOIN ai.accounts a ON a.gl_code = '1117' AND a.cost_nature_key = c.cost_nature_key
 WHERE c.cost_nature_key IS NOT NULL
 GROUP BY c.fiscal_year, c.cost_nature_key, a.sl_title;
+GO
+
+-- ai.pnl_by_category_year: income and cost per fiscal year by the ACCOUNTANT'S classification (ai.account_taxonomy): pnl_statement (P&L section)
+-- -> detail_category (حقوق، سوخت، مواد و مصالح، استهلاک …). Covers the mirrored cost accounts (1117xx during the year, 5111xx/5112xx after
+-- year-end transfer, 6213xx admin) in one category. amount is in the natural direction (income = credit-debit, cost = debit-credit).
+CREATE OR ALTER VIEW ai.pnl_by_category_year AS
+SELECT l.fiscal_year, l.pnl_statement, l.detail_category, l.pnl_class,
+       SUM(CASE WHEN l.pnl_class IN ('contract_revenue','other_revenue') THEN l.credit - l.debit ELSE l.debit - l.credit END) AS amount,
+       COUNT(DISTINCT l.voucher_id) AS voucher_count
+FROM ai.ledger_lines l
+WHERE l.is_valid_for_reports = 1 AND l.is_regular = 1 AND l.detail_category IS NOT NULL AND l.pnl_class IS NOT NULL
+GROUP BY l.fiscal_year, l.pnl_statement, l.detail_category, l.pnl_class;
 GO
 
 -- ai.contract_financials_year: per fiscal year and contract (cost center 66xxxx): contract revenue, contract cost, margin, and the movement and

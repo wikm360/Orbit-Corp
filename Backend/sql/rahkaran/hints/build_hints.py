@@ -26,6 +26,41 @@ def connect():
                            port=int(os.environ.get("RAHKARAN_PORT", "14330")), charset="UTF-8", login_timeout=30)
 
 
+def _group_title(t):
+    return re.sub(r"\s+", " ", re.sub(r"[0-9]+$", "", t.replace("ي", "ی").replace("ك", "ک"))).strip()
+
+
+def taxonomy_chunks(cur):
+    """One chunk per accountant category (detail_category) listing its moin accounts grouped by title, plus an index chunk of the hierarchy.
+    Source: ai.account_taxonomy joined with ai.accounts (only accounts that exist in this database)."""
+    cur.execute("SELECT t.pnl_statement, t.detail_category, a.sl_code, RTRIM(a.sl_title) AS sl_title, a.has_postings "
+                "FROM ai.account_taxonomy t JOIN ai.accounts a ON a.sl_code = t.sl_code WHERE t.detail_category IS NOT NULL ORDER BY a.sl_code")
+    rows = cur.fetchall()
+    by_cat = {}
+    for r in rows:
+        by_cat.setdefault(r["detail_category"], {}).setdefault(r["pnl_statement"], []).append(r)
+    chunks, index = [], {}
+    for cat, stmts in sorted(by_cat.items()):
+        body, kws = [], [cat]
+        for stmt, accs in sorted(stmts.items()):
+            index.setdefault(stmt, []).append(cat)
+            titles = {}
+            for a in accs:
+                titles.setdefault(_group_title(a["sl_title"]), []).append(a["sl_code"])
+            body.append(f"سرفصل «{stmt}»:\n" + "\n".join(f"- {t}: " + "، ".join(codes) for t, codes in titles.items()))
+            kws += [stmt] + list(titles)[:25]
+        text = (f"طبقه‌بندی حسابدار - دسته: {cat}\n"
+                f"فیلتر کلی: detail_category = N'{cat}' (در ai.pnl_by_category_year یا ledger_lines/cost_lines)؛ فیلتر جزئی: sl_code IN (...) یا sl_title LIKE N'%...%'.\n"
+                "معین‌ها (عنوان: کدها؛ 1117xx طی سال پروژه‌ها، 5111xx/5112xx بعد از پایان سال، 6213xx اداری):\n" + "\n".join(body))
+        chunks.append(dict(id=f"taxonomy:{len(chunks) + 1:03d}", kind="taxonomy", title=f"دسته‌ی {cat}", text=text,
+                           views=["pnl_by_category_year", "account_taxonomy"], keywords=kws))
+    idx = "\n".join(f"- {stmt}: " + "، ".join(cats) for stmt, cats in sorted(index.items()))
+    chunks.append(dict(id="taxonomy:000", kind="taxonomy", title="فهرست دسته‌های حسابدار",
+                       text="طبقه‌بندی حسابدار: سرفصل صورت سود و زیان ← دسته‌ی تحلیلی (detail_category) ← معین. دسته‌ها:\n" + idx,
+                       views=["pnl_by_category_year", "account_taxonomy"], keywords=["دسته‌ها", "طبقه‌بندی", "سرفصل", "انواع هزینه"]))
+    return chunks
+
+
 def main():
     out_dir = os.path.join(HERE, "out")
     os.makedirs(out_dir, exist_ok=True)
@@ -84,6 +119,8 @@ def main():
     for nid, title, text, kws in DOMAIN_NOTES:
         used = sorted(set(re.findall(r"ai\.(\w+)", text)))
         chunks.append(dict(id=f"note:{nid}", kind="note", title=title, text=f"{title}\n{text}\nکلمات کلیدی: " + "، ".join(kws), views=used, keywords=kws))
+
+    chunks += taxonomy_chunks(cur)
 
     with open(os.path.join(out_dir, "hints.jsonl"), "w", encoding="utf-8") as f:
         for ch in chunks:
