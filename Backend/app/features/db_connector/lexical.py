@@ -3,26 +3,18 @@ Used next to the vector search so exact business words ("صورت وضعیت", "
 
 import collections
 import math
-import re
 
-_STOP = set("از در به با که را این آن یا و تا برای است شد شده هست بود می چه چقدر چند کدام کدوم الان امسال ما ایم شرکت میشه هستن داریم کن".split())
-
-
-def normalize(text: str) -> str:
-    text = text.replace("ي", "ی").replace("ك", "ک").replace("ۀ", "ه").replace("ة", "ه").replace("‌", " ")
-    text = re.sub(r"[۰-۹]", lambda m: str(ord(m.group()) - 0x06F0), text)
-    text = re.sub(r"[٠-٩]", lambda m: str(ord(m.group()) - 0x0660), text)
-    return re.sub(r"[^\w\s]", " ", text.lower())
+from app.core.text_normalization import normalize, words  # noqa: F401 - `normalize` is re-exported
 
 
 def tokens(text: str) -> list[str]:
-    words = [w for w in normalize(text).split() if w not in _STOP and len(w) > 1]
+    word_list = words(text)
     grams: list[str] = []
-    for w in words:
+    for w in word_list:
         if len(w) >= 3:
             padded = f"#{w}#"
             grams += [padded[i : i + 4] for i in range(max(1, len(padded) - 3))]
-    return words + grams
+    return word_list + grams
 
 
 class Bm25Index:

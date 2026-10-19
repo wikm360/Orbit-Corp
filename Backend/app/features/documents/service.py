@@ -100,7 +100,7 @@ def _enqueue_ingestion(document: Document) -> None:
         "app.features.documents.ingestion.pipeline.run_ingestion_pipeline_sync",
         document.id,
         document.file_path,
-        job_timeout=600,
+        job_timeout=settings.ingestion_job_timeout_seconds,
     )
 
 
@@ -321,8 +321,12 @@ async def delete_document(db: AsyncSession, document_id: uuid.UUID) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Structured reads for the chat agent (outline / page range / full content)
+# Structured reads for the chat agent (page range / full content)
 # ---------------------------------------------------------------------------
+
+
+# Above this many tokens `read_entire_document` refuses and the agent must read page ranges instead.
+FULL_DOCUMENT_MAX_TOKENS = 30_000
 
 
 async def _get_accessible_document(
@@ -354,53 +358,60 @@ async def _get_accessible_document(
     return document
 
 
-async def get_document_outline(
+async def get_document_info(
     db: AsyncSession,
     document_id: uuid.UUID,
     *,
     project_id: uuid.UUID | None,
     conversation_id: uuid.UUID,
 ) -> dict:
-    """Total page count and any section headings - lets the agent decide
-    which page range is worth reading instead of pulling the whole document."""
+    """Cheap facts about a document (name, type, size in pages/tokens, scope) so the agent can decide
+    between `read_entire_document` and a targeted `read_document_pages` without reading anything first.
+    Deliberately omits who uploaded it."""
     document = await _get_accessible_document(
         db, document_id, project_id=project_id, conversation_id=conversation_id
     )
 
+    chunk_rows = (
+        await db.execute(
+            select(DocumentChunk.content, DocumentChunk.chunk_metadata)
+            .where(DocumentChunk.document_id == document.id)
+            .order_by(DocumentChunk.chunk_index)
+        )
+    ).all()
+
     recon = load_reconstructed_document(document.file_path)
     total_pages = recon.get("total_pages") if recon else None
-
-    result = await db.execute(
-        select(DocumentChunk.chunk_index, DocumentChunk.chunk_metadata)
-        .where(DocumentChunk.document_id == document.id)
-        .order_by(DocumentChunk.chunk_index)
-    )
-    chunk_rows = result.all()
-
-    sections: list[dict] = []
-    max_meta_page = 0
-    has_page_metadata = False
-
-    for chunk_index, metadata in chunk_rows:
-        meta = metadata or {}
-        p_num = meta.get("page")
-        if p_num is not None:
-            has_page_metadata = True
-            max_meta_page = max(max_meta_page, int(p_num))
-        heading = meta.get("heading") or meta.get("section")
-        if heading:
-            display_page = p_num if p_num is not None else (chunk_index + 1)
-            sections.append({"page": display_page, "heading": heading})
-
     if total_pages is None:
-        total_pages = max_meta_page if has_page_metadata and max_meta_page > 0 else len(chunk_rows)
+        meta_pages = [int(m["page"]) for _, m in chunk_rows if m and m.get("page") is not None]
+        total_pages = max(meta_pages) if meta_pages else len(chunk_rows)
+
+    # Token estimate of what read_entire_document would return (same source it prefers).
+    txt_path = get_reconstructed_txt_path(document.file_path)
+    text = None
+    if txt_path.exists():
+        try:
+            text = txt_path.read_text(encoding="utf-8")
+        except Exception:
+            text = None
+    if text is None:
+        text = "\n\n".join(content for content, _ in chunk_rows)
+    estimated_tokens = _count_tokens(text)
+
+    has_images = any(p.get("has_images") for p in recon.get("pages", [])) if recon else None
 
     return {
         "document_id": str(document.id),
         "filename": document.filename,
+        "content_type": document.content_type,
         "status": document.status.value,
+        "scope": "project" if document.project_id is not None else "conversation",
         "total_pages": total_pages,
-        "sections": sections,
+        "chunk_count": len(chunk_rows),
+        "estimated_tokens": estimated_tokens,
+        "fits_read_entire_document": estimated_tokens <= FULL_DOCUMENT_MAX_TOKENS,
+        "has_images": has_images,
+        "uploaded_at": document.created_at.isoformat() if document.created_at else None,
     }
 
 
@@ -477,12 +488,12 @@ async def get_full_document_content(
     *,
     project_id: uuid.UUID | None,
     conversation_id: uuid.UUID,
-    max_tokens: int = 30_000,
+    max_tokens: int = FULL_DOCUMENT_MAX_TOKENS,
 ) -> str | dict:
     """Every page of the document, in order. Guards against blowing the
     model's context: past `max_tokens`, returns a structured error instead of
-    the text so the agent falls back to `get_document_outline` +
-    `get_document_page_range` for a targeted read."""
+    the text so the agent falls back to `get_document_page_range`
+    for a targeted read."""
     document = await _get_accessible_document(
         db, document_id, project_id=project_id, conversation_id=conversation_id
     )
@@ -498,7 +509,7 @@ async def get_full_document_content(
                     "error": "DOCUMENT_TOO_LARGE",
                     "total_pages": total_pages,
                     "message": (
-                        "سند بیش از حد مجاز طولانی است. لطفاً ابتدا فهرست را بررسی کرده و "
+                        "سند بیش از حد مجاز طولانی است. لطفاً "
                         "بازه صفحات را با read_document_pages بخوانید."
                     ),
                 }
@@ -521,7 +532,7 @@ async def get_full_document_content(
             "error": "DOCUMENT_TOO_LARGE",
             "total_pages": len(chunks),
             "message": (
-                "سند بیش از حد مجاز طولانی است. لطفاً ابتدا فهرست را بررسی کرده و "
+                "سند بیش از حد مجاز طولانی است. لطفاً "
                 "بازه صفحات را با read_document_pages بخوانید."
             ),
         }

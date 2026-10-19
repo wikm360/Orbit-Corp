@@ -67,6 +67,7 @@ async def _reset_schema() -> AsyncGenerator[None, None]:
         await conn.execute(text("DROP SCHEMA public CASCADE"))
         await conn.execute(text("CREATE SCHEMA public"))
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
         await conn.run_sync(Base.metadata.create_all)
     yield
     # Each test runs in its own event loop; pooled asyncpg/Redis connections

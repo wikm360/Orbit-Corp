@@ -10,7 +10,7 @@ from app.features.agent.schemas import ToolExecutionResult
 from app.features.agent.tools.accounting_tools import AskAccountingDbTool
 from app.features.agent.tools.base import BaseTool
 from app.features.agent.tools.document_tools import (
-    GetDocumentOutlineTool,
+    GetDocumentInfoTool,
     ReadDocumentPagesTool,
     ReadEntireDocumentTool,
     SearchKnowledgeBaseTool,
@@ -80,7 +80,7 @@ class ToolRegistry:
 
 def build_default_registry() -> ToolRegistry:
     tools: list[BaseTool] = [
-        GetDocumentOutlineTool(),
+        GetDocumentInfoTool(),
         ReadDocumentPagesTool(),
         ReadEntireDocumentTool(),
         SearchKnowledgeBaseTool(),

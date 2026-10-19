@@ -7,6 +7,7 @@ import tempfile
 
 from app.core.config import get_settings
 from app.core.exceptions import BadRequestError
+from app.features.documents.ingestion.text_layer import TEXT_OK, TEXT_VISUAL_PERSIAN, assess_text_layer, fix_visual_persian
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,8 @@ class DocumentPage:
     text: str = ""
     images: list[ExtractedImage] = field(default_factory=list)
     metadata: dict = field(default_factory=dict)
+    # PDF only: the extracted text layer is unusable (see ingestion/text_layer.py); the OCR step should replace it.
+    needs_ocr: bool = False
 
 
 def parse_document_pages(file_path: str) -> list[DocumentPage]:
@@ -157,6 +160,10 @@ def _parse_pdf_pages(file_path: str) -> list[DocumentPage]:
 
     for idx, page in enumerate(reader.pages, start=1):
         page_text = (page.extract_text() or "").strip()
+        text_layer = assess_text_layer(page_text)
+        if text_layer == TEXT_VISUAL_PERSIAN:
+            # Fallback text if OCR is off/fails; the OCR step replaces it with a far better reading.
+            page_text = fix_visual_persian(page_text)
         extracted_images: list[ExtractedImage] = []
 
         try:
@@ -199,11 +206,17 @@ def _parse_pdf_pages(file_path: str) -> list[DocumentPage]:
                 page_number=idx,
                 text=page_text,
                 images=extracted_images,
-                metadata={"page": idx},
+                metadata={"page": idx} if text_layer == TEXT_OK else {"page": idx, "text_layer": text_layer},
+                needs_ocr=text_layer != TEXT_OK,
             )
         )
 
     return pages
+
+
+def render_pdf_page(file_path: str, page_number: int) -> ExtractedImage | None:
+    """Public wrapper: render one PDF page to a PNG image (None if `pdftoppm` is unavailable or fails)."""
+    return _try_render_pdf_page_with_pdftoppm(file_path, page_number)
 
 
 def _parse_docx_pages(file_path: str) -> list[DocumentPage]:

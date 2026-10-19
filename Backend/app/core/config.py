@@ -78,6 +78,8 @@ class Settings(BaseSettings):
     embedding_api_key: str = ""
     embedding_model: str = "bge-m3"
     embedding_dimensions: int = 1536
+    # Send `dimensions` with every /embeddings request (needed to use text-embedding-3-large at 1536 dims).
+    embedding_send_dimensions: bool = False
 
     # LLM provider (OpenAI-compatible chat completions endpoint)
     llm_api_base_url: str = "https://api.openai.com/v1"
@@ -100,6 +102,15 @@ class Settings(BaseSettings):
     ocr_enabled: bool = True
     ocr_max_images_per_doc: int = 50
     ocr_min_image_dimension: int = 60
+    # PDF pages whose text layer is unusable (visual-order Persian presentation forms, or symbol garbage) are rendered and
+    # OCR'd instead of trusting the layer; capped per document because it is one vision call per page.
+    ocr_replace_bad_text_layer: bool = True
+    ocr_max_replaced_pages: int = 300
+    # Pages OCR'd at the same time inside one document (each call takes 10-30 s). Measured: 12 concurrent pages were 3.2x
+    # faster than 4 with no failures. The real load is WORKER_REPLICAS x this value, so lower it if the provider rate-limits (429).
+    ocr_concurrency: int = 12
+    # RQ job timeout for one document (OCR of a long scanned PDF is slow).
+    ingestion_job_timeout_seconds: int = 3600
 
     # Rahkaran accounting-database connector (read-only SQL Server, schema `ai`).
     # Off by default: when enabled the agent gets the `ask_accounting_db` tool.
@@ -127,6 +138,27 @@ class Settings(BaseSettings):
     # Retrieval
     retrieval_top_k: int = 5
     retrieval_score_threshold: float = 0.3
+    # Hybrid document retrieval: vector + Postgres full-text (+ trigram for short queries) fused with Reciprocal Rank Fusion.
+    # Off = the previous vector-only behaviour.
+    retrieval_hybrid_enabled: bool = True
+    # Candidates taken from each ranking before fusion.
+    retrieval_candidates: int = 30
+    retrieval_rrf_k: int = 60
+    # A full-text candidate only counts as a lexical match if it contains at least this many distinct query words
+    # (capped by the number of words in the query), so one common word cannot drag in unrelated chunks.
+    retrieval_lexical_min_term_hits: int = 2
+    retrieval_trigram_enabled: bool = True
+    # Trigram only runs for short, keyword-like queries (long questions match nothing by trigram similarity).
+    retrieval_trigram_max_terms: int = 3
+    retrieval_trigram_threshold: float = 0.65
+    # LLM re-ranking of the hybrid candidates (one extra, short LLM call per search). Measured on the evaluation corpus:
+    # hit@1 0.65 -> 0.85, hit@5 0.89 -> 0.93-0.95, and questions with no answer return nothing. Off by default.
+    retrieval_rerank_enabled: bool = False
+    # Falls back to `llm_model` when unset; a small fast model (e.g. gpt-4.1-mini) is as good as a big one for this.
+    llm_rerank_model: str | None = None
+    retrieval_rerank_candidates: int = 20
+    retrieval_rerank_passage_chars: int = 600
+    retrieval_rerank_timeout_seconds: int = 30
 
     # Group chat: prefix that triggers an AI reply in a project group chat
     # (case-insensitive). Personal chats always reply, no trigger needed.

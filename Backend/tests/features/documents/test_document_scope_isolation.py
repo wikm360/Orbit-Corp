@@ -71,19 +71,15 @@ async def test_a_file_uploaded_to_one_chat_is_not_readable_from_another_chat(db_
 
     # Same user, different chat: must not be reachable.
     with pytest.raises(NotFoundError):
-        await documents_service.get_document_outline(
-            db_session, secret.id, project_id=None, conversation_id=chat_b.id
-        )
-    with pytest.raises(NotFoundError):
         await documents_service.get_full_document_content(
             db_session, secret.id, project_id=None, conversation_id=chat_b.id
         )
 
     # Its own chat still works.
-    outline = await documents_service.get_document_outline(
+    content = await documents_service.get_full_document_content(
         db_session, secret.id, project_id=None, conversation_id=chat_a.id
     )
-    assert outline["filename"] == "secret.txt"
+    assert "secret.txt" in content
 
 
 async def test_search_in_a_project_chat_never_returns_files_from_the_users_other_chats(db_session):

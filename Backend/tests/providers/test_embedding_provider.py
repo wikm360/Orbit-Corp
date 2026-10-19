@@ -74,3 +74,28 @@ async def test_gives_up_after_the_max_attempts(_no_real_sleep):
 
     assert calls["n"] == BGEM3EmbeddingProvider._MAX_ATTEMPTS
     assert _no_real_sleep == [1.0, 2.0, 4.0, 8.0]
+
+
+async def test_dimensions_are_only_sent_when_enabled():
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json
+
+        seen.append(json.loads(request.content))
+        return _ok(["a"])
+
+    plain = _provider(handler)
+    await plain.embed(["a"])
+    shortened = BGEM3EmbeddingProvider(
+        base_url="http://embeddings.test/v1",
+        api_key="k",
+        model="m",
+        dimensions=2,
+        transport=httpx.MockTransport(handler),
+        send_dimensions=True,
+    )
+    await shortened.embed(["a"])
+
+    assert "dimensions" not in seen[0]
+    assert seen[1]["dimensions"] == 2

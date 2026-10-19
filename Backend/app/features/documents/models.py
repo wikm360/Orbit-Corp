@@ -3,12 +3,13 @@ import uuid
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import CheckConstraint, DateTime, Enum, ForeignKey, Integer, String, Text, func
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
+from sqlalchemy import CheckConstraint, Computed, DateTime, Enum, ForeignKey, Index, Integer, String, Text, event, func
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.config import get_settings
 from app.core.database import Base
+from app.core.text_normalization import normalize
 
 settings = get_settings()
 
@@ -84,6 +85,17 @@ class Document(Base):
 
 class DocumentChunk(Base):
     __tablename__ = "document_chunks"
+    # Lexical side of hybrid retrieval (see features/retrieval/service.py): a GIN full-text index and a GIN trigram index,
+    # both over the normalized text. The vector HNSW index lives in the migrations only.
+    __table_args__ = (
+        Index("ix_document_chunks_search_tsv", "search_tsv", postgresql_using="gin"),
+        Index(
+            "ix_document_chunks_search_text_trgm",
+            "search_text",
+            postgresql_using="gin",
+            postgresql_ops={"search_text": "gin_trgm_ops"},
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -99,3 +111,15 @@ class DocumentChunk(Base):
     chunk_metadata: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
 
     document: Mapped["Document"] = relationship(back_populates="chunks")
+    # `normalize(content)` (Persian letter/digit variants unified, punctuation stripped), filled on insert by the listener below.
+    search_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Derived by Postgres from search_text; never written by the app.
+    search_tsv = mapped_column(
+        TSVECTOR, Computed("to_tsvector('simple', coalesce(search_text, ''))", persisted=True), nullable=True
+    )
+
+
+@event.listens_for(DocumentChunk, "before_insert")
+def _fill_search_text(_mapper, _connection, chunk: DocumentChunk) -> None:
+    if chunk.search_text is None:
+        chunk.search_text = normalize(chunk.content or "")

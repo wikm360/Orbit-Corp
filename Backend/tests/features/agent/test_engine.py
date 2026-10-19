@@ -153,7 +153,7 @@ async def test_a_failing_tool_call_does_not_abort_the_turn(db_session, monkeypat
                     "calls": [
                         {
                             "id": "call_1",
-                            "name": "get_document_outline",
+                            "name": "read_entire_document",
                             "arguments": f'{{"document_id": "{missing_document_id}"}}',
                         }
                     ],

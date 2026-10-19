@@ -181,14 +181,6 @@ async def test_get_document_page_range_with_real_pages(client, db_session, tmp_p
         )
     await db_session.commit()
 
-    outline = await documents_service.get_document_outline(
-        db_session,
-        document.id,
-        project_id=uuid.UUID(project_id),
-        conversation_id=conversation.id,
-    )
-    assert outline["total_pages"] == 3
-
     page_text = await documents_service.get_document_page_range(
         db_session,
         document.id,

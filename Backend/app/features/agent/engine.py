@@ -40,7 +40,7 @@ SYSTEM_PROMPT = (
 # Tools whose `agent_activity` status should read "reading_documents" rather
 # than the default "searching", purely for a more accurate client-side label.
 _DOCUMENT_READ_TOOLS = {
-    "get_document_outline",
+    "get_document_info",
     "read_document_pages",
     "read_entire_document",
     "get_current_chat_attachments",

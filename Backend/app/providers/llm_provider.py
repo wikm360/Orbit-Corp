@@ -287,6 +287,18 @@ def get_llm_provider() -> LLMProvider:
     )
 
 
+def get_rerank_llm_provider() -> LLMProvider:
+    """Provider for re-ranking search results: `llm_rerank_model` when set, otherwise the default chat model."""
+    settings = get_settings()
+    return OpenAICompatibleLLMProvider(
+        base_url=settings.llm_api_base_url,
+        api_key=settings.llm_api_key,
+        model=settings.llm_rerank_model or settings.llm_model,
+        disable_thinking=settings.llm_disable_thinking,
+        strip_tags=settings.llm_strip_content_tags,
+    )
+
+
 def get_sql_llm_provider() -> LLMProvider:
     """Provider for writing SQL: `llm_sql_model` when set, otherwise the default chat model."""
     settings = get_settings()

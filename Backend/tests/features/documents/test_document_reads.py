@@ -77,25 +77,6 @@ async def _seed_ready_document(db_session, *, project_id: uuid.UUID, pages: list
     return document
 
 
-async def test_get_document_outline_reports_page_count_and_headings(client, db_session):
-    leader_id, project_id = await _leader_with_project(client, "outline")
-    document = await _seed_ready_document(
-        db_session, project_id=uuid.UUID(project_id), pages=["page one text", "page two text"]
-    )
-    conversation = await _seed_conversation(db_session, project_id=uuid.UUID(project_id))
-
-    outline = await documents_service.get_document_outline(
-        db_session,
-        document.id,
-        project_id=uuid.UUID(project_id),
-        conversation_id=conversation.id,
-    )
-
-    assert outline["total_pages"] == 2
-    assert outline["filename"] == "handbook.txt"
-    assert outline["sections"] == [{"page": 1, "heading": "Introduction"}]
-
-
 async def test_get_document_page_range_returns_only_requested_pages(client, db_session):
     leader_id, project_id = await _leader_with_project(client, "pagerange")
     document = await _seed_ready_document(
@@ -166,7 +147,61 @@ async def test_document_reads_are_scoped_to_accessible_projects(client, db_sessi
     other_conversation = await _seed_conversation(db_session, project_id=uuid.UUID(other_project_id))
 
     with pytest.raises(NotFoundError):
-        await documents_service.get_document_outline(
+        await documents_service.get_full_document_content(
+            db_session,
+            document.id,
+            project_id=uuid.UUID(other_project_id),
+            conversation_id=other_conversation.id,
+        )
+
+
+async def test_get_document_info_reports_facts_without_the_uploader(client, db_session):
+    _, project_id = await _leader_with_project(client, "info")
+    document = await _seed_ready_document(
+        db_session, project_id=uuid.UUID(project_id), pages=["page one text", "page two text"]
+    )
+    conversation = await _seed_conversation(db_session, project_id=uuid.UUID(project_id))
+
+    info = await documents_service.get_document_info(
+        db_session, document.id, project_id=uuid.UUID(project_id), conversation_id=conversation.id
+    )
+
+    assert info["filename"] == "handbook.txt"
+    assert info["content_type"] == "text/plain"
+    assert info["status"] == "ready"
+    assert info["scope"] == "project"
+    assert info["total_pages"] == 2
+    assert info["chunk_count"] == 2
+    assert info["estimated_tokens"] > 0
+    assert info["fits_read_entire_document"] is True
+    assert "uploaded_by" not in info
+
+
+async def test_get_document_info_flags_documents_too_large_to_read_whole(client, db_session, monkeypatch):
+    _, project_id = await _leader_with_project(client, "infobig")
+    document = await _seed_ready_document(
+        db_session, project_id=uuid.UUID(project_id), pages=["word " * 50]
+    )
+    conversation = await _seed_conversation(db_session, project_id=uuid.UUID(project_id))
+    monkeypatch.setattr(documents_service, "FULL_DOCUMENT_MAX_TOKENS", 5)
+
+    info = await documents_service.get_document_info(
+        db_session, document.id, project_id=uuid.UUID(project_id), conversation_id=conversation.id
+    )
+
+    assert info["fits_read_entire_document"] is False
+
+
+async def test_get_document_info_is_scoped_to_accessible_projects(client, db_session):
+    admin_token, _ = await _register(client, "owner-infoscope@example.com")
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+    _, project_id = await _leader_with_project(client, "infoA", admin_headers)
+    _, other_project_id = await _leader_with_project(client, "infoB", admin_headers)
+    document = await _seed_ready_document(db_session, project_id=uuid.UUID(project_id), pages=["secret"])
+    other_conversation = await _seed_conversation(db_session, project_id=uuid.UUID(other_project_id))
+
+    with pytest.raises(NotFoundError):
+        await documents_service.get_document_info(
             db_session,
             document.id,
             project_id=uuid.UUID(other_project_id),

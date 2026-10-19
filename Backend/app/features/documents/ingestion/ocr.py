@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import io
 import logging
@@ -8,6 +9,8 @@ from PIL import Image
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+_OCR_ATTEMPTS = 3
 
 SYSTEM_OCR_PROMPT = (
     "شما یک موتور قدرتمند OCR و تحلیل تصویر اسناد هستید.\n"
@@ -70,25 +73,34 @@ async def extract_text_from_image(image_bytes: bytes, image_format: str = "png")
         vision_model = getattr(settings, "llm_vision_model", None) or getattr(settings, "llm_model", "gpt-4o")
         client = AsyncOpenAI(base_url=settings.llm_api_base_url, api_key=settings.llm_api_key)
 
-        response = await client.chat.completions.create(
-            model=vision_model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": SYSTEM_OCR_PROMPT},
+        response = None
+        for attempt in range(1, _OCR_ATTEMPTS + 1):
+            try:
+                response = await client.chat.completions.create(
+                    model=vision_model,
+                    messages=[
                         {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/{mime_type};base64,{b64_img}",
-                                "detail": "high",
-                            },
-                        },
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": SYSTEM_OCR_PROMPT},
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:image/{mime_type};base64,{b64_img}",
+                                        "detail": "high",
+                                    },
+                                },
+                            ],
+                        }
                     ],
-                }
-            ],
-            max_tokens=2048,
-        )
+                    max_tokens=2048,
+                )
+                break
+            except Exception as exc:  # transient gateway/rate-limit errors are common during bulk ingestion
+                if attempt == _OCR_ATTEMPTS:
+                    raise
+                logger.warning("Vision OCR attempt %d/%d failed (%s); retrying", attempt, _OCR_ATTEMPTS, exc)
+                await asyncio.sleep(2.0 * attempt)
 
         content = response.choices[0].message.content or ""
         cleaned = content.strip()
@@ -98,4 +110,3 @@ async def extract_text_from_image(image_bytes: bytes, image_format: str = "png")
     except Exception as exc:
         logger.warning("Vision OCR request failed for image (%s): %s", image_format, exc)
         return ""
-

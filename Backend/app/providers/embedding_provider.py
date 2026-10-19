@@ -44,12 +44,16 @@ class BGEM3EmbeddingProvider(EmbeddingProvider):
         model: str,
         dimensions: int,
         transport: httpx.AsyncBaseTransport | None = None,
+        send_dimensions: bool = False,
     ):
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         self._model = model
         self._dimensions = dimensions
         self._transport = transport
+        # OpenAI's text-embedding-3-* models can shorten their vectors server-side (`dimensions`): lets the larger model
+        # fit an existing 1536-wide column. Off by default because other servers reject the field.
+        self._send_dimensions = send_dimensions
 
     @property
     def dimensions(self) -> int:
@@ -64,7 +68,7 @@ class BGEM3EmbeddingProvider(EmbeddingProvider):
                     response = await client.post(
                         f"{self._base_url}/embeddings",
                         headers={"Authorization": f"Bearer {self._api_key}"},
-                        json={"model": self._model, "input": texts},
+                        json=self._payload(texts),
                     )
                 except httpx.TransportError:
                     if attempt == self._MAX_ATTEMPTS:
@@ -82,6 +86,12 @@ class BGEM3EmbeddingProvider(EmbeddingProvider):
                 return [item["embedding"] for item in ordered]
         raise AssertionError("unreachable")  # the loop always returns or raises
 
+    def _payload(self, texts: list[str]) -> dict:
+        payload: dict = {"model": self._model, "input": texts}
+        if self._send_dimensions:
+            payload["dimensions"] = self._dimensions
+        return payload
+
     @staticmethod
     def _backoff(attempt: int, retry_after: str | None = None) -> float:
         if retry_after and retry_after.isdigit():
@@ -97,4 +107,5 @@ def get_embedding_provider() -> EmbeddingProvider:
         api_key=settings.embedding_api_key,
         model=settings.embedding_model,
         dimensions=settings.embedding_dimensions,
+        send_dimensions=settings.embedding_send_dimensions,
     )
