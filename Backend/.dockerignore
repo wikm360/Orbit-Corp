@@ -20,3 +20,7 @@ data/uploads/*
 data/WIN-*
 data/**/*.bak
 data/**/*.trn
+.agents
+AGENTS.md
+CLAUDE.md
+eval

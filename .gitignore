@@ -38,3 +38,6 @@ Backend/data/**/*.trn
 system Admin CEO Leader.txt
 
 /Assets
+
+# Company files used for retrieval evaluation (tools/retrieval_eval) - never commit, never ship in images
+Backend/eval/
