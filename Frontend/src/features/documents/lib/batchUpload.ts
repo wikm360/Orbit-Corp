@@ -1,7 +1,9 @@
 import { friendlyErrorMessage } from "@/shared/lib/errorMessages";
 import type { BatchUploadItem, BatchUploadResponse } from "../types";
 
-export const DOCUMENT_ACCEPT = ".pdf,.docx,.pptx,.xlsx,.txt";
+/** Must match the backend `SUPPORTED_EXTENSIONS` (documents + images, which the backend reads with OCR). */
+export const DOCUMENT_ACCEPT = ".pdf,.docx,.pptx,.xlsx,.txt,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff";
+export const UNSUPPORTED_FORMAT_MESSAGE = "فرمت فایل مجاز نیست (PDF، DOCX، PPTX، XLSX، TXT یا تصویر PNG، JPG، WEBP، BMP، TIFF).";
 export const BATCH_SIZE = 20;
 export const UPLOAD_CONCURRENCY = 2;
 export const MAX_FILE_BYTES = 50 * 1024 * 1024;
@@ -17,7 +19,7 @@ export function filterUploadFiles(files: File[]) {
     const filename = uploadFilename(file);
     const extension = `.${file.name.split(".").pop()?.toLowerCase()}`;
     const error = file.name.startsWith("~$") ? "فایل موقت نادیده گرفته شد."
-      : !DOCUMENT_ACCEPT.split(",").includes(extension) ? "فرمت فایل مجاز نیست (PDF، DOCX، PPTX، XLSX یا TXT)."
+      : !DOCUMENT_ACCEPT.split(",").includes(extension) ? UNSUPPORTED_FORMAT_MESSAGE
       : file.size === 0 ? "فایل خالی است."
       : file.size > MAX_FILE_BYTES ? "حجم فایل بیشتر از ۵۰ مگابایت است."
       : filename.length > 500 ? "نام یا مسیر فایل بیشتر از ۵۰۰ کاراکتر است."

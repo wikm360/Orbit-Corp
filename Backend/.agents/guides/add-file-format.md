@@ -1,6 +1,6 @@
 # راهنما: پشتیبانی از فرمت فایل جدید
 
-فرمت‌های فعلی: `.pdf .docx .pptx .xlsx .txt` + تصاویر `.png .jpg .jpeg .webp .bmp .tiff`. جریان کامل: [../flows/document-ingestion.md](../flows/document-ingestion.md).
+فرمت‌های فعلی: `.pdf .docx .pptx .xlsx .txt` + تصاویر `.png .jpg .jpeg .webp .bmp .tif .tiff`. جریان کامل: [../flows/document-ingestion.md](../flows/document-ingestion.md).
 
 ## قدم‌ها
 1. `app/features/documents/ingestion/parser.py`:

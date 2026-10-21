@@ -195,10 +195,17 @@ test('malformed events cannot release the processing guard and a new session has
 
 const { filterUploadFiles, batchFormData, uploadFileBatches, summarizeBatch } = load('../documents/lib/batchUpload.ts');
 
+test('scanned pages and photos (images) are accepted like documents', () => {
+  const names = ['scan.png', 'photo.JPG', 'page.jpeg', 'x.webp', 'y.bmp', 'z.tif', 'w.TIFF'];
+  const result = filterUploadFiles(names.map((name) => ({ name, size: 1, webkitRelativePath: '' })));
+  assert.equal(result.eligible.length, names.length);
+  assert.equal(result.skipped.length, 0);
+});
+
 test('batch validation filters unsupported, temporary, empty, oversized and long-path files', () => {
   const file = (name, size = 1, webkitRelativePath = '') => ({ name, size, webkitRelativePath });
   const result = filterUploadFiles([
-    file('leave.PDF', 1, 'policies/hr/leave.PDF'), file('logo.png'), file('.DS_Store'),
+    file('leave.PDF', 1, 'policies/hr/leave.PDF'), file('archive.zip'), file('.DS_Store'),
     file('~$draft.docx'), file('empty.txt', 0), file('large.xlsx', 50 * 1024 * 1024 + 1),
     file('note.txt', 1, `${'a'.repeat(501)}/note.txt`), file('limit.txt', 50 * 1024 * 1024),
   ]);

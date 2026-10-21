@@ -23,7 +23,7 @@ worker: Parse ─► OCR ─► Reconstruct ─► Chunk ─► Embed ─► Per
 (حذف سند گفتگو از طریق API وجود ندارد؛ با حذف گفتگو cascade می‌شود.)
 
 ## اعتبارسنجی
-- پسوند باید در `SUPPORTED_EXTENSIONS` باشد: **`.pdf .docx .pptx .xlsx .txt` + تصاویر `.png .jpg .jpeg .webp .bmp .tiff`**. در غیر این‌صورت 400.
+- پسوند باید در `SUPPORTED_EXTENSIONS` باشد: **`.pdf .docx .pptx .xlsx .txt` + تصاویر `.png .jpg .jpeg .webp .bmp .tif .tiff`**. در غیر این‌صورت 400.
 - حجم ≤ `MAX_UPLOAD_SIZE_MB` (۵۰). در endpoint تک‌فایل کل فایل در حافظه خوانده می‌شود (`await file.read()`)؛ در batch فایل‌ها یکی‌یکی.
 - batch: حداکثر `MAX_BATCH_UPLOAD_FILES` (۲۰) فایل در هر درخواست، وگرنه 400؛ فایل خالی / نام >۵۰۰ نویسه / حجم زیاد به‌صورت `rejected` گزارش می‌شود.
 - Caddy `request_body max_size 60MB` روی `/api/*`.
