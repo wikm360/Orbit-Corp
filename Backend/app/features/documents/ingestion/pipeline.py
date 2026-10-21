@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import logging
 import time
 import uuid
@@ -13,6 +14,7 @@ from app.features.chat.ws import publish_event
 from app.features.documents.ingestion.chunker import PageChunk, chunk_document_pages, chunk_text
 from app.features.documents.ingestion.embedder import embed_chunks
 from app.features.documents.ingestion.ocr import extract_text_from_image
+from app.features.documents.ingestion.ocr_cache import get_cached_ocr, ocr_cache_key, put_cached_ocr, vision_model_name
 from app.features.documents.ingestion.parser import DocumentPage, parse_document_pages, render_pdf_page
 from app.features.documents.ingestion.reconstructor import save_reconstructed_document
 from app.features.documents.models import Document, DocumentChunk, DocumentStatus
@@ -57,6 +59,51 @@ class ParseStep(IngestionStep):
             page.text = page.text.replace("\x00", "")
 
 
+class _OcrReader:
+    """Reads images through two cheap layers before paying for a vision call, for one document:
+
+    1. the same image (by bytes) already read/in flight in this document is read once and shared (repeated
+       logos/stamps/headers, identical pages);
+    2. the persistent `ocr_cache` (same image read earlier in any document, same OCR model + prompt).
+    Only the API call itself is limited by `OCR_CONCURRENCY`; waiting for a shared result holds no slot. The DB session
+    is shared with the rest of the pipeline, so cache reads/writes are serialized with a lock. A failed or empty
+    read is never cached.
+    """
+
+    def __init__(self, db: AsyncSession | None, concurrency: int):
+        self._db = db
+        self._api_slots = asyncio.Semaphore(max(1, concurrency))
+        self._db_lock = asyncio.Lock()
+        self._reads: dict[str, asyncio.Future[str]] = {}
+        self.api_calls = 0
+        self.cache_hits = 0
+        self.shared_in_document = 0
+
+    async def read(self, data: bytes, fmt: str) -> str:
+        key = ocr_cache_key(data)
+        pending = self._reads.get(key)
+        if pending is None:
+            pending = self._reads[key] = asyncio.ensure_future(self._read_once(key, data, fmt))
+        else:
+            self.shared_in_document += 1
+        return await pending
+
+    async def _read_once(self, key: str, data: bytes, fmt: str) -> str:
+        if self._db is not None:
+            async with self._db_lock:
+                cached = await get_cached_ocr(self._db, key)
+            if cached is not None:
+                self.cache_hits += 1
+                return cached
+        async with self._api_slots:
+            self.api_calls += 1
+            text = (await extract_text_from_image(data, fmt)).replace("\x00", "").strip()
+        if text and self._db is not None:
+            async with self._db_lock:
+                await put_cached_ocr(self._db, key, text)
+        return text
+
+
 class OCRStep(IngestionStep):
     """Vision OCR for the parts of a document the text layer does not cover.
 
@@ -64,6 +111,7 @@ class OCRStep(IngestionStep):
       the OCR text *replaces* the layer (the deterministic repair done at parse time stays as the fallback).
     - Every other page gets its embedded/scanned images OCR'd and appended to its text.
     Pages are processed concurrently (`OCR_CONCURRENCY`); the images of one page stay sequential so their order is stable.
+    Identical images are read once per document and cached across documents (`_OcrReader`).
     """
 
     async def run(self, context: IngestionContext) -> None:
@@ -71,16 +119,19 @@ class OCRStep(IngestionStep):
         if not getattr(settings, "ocr_enabled", True):
             return
 
-        semaphore = asyncio.Semaphore(max(1, getattr(settings, "ocr_concurrency", 4)))
+        concurrency = max(1, getattr(settings, "ocr_concurrency", 4))
+        reader = _OcrReader(context.db, concurrency)
+        render_slots = asyncio.Semaphore(concurrency)  # bounds simultaneous page renders (memory/CPU), not API calls
         image_budget = getattr(settings, "ocr_max_images_per_doc", 50)
         replace_budget = getattr(settings, "ocr_max_replaced_pages", 300)
         replace_enabled = getattr(settings, "ocr_replace_bad_text_layer", True)
+        counted_images: set[str] = set()  # a repeated image costs no API call, so it does not use up the budget
 
         jobs = []
         for page in context.pages:
             if page.needs_ocr and replace_enabled and replace_budget > 0:
                 replace_budget -= 1
-                jobs.append(self._replace_with_page_ocr(context, page, semaphore))
+                jobs.append(self._replace_with_page_ocr(context, page, reader, render_slots))
                 continue
             if page.needs_ocr and replace_enabled:
                 logger.warning(
@@ -90,55 +141,64 @@ class OCRStep(IngestionStep):
                 )
             selected = []
             for img in page.images:
-                if image_budget <= 0:
-                    logger.warning(
-                        "Reached ocr_max_images_per_doc (%d) for document %s, skipping remaining images.",
-                        getattr(settings, "ocr_max_images_per_doc", 50),
-                        context.document_id,
-                    )
-                    break
-                image_budget -= 1
+                digest = hashlib.sha256(img.data).hexdigest()
+                if digest not in counted_images:
+                    if image_budget <= 0:
+                        logger.warning(
+                            "Reached ocr_max_images_per_doc (%d) for document %s, skipping remaining images.",
+                            getattr(settings, "ocr_max_images_per_doc", 50),
+                            context.document_id,
+                        )
+                        break
+                    image_budget -= 1
+                    counted_images.add(digest)
                 selected.append(img)
             if selected:
-                jobs.append(self._append_image_text(context, page, selected, semaphore))
+                jobs.append(self._append_image_text(page, selected, reader))
 
         if jobs:
             logger.info(
                 "OCR for document %s: %d jobs, concurrency %d, model %s",
                 context.document_id,
                 len(jobs),
-                settings.ocr_concurrency,
-                settings.llm_vision_model or settings.llm_model,
+                concurrency,
+                vision_model_name(),
             )
+            started = time.monotonic()
             await asyncio.gather(*jobs)
+            logger.info(
+                "OCR for document %s done in %.1fs: %d vision calls, %d cache hits, %d shared within the document",
+                context.document_id,
+                time.monotonic() - started,
+                reader.api_calls,
+                reader.cache_hits,
+                reader.shared_in_document,
+            )
 
-    async def _replace_with_page_ocr(self, context: IngestionContext, page, semaphore: asyncio.Semaphore) -> None:
-        async with semaphore:
-            try:
+    async def _replace_with_page_ocr(
+        self, context: IngestionContext, page, reader: _OcrReader, render_slots: asyncio.Semaphore
+    ) -> None:
+        try:
+            async with render_slots:
                 rendered = await asyncio.to_thread(render_pdf_page, context.file_path, page.page_number)
-                if rendered is None:
-                    return
-                ocr_text = await extract_text_from_image(rendered.data, rendered.format)
-            except Exception as exc:
-                logger.warning("Page OCR failed for page %d of %s: %s", page.page_number, context.document_id, exc)
+            if rendered is None:
                 return
-        ocr_text = ocr_text.replace("\x00", "").strip()
+            ocr_text = await reader.read(rendered.data, rendered.format)
+        except Exception as exc:
+            logger.warning("Page OCR failed for page %d of %s: %s", page.page_number, context.document_id, exc)
+            return
         if len(ocr_text) >= _MIN_REPLACEMENT_OCR_CHARS:
             page.text = ocr_text
             page.images = []
             page.metadata["text_layer"] = "ocr"
 
-    async def _append_image_text(self, context: IngestionContext, page, images, semaphore: asyncio.Semaphore) -> None:
+    async def _append_image_text(self, page, images, reader: _OcrReader) -> None:
         for img in images:
-            async with semaphore:
-                try:
-                    ocr_text = await extract_text_from_image(img.data, img.format)
-                except Exception as exc:
-                    logger.warning(
-                        "OCR extraction failed for image %s on page %d: %s", img.name, page.page_number, exc
-                    )
-                    continue
-            ocr_text = ocr_text.replace("\x00", "").strip()
+            try:
+                ocr_text = await reader.read(img.data, img.format)
+            except Exception as exc:
+                logger.warning("OCR extraction failed for image %s on page %d: %s", img.name, page.page_number, exc)
+                continue
             if ocr_text:
                 section_label = (
                     f"\n\n[محتوای استخراج‌شده از تصویر / جدول]:\n{ocr_text}" if page.text else ocr_text

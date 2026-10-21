@@ -59,6 +59,11 @@ def test_fix_visual_persian_keeps_latin_and_digit_runs_readable():
     assert "47" in fixed.split()
 
 
+def _distinct_render(file_path, page_number):
+    """A different image per page (identical images are read only once per document)."""
+    return ExtractedImage(data=f"page-{page_number}".encode() * 40, name="p.png", format="png")
+
+
 def _context(pages):
     return IngestionContext(document_id=uuid.uuid4(), file_path="/fake/doc.pdf", db=None, pages=pages)
 
@@ -107,9 +112,8 @@ async def test_ocr_step_runs_pages_concurrently_but_within_the_limit():
         return "متن خوانده شده از تصویر صفحه"
 
     pages = [DocumentPage(page_number=i, text="x", needs_ocr=True) for i in range(1, 9)]
-    rendered = ExtractedImage(data=b"x" * 200, name="p.png", format="png")
     with (
-        patch("app.features.documents.ingestion.pipeline.render_pdf_page", return_value=rendered),
+        patch("app.features.documents.ingestion.pipeline.render_pdf_page", side_effect=_distinct_render),
         patch("app.features.documents.ingestion.pipeline.extract_text_from_image", new=slow_ocr),
         patch("app.features.documents.ingestion.pipeline.get_settings") as settings,
     ):
@@ -143,3 +147,89 @@ async def test_ocr_step_respects_the_replaced_pages_cap():
         await OCRStep().run(_context(pages))
 
     assert sum(1 for page in pages if page.metadata.get("text_layer") == "ocr") == 2
+
+
+async def test_identical_images_in_one_document_are_read_once():
+    logo = ExtractedImage(data=b"logo-bytes" * 30, name="logo.png", format="png")
+    pages = [DocumentPage(page_number=i, text=f"صفحه {i}", images=[logo]) for i in range(1, 6)]
+    ocr = AsyncMock(return_value="شرکت نمونه")
+
+    with patch("app.features.documents.ingestion.pipeline.extract_text_from_image", new=ocr):
+        await OCRStep().run(_context(pages))
+
+    assert ocr.await_count == 1
+    assert all("شرکت نمونه" in page.text for page in pages)  # every page still gets the text
+
+
+async def test_repeated_images_do_not_use_up_the_image_budget():
+    logo = ExtractedImage(data=b"logo-bytes" * 30, name="logo.png", format="png")
+    unique = ExtractedImage(data=b"table-bytes" * 30, name="t.png", format="png")
+    pages = [DocumentPage(page_number=i, text="x", images=[logo]) for i in range(1, 6)]
+    pages.append(DocumentPage(page_number=6, text="x", images=[unique]))
+    ocr = AsyncMock(side_effect=lambda data, fmt: "لوگو" if data.startswith(b"logo") else "جدول")
+
+    with (
+        patch("app.features.documents.ingestion.pipeline.extract_text_from_image", new=ocr),
+        patch("app.features.documents.ingestion.pipeline.get_settings") as settings,
+    ):
+        settings.return_value.ocr_enabled = True
+        settings.return_value.ocr_concurrency = 4
+        settings.return_value.ocr_max_images_per_doc = 2  # room for exactly the two distinct images
+        settings.return_value.ocr_max_replaced_pages = 300
+        settings.return_value.ocr_replace_bad_text_layer = True
+        await OCRStep().run(_context(pages))
+
+    assert ocr.await_count == 2
+    assert "جدول" in pages[5].text and all("لوگو" in page.text for page in pages[:5])
+
+
+async def test_ocr_results_are_cached_across_documents(db_session):
+    image = ExtractedImage(data=b"scan-bytes" * 30, name="scan.png", format="png")
+    ocr = AsyncMock(return_value="متن خوانده‌شده از اسکن")
+
+    def context():
+        page = DocumentPage(page_number=1, text="", images=[image])
+        return IngestionContext(document_id=uuid.uuid4(), file_path="/f.pdf", db=db_session, pages=[page]), page
+
+    with patch("app.features.documents.ingestion.pipeline.extract_text_from_image", new=ocr):
+        first_ctx, first_page = context()
+        await OCRStep().run(first_ctx)
+        second_ctx, second_page = context()
+        await OCRStep().run(second_ctx)  # a different document with the same image
+
+    assert ocr.await_count == 1
+    assert first_page.text == second_page.text == "متن خوانده‌شده از اسکن"
+
+
+async def test_empty_ocr_results_are_not_cached(db_session):
+    image = ExtractedImage(data=b"blank-bytes" * 30, name="b.png", format="png")
+    ocr = AsyncMock(return_value="")
+
+    with patch("app.features.documents.ingestion.pipeline.extract_text_from_image", new=ocr):
+        for _ in range(2):
+            page = DocumentPage(page_number=1, text="", images=[image])
+            await OCRStep().run(IngestionContext(document_id=uuid.uuid4(), file_path="/f.pdf", db=db_session, pages=[page]))
+
+    assert ocr.await_count == 2  # a failure or blank read is retried next time
+
+
+async def test_changing_the_ocr_model_does_not_reuse_old_text(db_session):
+    image = ExtractedImage(data=b"scan-bytes2" * 30, name="scan.png", format="png")
+    ocr = AsyncMock(return_value="متن مدل اول")
+
+    async def run():
+        page = DocumentPage(page_number=1, text="", images=[image])
+        await OCRStep().run(IngestionContext(document_id=uuid.uuid4(), file_path="/f.pdf", db=db_session, pages=[page]))
+
+    with (
+        patch("app.features.documents.ingestion.pipeline.extract_text_from_image", new=ocr),
+        patch("app.features.documents.ingestion.ocr_cache.vision_model_name", return_value="model-a"),
+    ):
+        await run()
+    with (
+        patch("app.features.documents.ingestion.pipeline.extract_text_from_image", new=ocr),
+        patch("app.features.documents.ingestion.ocr_cache.vision_model_name", return_value="model-b"),
+    ):
+        await run()
+
+    assert ocr.await_count == 2

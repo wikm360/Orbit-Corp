@@ -123,3 +123,20 @@ class DocumentChunk(Base):
 def _fill_search_text(_mapper, _connection, chunk: DocumentChunk) -> None:
     if chunk.search_text is None:
         chunk.search_text = normalize(chunk.content or "")
+
+
+class OcrCache(Base):
+    """Vision-OCR text keyed by the image's bytes + the OCR model/prompt that read it.
+
+    Lets a page/image that was already read (same scan inside another document, a re-upload that is not byte-identical
+    as a whole file, ...) skip the paid vision call. Deliberately NOT scoped to a project/conversation: the text is a
+    pure function of the image bytes, so anyone who can upload those bytes could produce it anyway - no document,
+    chunk or access rule is involved. Only non-empty results are stored (empty = blank image or a failed call).
+    """
+
+    __tablename__ = "ocr_cache"
+
+    cache_key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    vision_model: Mapped[str] = mapped_column(String(200), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
