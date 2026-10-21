@@ -3,6 +3,7 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 import subprocess
+import time
 import tempfile
 
 from app.core.config import get_settings
@@ -157,10 +158,15 @@ def _parse_pdf_pages(file_path: str) -> list[DocumentPage]:
 
     reader = PdfReader(file_path)
     pages: list[DocumentPage] = []
+    spent = {"text": 0.0, "images": 0.0, "render": 0.0}  # seconds per phase, logged once at the end
+    parse_started = time.monotonic()
 
     for idx, page in enumerate(reader.pages, start=1):
+        phase = time.monotonic()
         page_text = (page.extract_text() or "").strip()
         text_layer = assess_text_layer(page_text)
+        spent["text"] += time.monotonic() - phase
+        phase = time.monotonic()
         if text_layer == TEXT_VISUAL_PERSIAN:
             # Fallback text if OCR is off/fails; the OCR step replaces it with a far better reading.
             page_text = fix_visual_persian(page_text)
@@ -195,9 +201,13 @@ def _parse_pdf_pages(file_path: str) -> list[DocumentPage]:
         except Exception as exc:
             logger.warning("Error reading images from page %d of %s: %s", idx, file_path, exc)
 
+        spent["images"] += time.monotonic() - phase
+
         # Scanned PDF fallback: if page has no extracted text AND no embedded images extracted by pypdf
         if not page_text and not extracted_images:
+            phase = time.monotonic()
             rendered = _try_render_pdf_page_with_pdftoppm(file_path, idx)
+            spent["render"] += time.monotonic() - phase
             if rendered:
                 extracted_images.append(rendered)
 
@@ -211,6 +221,15 @@ def _parse_pdf_pages(file_path: str) -> list[DocumentPage]:
             )
         )
 
+    logger.info(
+        "PDF parse %s: %d pages in %.1fs (text extraction %.1fs, embedded images %.1fs, pdftoppm fallback %.1fs)",
+        file_path,
+        len(pages),
+        time.monotonic() - parse_started,
+        spent["text"],
+        spent["images"],
+        spent["render"],
+    )
     return pages
 
 
