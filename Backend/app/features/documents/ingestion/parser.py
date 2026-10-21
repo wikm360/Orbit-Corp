@@ -28,6 +28,11 @@ class ExtractedImage:
     height: int = 0
 
 
+# `metadata.text_layer` of a text-less page-sized-image page: read by whole-page OCR (see `_parse_pdf_range`).
+TEXT_SCAN = "scan"
+# An image at least this many px on its shorter side counts as a page-sized scan (logos/icons are far smaller).
+_SCAN_MIN_IMAGE_SIDE = 400
+
 # Below this a process pool costs more than it saves.
 _MIN_PAGES_FOR_PARALLEL_PARSE = 8
 
@@ -199,6 +204,19 @@ def _log_pdf_parse(file_path: str, page_count: int, started: float, spent: dict,
     )
 
 
+def _has_page_sized_image(page) -> bool:
+    """True if the page's resources hold an image XObject of at least `_SCAN_MIN_IMAGE_SIDE` px (read from the PDF
+    dictionary - nothing is decoded). Images nested in form XObjects are not inspected (-> the per-image path)."""
+    try:
+        for xobject in page["/Resources"]["/XObject"].get_object().values():
+            obj = xobject.get_object()
+            if obj.get("/Subtype") == "/Image" and min(int(obj.get("/Width", 0)), int(obj.get("/Height", 0))) >= _SCAN_MIN_IMAGE_SIDE:
+                return True
+    except Exception:  # noqa: BLE001 - missing/odd resources: fall back to the per-image path
+        pass
+    return False
+
+
 def _parse_pdf_range_star(args: tuple[str, int, int]) -> tuple[list[DocumentPage], dict]:
     return _parse_pdf_range(*args)
 
@@ -210,6 +228,8 @@ def _parse_pdf_range(file_path: str, first: int, last: int) -> tuple[list[Docume
 
     settings = get_settings()
     min_dim = getattr(settings, "ocr_min_image_dimension", 60)
+    # Only when the OCR step will actually read the page; otherwise keep the old per-image behaviour.
+    scan_by_page_ocr = bool(getattr(settings, "ocr_enabled", True) and getattr(settings, "ocr_replace_bad_text_layer", True))
 
     reader = PdfReader(file_path)
     pages: list[DocumentPage] = []
@@ -227,8 +247,21 @@ def _parse_pdf_range(file_path: str, first: int, last: int) -> tuple[list[Docume
             page_text = fix_visual_persian(page_text)
         extracted_images: list[ExtractedImage] = []
 
+        # A page with no text whose content is a page-sized image is a scan. Whole-page OCR (render + one vision call, done
+        # by the OCR step like any `needs_ocr` page) reads it correctly; the embedded images must NOT be sent one by one:
+        # scanners/"MRC" compressors split a page into background + foreground layers (+ mask) that are unreadable or
+        # misread alone (measured: one layer came back as a different project's text), and decoding them is the slowest
+        # part of parsing (~1.2s/page) and doubles the vision calls.
+        scan_whole_page = (
+            not page_text
+            and scan_by_page_ocr
+            and _has_page_sized_image(page)
+        )
+        if scan_whole_page:
+            text_layer = TEXT_SCAN
+
         try:
-            for img in page.images:
+            for img in ([] if scan_whole_page else page.images):
                 img_bytes = img.data
                 try:
                     with Image.open(io.BytesIO(img_bytes)) as pil_img:
@@ -259,7 +292,7 @@ def _parse_pdf_range(file_path: str, first: int, last: int) -> tuple[list[Docume
         spent["images"] += time.monotonic() - phase
 
         # Scanned PDF fallback: if page has no extracted text AND no embedded images extracted by pypdf
-        if not page_text and not extracted_images:
+        if not page_text and not extracted_images and not scan_whole_page:  # (a scan page is rendered by the OCR step)
             phase = time.monotonic()
             rendered = _try_render_pdf_page_with_pdftoppm(file_path, idx)
             spent["render"] += time.monotonic() - phase

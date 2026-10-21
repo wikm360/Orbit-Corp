@@ -239,3 +239,29 @@ async def test_pipeline_e2e_with_ocr_and_pages(client, db_session, tmp_path):
     chunks = list(result.scalars().all())
     assert len(chunks) > 0
     assert chunks[0].chunk_metadata.get("page") == 1
+
+
+def _scan_pdf(tmp_path: Path, pages: int = 3, side: int = 900) -> str:
+    import os
+
+    images = [Image.frombytes("RGB", (side, side), os.urandom(side * side * 3)) for _ in range(pages)]
+    path = tmp_path / "scan.pdf"
+    images[0].save(path, save_all=True, append_images=images[1:], resolution=150)
+    return str(path)
+
+
+def test_textless_page_sized_image_pages_are_marked_for_whole_page_ocr_without_decoding_images(tmp_path):
+    from app.features.documents.ingestion.parser import parse_document_pages
+
+    pages = parse_document_pages(_scan_pdf(tmp_path))
+
+    assert len(pages) == 3
+    assert all(page.needs_ocr and page.images == [] and page.metadata["text_layer"] == "scan" for page in pages)
+
+
+def test_small_images_do_not_make_a_scan_page(tmp_path):
+    from app.features.documents.ingestion.parser import parse_document_pages
+
+    pages = parse_document_pages(_scan_pdf(tmp_path, pages=1, side=200))  # icon-sized, not a scanned page
+
+    assert not pages[0].needs_ocr
