@@ -9,6 +9,7 @@ from app.core import model_registry  # noqa: F401 - registers all models on Base
 from app.core.config import get_settings
 from app.core.request_logging import RequestResponseLoggingMiddleware, configure_request_logger
 from app.features.access_control.router import router as teams_router
+from app.features.admin.panel import setup_admin_panel
 from app.features.admin.router import router as admin_router
 from app.features.auth.router import router as auth_router
 from app.features.chat.router import router as chat_router
@@ -77,6 +78,8 @@ app.include_router(memory_router, prefix=settings.api_prefix)
 app.include_router(chat_router, prefix=settings.api_prefix)
 app.include_router(accounting_db_router, prefix=settings.api_prefix)
 app.include_router(admin_router, prefix=settings.api_prefix)
+
+setup_admin_panel(app)
 
 
 @app.get("/health")

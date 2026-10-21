@@ -87,7 +87,11 @@
 `DbQueryStats{total_queries,successful_queries,rejected_queries,error_queries,positive_feedback,negative_feedback,avg_duration_ms}`؛ `IngestResponse{total,unchanged,embedded,stored_without_embedding,deleted}`.
 
 ## Admin (`require_admin`)
-`GET /admin/users` · `PATCH /admin/users/{id}/role` `{role}` (super_admin) · `GET /admin/documents` (همه‌ی اسناد).
+`GET /admin/users` · `POST /admin/users` · `PATCH /admin/users/{id}/role` `{role}` (super_admin) · `GET /admin/documents` (همه‌ی اسناد).
+
+## پنل مدیریت دیتابیس (SQLAdmin)
+مسیر `/db-admin`: پنل تعاملی وب برای مشاهده و مدیریت کامل جداول دیتابیس (مشابه Django Admin برای Users, Teams, Projects, Documents, Chunks, Messages, Conversations, QueryLogs, SchemaHints).
+احراز هویت: مبتنی بر Session با ایمیل و رمز عبور؛ منحصراً برای نقش‌های `super_admin` و `admin` (CEO).
 
 ## سلامت
 `GET /health` → `{"status":"ok"}` (بدون احراز؛ خارج از `/api/v1`؛ healthcheck کانتینر از آن استفاده می‌کند).

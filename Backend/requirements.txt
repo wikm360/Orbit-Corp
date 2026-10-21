@@ -31,5 +31,9 @@ pillow==12.3.0
 pymssql==2.4.3
 sqlglot==30.21.0
 
+# Database Admin Panel
+sqladmin==0.20.1
+itsdangerous==2.2.0
+
 pytest==8.3.4
 pytest-asyncio==0.25.0
