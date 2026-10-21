@@ -4,6 +4,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
 
 from app.core import model_registry  # noqa: F401 - registers all models on Base.metadata
 from app.core.config import get_settings
@@ -62,6 +64,24 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def handle_proxy_headers_and_redirects(request: Request, call_next):
+    forwarded_proto = request.headers.get("x-forwarded-proto")
+    if forwarded_proto:
+        request.scope["scheme"] = forwarded_proto.lower()
+
+    response: Response = await call_next(request)
+
+    if response.status_code in (301, 302, 303, 307, 308):
+        location = response.headers.get("location")
+        if location and location.startswith("http://") and (
+            forwarded_proto == "https" or request.scope.get("scheme") == "https"
+        ):
+            response.headers["location"] = "https://" + location[7:]
+
+    return response
 
 if settings.request_logging_enabled:
     configure_request_logger()

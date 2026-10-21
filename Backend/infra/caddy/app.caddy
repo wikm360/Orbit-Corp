@@ -23,6 +23,7 @@
 	}
 
 	# Database Admin Panel (SQLAdmin)
+	redir /db-admin /db-admin/ 308
 	handle /db-admin* {
 		reverse_proxy backend:8000
 	}
