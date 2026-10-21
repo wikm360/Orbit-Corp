@@ -83,6 +83,8 @@ class Settings(BaseSettings):
     embedding_dimensions: int = 1536
     # Send `dimensions` with every /embeddings request (needed to use text-embedding-3-large at 1536 dims).
     embedding_send_dimensions: bool = False
+    # Embedding batches in flight at once per document (total load = WORKER_REPLICAS x this); lower it on 429s.
+    embedding_concurrency: int = 4
 
     # LLM provider (OpenAI-compatible chat completions endpoint)
     llm_api_base_url: str = "https://api.openai.com/v1"

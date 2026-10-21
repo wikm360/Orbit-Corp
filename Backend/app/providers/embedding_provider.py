@@ -1,10 +1,19 @@
 import asyncio
+import contextlib
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
+from contextvars import ContextVar
 from functools import lru_cache
 
 import httpx
 
 from app.core.config import get_settings
+
+# Client shared by every `embed()` call made inside `BGEM3EmbeddingProvider.session()`.
+# A ContextVar (not an instance attribute) because the provider is a process-wide
+# singleton while each ingestion job runs on its own event loop; asyncio tasks
+# (e.g. from `gather`) inherit it, other concurrent callers don't see it.
+_session_client: ContextVar[httpx.AsyncClient | None] = ContextVar("embedding_session_client", default=None)
 
 
 class EmbeddingProvider(ABC):
@@ -59,31 +68,51 @@ class BGEM3EmbeddingProvider(EmbeddingProvider):
     def dimensions(self) -> int:
         return self._dimensions
 
+    def _new_client(self) -> httpx.AsyncClient:
+        return httpx.AsyncClient(timeout=60, transport=self._transport)
+
+    @contextlib.asynccontextmanager
+    async def session(self) -> AsyncIterator[None]:
+        """Reuse one HTTP client (connection pool, keep-alive, TLS session) for all
+        `embed()` calls made inside this block, e.g. every batch of one document."""
+        async with self._new_client() as client:
+            token = _session_client.set(client)
+            try:
+                yield
+            finally:
+                _session_client.reset(token)
+
     async def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
-        async with httpx.AsyncClient(timeout=60, transport=self._transport) as client:
-            for attempt in range(1, self._MAX_ATTEMPTS + 1):
-                try:
-                    response = await client.post(
-                        f"{self._base_url}/embeddings",
-                        headers={"Authorization": f"Bearer {self._api_key}"},
-                        json=self._payload(texts),
-                    )
-                except httpx.TransportError:
-                    if attempt == self._MAX_ATTEMPTS:
-                        raise
-                    await asyncio.sleep(self._backoff(attempt))
-                    continue
+        client = _session_client.get()
+        if client is not None:
+            return await self._embed_with(client, texts)
+        async with self._new_client() as client:
+            return await self._embed_with(client, texts)
 
-                if response.status_code in self._RETRYABLE_STATUS and attempt < self._MAX_ATTEMPTS:
-                    await asyncio.sleep(self._backoff(attempt, response.headers.get("Retry-After")))
-                    continue
+    async def _embed_with(self, client: httpx.AsyncClient, texts: list[str]) -> list[list[float]]:
+        for attempt in range(1, self._MAX_ATTEMPTS + 1):
+            try:
+                response = await client.post(
+                    f"{self._base_url}/embeddings",
+                    headers={"Authorization": f"Bearer {self._api_key}"},
+                    json=self._payload(texts),
+                )
+            except httpx.TransportError:
+                if attempt == self._MAX_ATTEMPTS:
+                    raise
+                await asyncio.sleep(self._backoff(attempt))
+                continue
 
-                response.raise_for_status()
-                data = response.json()
-                ordered = sorted(data["data"], key=lambda item: item["index"])
-                return [item["embedding"] for item in ordered]
+            if response.status_code in self._RETRYABLE_STATUS and attempt < self._MAX_ATTEMPTS:
+                await asyncio.sleep(self._backoff(attempt, response.headers.get("Retry-After")))
+                continue
+
+            response.raise_for_status()
+            data = response.json()
+            ordered = sorted(data["data"], key=lambda item: item["index"])
+            return [item["embedding"] for item in ordered]
         raise AssertionError("unreachable")  # the loop always returns or raises
 
     def _payload(self, texts: list[str]) -> dict:

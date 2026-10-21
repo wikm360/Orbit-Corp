@@ -99,3 +99,24 @@ async def test_dimensions_are_only_sent_when_enabled():
 
     assert "dimensions" not in seen[0]
     assert seen[1]["dimensions"] == 2
+
+
+async def test_session_reuses_one_client_for_all_calls(monkeypatch):
+    created = {"n": 0}
+    real = httpx.AsyncClient
+
+    def counting_client(*args, **kwargs):
+        created["n"] += 1
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(module.httpx, "AsyncClient", counting_client)
+    provider = _provider(lambda request: _ok(["a"]))
+
+    async with provider.session():
+        await provider.embed(["a"])
+        await provider.embed(["a"])
+        await provider.embed(["a"])
+    assert created["n"] == 1
+
+    await provider.embed(["a"])  # outside a session: a temporary client per call, as before
+    assert created["n"] == 2
