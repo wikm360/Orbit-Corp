@@ -153,10 +153,10 @@ def setup_admin_panel(app: FastAPI) -> None:
         name = "Document Chunk"
         name_plural = "Document Chunks"
         icon = "fa-solid fa-file-lines"
-        column_list = [DocumentChunk.id, DocumentChunk.document_id, DocumentChunk.chunk_index, DocumentChunk.created_at]
-        column_details_exclude_list = [DocumentChunk.embedding]
+        column_list = [DocumentChunk.id, DocumentChunk.document_id, DocumentChunk.chunk_index]
+        column_details_exclude_list = [DocumentChunk.embedding, DocumentChunk.search_tsv]
         can_create = False
-        form_excluded_columns = [DocumentChunk.embedding, DocumentChunk.created_at]
+        form_excluded_columns = [DocumentChunk.embedding, DocumentChunk.search_tsv]
 
     class ProjectMemoryAdmin(ModelView, model=ProjectMemory):
         name = "Project Memory"
