@@ -27,7 +27,7 @@ run_accounting_query(db, question, user_id, conversation_id)
 فقط وقتی `RAHKARAN_DB_ENABLED=true` ثبت می‌شود. ⚠️ هیچ چک نقش/allow-list/سهمیه‌ای در ابزار یا registry نیست.
 
 ## ۱. بازیابی hint (`hints.py`)
-**ورودی دانش** = `sql/rahkaran/hints/out/{hints.jsonl, core_prompt.md}` (در git نیست — ← [accounting-data-refresh.md](accounting-data-refresh.md)). `ingest_hints` آن را در `schema_hints` می‌ریزد.
+**ورودی دانش** = `sql/rahkaran/hints/out/{hints.jsonl, core_prompt.md}` (در git هست — با `git add -f` ثبت شده چون `.gitignore` الگوی `out/` دارد؛ بازتولید: [accounting-data-refresh.md](accounting-data-refresh.md)). `ingest_hints` آن را در `schema_hints` می‌ریزد.
 
 `retrieve_hints(db, question, top_k=RAHKARAN_HINTS_TOP_K=8)`:
 1. `_load_hints`: همه‌ی hintها (فقط ستون‌های متنی) + ساخت `Bm25Index`؛ **cache در حافظه‌ی process با TTL ۳۰۰ث**. اگر جدول خالی است از فایل jsonl می‌خواند (فقط واژگانی؛ warning).

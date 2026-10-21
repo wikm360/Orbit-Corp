@@ -10,7 +10,7 @@ data/rahkaran-backups/ (FULL_*.bak, DIFF_*.bak)         ← شرکت می‌ری
 SQL Server (mssql) : MehvarGostar  (READ_ONLY)  ←  schema `ai` (84 view) + کاربر rahkaran_ai_reader
         │  python sql/rahkaran/hints/build_hints.py  (خواندن catalogها + examples + notes)
         ▼
-sql/rahkaran/hints/out/{hints.jsonl, core_prompt.md, hints_stats.json}   (gitignore! دستی روی سرور)
+sql/rahkaran/hints/out/{hints.jsonl, core_prompt.md, hints_stats.json}   (در git با `git add -f` ثبت شده؛ بعد از `build_hints.py` دوباره commit شود)
         │  python -m app.features.db_connector.ingest   (یا POST /accounting-db/hints/ingest)
         ▼
 Postgres.schema_hints (embedding + متن)  ← مصرف: db_connector/hints.retrieve_hints
@@ -58,7 +58,7 @@ job یک‌باره؛ روی هر `docker compose up` اجرا می‌شود و 
 - تغییرکرده/جدید در دسته‌های ۳۲تایی embed می‌شود؛ اگر embedding API در دسترس نباشد chunk **بدون بردار** ذخیره می‌شود (بازیابی واژگانی کار می‌کند) و `stored_without_embedding` شمرده می‌شود.
 - hintهایی که دیگر در corpus نیستند حذف می‌شوند؛ cache حافظه‌ی process با `invalidate_cache()` ابطال می‌شود (⚠️ **فقط در همان process**؛ بقیه‌ی instance ها تا ۳۰۰ث قدیمی می‌مانند).
 - `POST /accounting-db/hints/ingest` (admin) همین کار را داخل یک درخواست HTTP انجام می‌دهد (ممکن است timeout شود؛ CLI ترجیح دارد).
-- `out/` در git نیست (الگوی `out/` در `.gitignore`) و در `.dockerignore` نیست؛ باید قبل از build روی سرور موجود باشد تا داخل image بیاید، و بعد از هر تغییر `ingest` دوباره زده شود.
+- `out/` الان داخل git است (با `git add -f`؛ الگوی `out/` در `.gitignore` هنوز هست، پس بعد از هر `build_hints.py` فایل‌ها را دوباره با `git add -f` ثبت کنید) و روی سرور با `git pull` می‌آید؛ بعد از هر تغییر `ingest` دوباره زده شود.
 
 ## چرخه‌ی کامل پس از تغییر دانش
 | تغییر | دستورها |

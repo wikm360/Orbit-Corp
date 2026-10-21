@@ -36,7 +36,7 @@
 | لیست endpointها، رویدادهای SSE/WS، شکل artifact | [reference/api-endpoints.md](reference/api-endpoints.md) |
 | متغیرهای env | [reference/configuration.md](reference/configuration.md) |
 | نقشه‌ی فایل‌به‌فایل کد | [reference/modules.md](reference/modules.md) |
-| Docker، Caddy، deploy، secrets | [ops/infra-and-deploy.md](ops/infra-and-deploy.md) |
+| Docker، Caddy، deploy، secrets | [ops/infra-and-deploy.md](ops/infra-and-deploy.md) + راهنمای قدم‌به‌قدم: [../DEPLOY.md](../DEPLOY.md) (production) و [../DEVELOPMENT.md](../DEVELOPMENT.md) (سیستم خودتان) |
 | دستورهای روزمره و troubleshooting | [ops/runbook.md](ops/runbook.md) |
 | اجرای تست و نوشتن تست | [ops/testing.md](ops/testing.md) |
 | افزودن endpoint/feature | [guides/add-endpoint-or-feature.md](guides/add-endpoint-or-feature.md) |
@@ -58,4 +58,4 @@
 ## قاعده‌ی نگهداری
 - هر تغییری در رفتار کد باید همین‌جا هم به‌روز شود (در همان PR/commit).
 - اگر مستندی با کد اختلاف دارد، **کد درست است**؛ مستند را اصلاح کنید.
-- مستندات قدیمی که این پوشه پوشش داده حذف شده‌اند (`docs/BACKEND.md`، `DEPLOY.md`، `INFRA-CHANGES.md`، `docs/rahkaran/PLAN.md`، `docs/rahkaran/SECURITY_PLAN.md`)؛ محتوای مفید آن‌ها در `ops/`، `known-issues.md` و `decisions.md` منتقل شده است.
+- مستندات قدیمی که این پوشه پوشش داده حذف شده‌اند (`docs/BACKEND.md`، `INFRA-CHANGES.md`، `docs/rahkaran/PLAN.md`، `docs/rahkaran/SECURITY_PLAN.md`)؛ محتوای مفید آن‌ها در `ops/`، `known-issues.md` و `decisions.md` منتقل شده است. `DEPLOY.md` از نو و کامل نوشته شد و کنار آن `DEVELOPMENT.md` (راه‌اندازی روی سیستم خودتان) در ریشهٔ `Backend/` هست.

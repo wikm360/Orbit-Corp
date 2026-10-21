@@ -81,7 +81,6 @@ dc exec backend python -m app.features.db_connector.ingest
 | فایل | محل | چرا در git نیست |
 |---|---|---|
 | `.env` (chmod 600) | `Backend/.env` | secret |
-| `hints/out/` (`core_prompt.md`, `hints.jsonl`, `hints_stats.json`) | `Backend/sql/rahkaran/hints/out/` | gitignore (`out/`)؛ از `build_hints.py` ساخته می‌شود |
 | `FULL_*.bak` و `DIFF_*.bak` شرکت | `Backend/data/rahkaran-backups/FULL|DIFF/` | حجیم/محرمانه |
 
 مقادیر `.env` که حتماً باید درست باشند: `POSTGRES_PASSWORD`, `REDIS_PASSWORD` (hex: `openssl rand -hex 24`؛ hex چون در `DATABASE_URL`/`REDIS_URL` جاسازی می‌شوند)، `RAHKARAN_SA_PASSWORD` (پیچیده: حرف بزرگ/کوچک/رقم/نماد ≥۸)، `RAHKARAN_DB_PASSWORD`, `JWT_SECRET_KEY`, `LLM_*`, `EMBEDDING_*`, `CORS_ORIGINS=https://<آدرس>`, `SITE_ADDRESS`, `BIND_IP=127.0.0.1`, `ENVIRONMENT=production`, `DEBUG=false`. رمز SA فقط در اولین init روی volume خالی اعمال می‌شود. رمز Postgres هم همین‌طور؛ برای تغییر بعدی: `dc exec postgres psql -U postgres -c "ALTER USER postgres PASSWORD '…'"`.

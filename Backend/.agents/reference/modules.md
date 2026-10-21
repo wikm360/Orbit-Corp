@@ -95,7 +95,7 @@
 | `descriptions.py` | توضیح فارسی view/ستون (`COLS_TEXT`, `OVERRIDES`, `VIEWS`) |
 | `examples/{questions,run}.py` | نمونه سؤال/SQL و اجرای آن‌ها |
 | `hints/{notes,build_hints,eval_retrieval,eval_set}.py` | دانش و ساخت corpus |
-| `hints/out/` | خروجی ساخته‌شده (gitignore) |
+| `hints/out/` | خروجی ساخته‌شده؛ داخل git است (commit با `git add -f`، چون `.gitignore` الگوی `out/` دارد) |
 
 ## `docs/rahkaran/`
 مستندات دامنه (README, GLOSSARY_*, enums, schema/*, QUESTIONS, TAXONOMY_REVIEW, ACCOUNTANT_QUESTIONS) و `tools/` (اسکریپت‌های تولید مستند؛ `db.py`, `peek.py`, `table_usage.py`, `gen_*`) و `data/mehvargostar_code.xlsx` (فایل طبقه‌بندی حسابدار).

@@ -8,6 +8,8 @@
 3. [`.agents/conventions.md`](.agents/conventions.md) — قواعد کد و کارهایی که نباید کرد.
 4. [`.agents/known-issues.md`](.agents/known-issues.md) — مشکلات شناخته‌شده و وضعیت امنیتی.
 
+راه‌اندازی و deploy: [`DEVELOPMENT.md`](DEVELOPMENT.md) (سیستم خودتان) و [`DEPLOY.md`](DEPLOY.md) (production).
+
 ## قواعد سخت (خلاصه)
 - migration اجراشده را هرگز ویرایش نکنید؛ تغییر schema = migration جدید.
 - هر query روی `DocumentChunk`/اسناد باید از `accessible_documents_filter` بگذرد.
