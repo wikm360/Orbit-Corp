@@ -79,7 +79,7 @@ def setup_admin_panel(app: FastAPI) -> None:
     )
 
     # -------------------------------------------------------------------------
-    # Model Views
+    # Model Views (using only verified attributes on each model)
     # -------------------------------------------------------------------------
     class UserAdmin(ModelView, model=User):
         name = "User"
@@ -90,13 +90,7 @@ def setup_admin_panel(app: FastAPI) -> None:
         column_sortable_list = [User.email, User.role, User.created_at]
         column_exclude_list = [User.hashed_password]
         column_details_exclude_list = [User.hashed_password]
-        form_excluded_columns = [
-            User.team_memberships,
-            User.project_memberships,
-            User.refresh_tokens,
-            User.created_at,
-            User.updated_at,
-        ]
+        form_excluded_columns = [User.team_memberships, User.created_at]
 
         async def on_model_change(self, data: dict, model: Any, is_created: bool, request: Request) -> None:
             if "hashed_password" in data and data["hashed_password"]:
@@ -109,6 +103,7 @@ def setup_admin_panel(app: FastAPI) -> None:
         name_plural = "Refresh Tokens"
         icon = "fa-solid fa-key"
         can_create = False
+        can_edit = False
         column_list = [RefreshToken.id, RefreshToken.user_id, RefreshToken.expires_at, RefreshToken.created_at, RefreshToken.revoked_at]
         column_sortable_list = [RefreshToken.created_at, RefreshToken.expires_at]
 
@@ -119,7 +114,7 @@ def setup_admin_panel(app: FastAPI) -> None:
         column_list = [Team.id, Team.name, Team.created_by, Team.created_at]
         column_searchable_list = [Team.name]
         column_sortable_list = [Team.name, Team.created_at]
-        form_excluded_columns = [Team.memberships, Team.projects, Team.created_at, Team.updated_at]
+        form_excluded_columns = [Team.memberships, Team.created_at]
 
     class TeamMembershipAdmin(ModelView, model=TeamMembership):
         name = "Team Membership"
@@ -136,7 +131,7 @@ def setup_admin_panel(app: FastAPI) -> None:
         column_list = [Project.id, Project.name, Project.team_id, Project.created_by, Project.created_at]
         column_searchable_list = [Project.name]
         column_sortable_list = [Project.name, Project.created_at]
-        form_excluded_columns = [Project.memberships, Project.documents, Project.memories, Project.conversations, Project.created_at, Project.updated_at]
+        form_excluded_columns = [Project.memberships, Project.created_at]
 
     class ProjectMembershipAdmin(ModelView, model=ProjectMembership):
         name = "Project Membership"
@@ -150,10 +145,10 @@ def setup_admin_panel(app: FastAPI) -> None:
         name = "Document"
         name_plural = "Documents"
         icon = "fa-solid fa-file"
-        column_list = [Document.id, Document.filename, Document.mime_type, Document.file_size, Document.status, Document.project_id, Document.created_at]
+        column_list = [Document.id, Document.filename, Document.content_type, Document.status, Document.project_id, Document.created_at]
         column_searchable_list = [Document.filename]
-        column_sortable_list = [Document.status, Document.created_at, Document.file_size]
-        form_excluded_columns = [Document.chunks, Document.created_at, Document.updated_at]
+        column_sortable_list = [Document.status, Document.created_at]
+        form_excluded_columns = [Document.chunks, Document.created_at]
 
     class DocumentChunkAdmin(ModelView, model=DocumentChunk):
         name = "Document Chunk"
@@ -169,7 +164,7 @@ def setup_admin_panel(app: FastAPI) -> None:
         name = "Project Memory"
         name_plural = "Project Memories"
         icon = "fa-solid fa-brain"
-        column_list = [ProjectMemory.id, ProjectMemory.project_id, ProjectMemory.created_by, ProjectMemory.created_at]
+        column_list = [ProjectMemory.id, ProjectMemory.project_id, ProjectMemory.created_by_user_id, ProjectMemory.category, ProjectMemory.created_at]
         column_exclude_list = [ProjectMemory.embedding]
         column_details_exclude_list = [ProjectMemory.embedding]
         form_excluded_columns = [ProjectMemory.embedding, ProjectMemory.created_at, ProjectMemory.updated_at]
@@ -181,7 +176,7 @@ def setup_admin_panel(app: FastAPI) -> None:
         column_list = [Conversation.id, Conversation.type, Conversation.title, Conversation.project_id, Conversation.created_by, Conversation.created_at]
         column_searchable_list = [Conversation.title]
         column_sortable_list = [Conversation.type, Conversation.created_at]
-        form_excluded_columns = [Conversation.messages, Conversation.documents, Conversation.created_at, Conversation.updated_at]
+        form_excluded_columns = [Conversation.messages, Conversation.created_at]
 
     class MessageAdmin(ModelView, model=Message):
         name = "Message"
@@ -190,7 +185,7 @@ def setup_admin_panel(app: FastAPI) -> None:
         column_list = [Message.id, Message.conversation_id, Message.sender_type, Message.sender_id, Message.created_at]
         column_sortable_list = [Message.created_at]
         can_create = False
-        form_excluded_columns = [Message.created_at]
+        form_excluded_columns = [Message.conversation, Message.created_at]
 
     class DbQueryLogAdmin(ModelView, model=DbQueryLog):
         name = "Query Log"
@@ -209,7 +204,7 @@ def setup_admin_panel(app: FastAPI) -> None:
         column_searchable_list = [SchemaHint.hint_key, SchemaHint.title]
         column_exclude_list = [SchemaHint.embedding]
         column_details_exclude_list = [SchemaHint.embedding]
-        form_excluded_columns = [SchemaHint.embedding, SchemaHint.created_at, SchemaHint.updated_at]
+        form_excluded_columns = [SchemaHint.embedding, SchemaHint.updated_at]
 
     admin.add_view(UserAdmin)
     admin.add_view(RefreshTokenAdmin)
@@ -226,4 +221,3 @@ def setup_admin_panel(app: FastAPI) -> None:
     admin.add_view(SchemaHintAdmin)
 
     logger.info("SQLAdmin panel mounted at /db-admin")
-
