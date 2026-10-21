@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -102,6 +103,13 @@ class OCRStep(IngestionStep):
                 jobs.append(self._append_image_text(context, page, selected, semaphore))
 
         if jobs:
+            logger.info(
+                "OCR for document %s: %d jobs, concurrency %d, model %s",
+                context.document_id,
+                len(jobs),
+                settings.ocr_concurrency,
+                settings.llm_vision_model or settings.llm_model,
+            )
             await asyncio.gather(*jobs)
 
     async def _replace_with_page_ocr(self, context: IngestionContext, page, semaphore: asyncio.Semaphore) -> None:
@@ -231,7 +239,14 @@ async def run_ingestion_pipeline(document_id: uuid.UUID, file_path: str) -> None
         )
         try:
             for step in DEFAULT_PIPELINE:
+                started = time.monotonic()
                 await step.run(context)
+                logger.info(
+                    "Ingestion %s: %s took %.1fs",
+                    document_id,
+                    type(step).__name__,
+                    time.monotonic() - started,
+                )
             document = await db.get(Document, document_id)
             if document is not None:
                 document.status = DocumentStatus.READY

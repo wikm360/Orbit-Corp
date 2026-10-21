@@ -3,6 +3,8 @@
 Run with: python -m workers.ingestion_worker
 """
 
+import logging
+
 from redis import Redis
 from rq import Worker
 
@@ -13,6 +15,8 @@ settings = get_settings()
 
 
 def main() -> None:
+    # rq only configures its own loggers; without this the pipeline's INFO logs (step timings, OCR) are dropped.
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     connection = Redis.from_url(settings.redis_url)
     worker = Worker([settings.ingestion_queue_name], connection=connection)
     worker.work()
