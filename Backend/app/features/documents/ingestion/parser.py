@@ -1,5 +1,7 @@
 import io
 import logging
+import multiprocessing
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 import subprocess
@@ -24,6 +26,10 @@ class ExtractedImage:
     format: str = "png"
     width: int = 0
     height: int = 0
+
+
+# Below this a process pool costs more than it saves.
+_MIN_PAGES_FOR_PARALLEL_PARSE = 8
 
 
 @dataclass
@@ -149,7 +155,56 @@ def _try_render_pdf_page_with_pdftoppm(file_path: str, page_number: int) -> Extr
 
 
 def _parse_pdf_pages(file_path: str) -> list[DocumentPage]:
-    """Extracts text and embedded images page by page from a PDF."""
+    """Extracts text and embedded images page by page from a PDF.
+
+    Decoding scanned page images is CPU-bound (~1s/page), so long PDFs are split into page ranges parsed by several
+    processes (`PDF_PARSE_WORKERS`); any pool failure falls back to the single-process path."""
+    from pypdf import PdfReader
+
+    settings = get_settings()
+    workers = max(1, getattr(settings, "pdf_parse_workers", 1))
+    total = len(PdfReader(file_path).pages)
+    started = time.monotonic()
+
+    if workers > 1 and total >= _MIN_PAGES_FOR_PARALLEL_PARSE:
+        try:
+            size = max(1, -(-total // (workers * 3)))  # several small ranges per process: page cost varies
+            ranges = [(file_path, lo, min(lo + size - 1, total)) for lo in range(1, total + 1, size)]
+            ctx = multiprocessing.get_context("fork")
+            with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as pool:
+                results = list(pool.map(_parse_pdf_range_star, ranges))
+            pages = [page for chunk_pages, _ in results for page in chunk_pages]
+            spent = {k: sum(r[1][k] for r in results) for k in ("text", "images", "render")}
+            _log_pdf_parse(file_path, len(pages), started, spent, workers)
+            return pages
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Parallel PDF parse failed for %s (%s); falling back to a single process.", file_path, exc)
+
+    pages, spent = _parse_pdf_range(file_path, 1, total)
+    _log_pdf_parse(file_path, len(pages), started, spent, 1)
+    return pages
+
+
+def _log_pdf_parse(file_path: str, page_count: int, started: float, spent: dict, workers: int) -> None:
+    logger.info(
+        "PDF parse %s: %d pages in %.1fs with %d process(es) (CPU-seconds: text extraction %.1f, embedded images %.1f, "
+        "pdftoppm fallback %.1f)",
+        file_path,
+        page_count,
+        time.monotonic() - started,
+        workers,
+        spent["text"],
+        spent["images"],
+        spent["render"],
+    )
+
+
+def _parse_pdf_range_star(args: tuple[str, int, int]) -> tuple[list[DocumentPage], dict]:
+    return _parse_pdf_range(*args)
+
+
+def _parse_pdf_range(file_path: str, first: int, last: int) -> tuple[list[DocumentPage], dict]:
+    """Parses pages `first..last` (1-indexed, inclusive); returns the pages and per-phase CPU seconds."""
     from PIL import Image
     from pypdf import PdfReader
 
@@ -158,10 +213,10 @@ def _parse_pdf_pages(file_path: str) -> list[DocumentPage]:
 
     reader = PdfReader(file_path)
     pages: list[DocumentPage] = []
-    spent = {"text": 0.0, "images": 0.0, "render": 0.0}  # seconds per phase, logged once at the end
-    parse_started = time.monotonic()
+    spent = {"text": 0.0, "images": 0.0, "render": 0.0}
 
-    for idx, page in enumerate(reader.pages, start=1):
+    for idx in range(first, last + 1):
+        page = reader.pages[idx - 1]
         phase = time.monotonic()
         page_text = (page.extract_text() or "").strip()
         text_layer = assess_text_layer(page_text)
@@ -221,16 +276,7 @@ def _parse_pdf_pages(file_path: str) -> list[DocumentPage]:
             )
         )
 
-    logger.info(
-        "PDF parse %s: %d pages in %.1fs (text extraction %.1fs, embedded images %.1fs, pdftoppm fallback %.1fs)",
-        file_path,
-        len(pages),
-        time.monotonic() - parse_started,
-        spent["text"],
-        spent["images"],
-        spent["render"],
-    )
-    return pages
+    return pages, spent
 
 
 def render_pdf_page(file_path: str, page_number: int) -> ExtractedImage | None:

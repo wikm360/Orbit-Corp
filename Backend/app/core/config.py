@@ -114,6 +114,8 @@ class Settings(BaseSettings):
     # Pages OCR'd at the same time inside one document (each call takes 10-30 s). Measured: 12 concurrent pages were 3.2x
     # faster than 4 with no failures. The real load is WORKER_REPLICAS x this value, so lower it if the provider rate-limits (429).
     ocr_concurrency: int = 12
+    # Processes used to parse the pages of one PDF (decoding scanned images is CPU-bound). 1 = single process.
+    pdf_parse_workers: int = 4
     # RQ job timeout for one document (OCR of a long scanned PDF is slow).
     ingestion_job_timeout_seconds: int = 3600
 
