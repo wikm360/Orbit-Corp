@@ -14,6 +14,7 @@ engine = create_async_engine(
     pool_pre_ping=True,
     pool_recycle=1800,
 )
+async_engine = engine  # alias
 
 async_session_factory = async_sessionmaker(
     engine, expire_on_commit=False, class_=AsyncSession

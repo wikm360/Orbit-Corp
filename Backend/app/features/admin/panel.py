@@ -6,7 +6,7 @@ from starlette.requests import Request
 from sqlalchemy import select
 
 from app.core.config import get_settings
-from app.core.database import async_engine, async_session_factory
+from app.core.database import engine, async_session_factory
 from app.core.security import hash_password, verify_password
 
 logger = logging.getLogger(__name__)
@@ -72,7 +72,7 @@ def setup_admin_panel(app: FastAPI) -> None:
 
     admin = Admin(
         app,
-        async_engine,
+        engine,
         base_url="/db-admin",
         title="Orbit Database Admin",
         authentication_backend=authentication_backend,
