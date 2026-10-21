@@ -126,4 +126,4 @@ volumes:
   redis_data:
   uploads_data:
   rahkaran_mssql_data:
-    external: true
+    name: rahkaran_mssql_data

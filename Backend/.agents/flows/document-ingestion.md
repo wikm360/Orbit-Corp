@@ -60,7 +60,7 @@ worker: Parse ─► OCR ─► Reconstruct ─► Chunk ─► Embed ─► Per
 3. **ReconstructStep** — `save_reconstructed_document` دو فایل کنار فایل اصلی می‌نویسد: `<file_path>.reconstructed.txt` (خوانا، با `--- [صفحه N] ---`) و `<file_path>.reconstructed.json` (`{filename,total_pages,pages:[{page,text,has_images,metadata}]}`). این‌ها منبع سریع ابزارهای خواندن سند هستند. خطای نوشتن فقط warning.
 4. **ChunkStep** — `chunk_document_pages`: برای هر صفحه‌ی غیرخالی، `chunk_text` با پنجره‌ی `CHUNK_SIZE_TOKENS`=۵۰۰ و overlap `CHUNK_OVERLAP_TOKENS`=۵۰ (tiktoken `cl100k_base`؛ بدون tiktoken ← تخمین ۰٫۷۵ کلمه/توکن). metadata هر chunk: `page, total_pages, chunk_in_page, total_chunks_in_page` + metadata صفحه. اگر هیچ صفحه‌ای نبود از `chunk_text(raw_text)` با `page=1` استفاده می‌شود.
 5. **EmbedStep** — `embed_chunks` دسته‌های ۶۴تایی به `EmbeddingProvider.embed` (retry داخل provider).
-6. **PersistStep** — برای هر chunk یک `DocumentChunk(chunk_index=ترتیب سراسری)` و commit یکجا. اگر chunk نیست/embedding نیست هیچ‌چیز نمی‌نویسد (سند بدون متن باز READY می‌شود).
+6. **PersistStep** — برای هر chunk یک `DocumentChunk(chunk_index=ترتیب سراسری)` و commit یکجا. اگر chunk یا embedding نیست (هیچ متنی استخراج نشده: فایل خالی، اسکن ناخوانا، OCR خاموش/ناموفق) `ValueError` می‌دهد ← سند `FAILED` با `error_message` می‌شود، نه READY.
 - پایان موفق: `status=READY`, `embedding_model=settings.embedding_model` ← `_notify_conversation`.
 - خطا: rollback، `status=FAILED`, `error_message=str(exc)[:2000]`، اعلان، و `raise` (job در RQ failed می‌شود).
 

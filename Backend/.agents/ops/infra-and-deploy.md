@@ -21,11 +21,11 @@ docker compose up -d     # postgres+redis → migrate → backend+worker(3) ; ms
 `.dockerignore` شامل `docs/`, `Assets/`, `.env*` (به‌جز example), `*.bak`, `data/uploads/*`, `.venv`، و `eval/` (فایل‌های ارزیابی، ~۲٫۹GB)، `.agents`، `AGENTS.md`، `CLAUDE.md` هم خارج از image هستند؛ ولی **`sql/` و `sql/rahkaran/hints/out/` را حذف نمی‌کند** (لازم برای hint ها و refresh).
 
 ## overlay پروداکشن (`docker-compose.prod.yml`)
-اجرا فقط با `-f` صریح (alias پیشنهادی `dc`):
-```bash
-alias dc='docker compose -f docker-compose.yml -f docker-compose.prod.yml'
+با قرار دادن متغیر زیر در فایل `.env` پروداکشن، تمام دستورهای `docker compose` مستقیماً و خودکار هر دو فایل را ترکیب می‌کنند و نیازی به alias یا پرچم `-f` نیست:
+```env
+COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml
 ```
-> هرگز `docker compose up` بدون `-f` (فایل dev را لود می‌کند) و هرگز `dc down -v` (volume دیتابیس‌ها پاک می‌شود).
+> اجرای دستور `docker compose up -d --build` در پروداکشن مستقیماً این overlay را لود کرده و فایل override محیط dev را نادیده می‌گیرد. **هرگز** `down -v` نزنید (volume دیتابیس‌ها پاک می‌شود).
 
 **شبکه‌ها**:
 | شبکه | نوع | اعضا |
@@ -54,29 +54,24 @@ env مشترک اپ: `ENVIRONMENT=production`, `DEBUG=false`, `REQUEST_LOGGING_E
 ## اتصال از بیرون (پورت/روتر)
 - `BIND_IP=127.0.0.1` یعنی فقط روی خود سرور/تونل: `ssh -L 8443:127.0.0.1:443 user@server` سپس `https://localhost:8443`. برای VPN، `BIND_IP` = IP رابط VPN. **هرگز `0.0.0.0`** (Docker قوانین ufw را دور می‌زند).
 - دسترسی کاربران شرکت از اینترنت: `BIND_IP=<IP داخلی سرور>`, `PUBLIC_PORT=<پورت فوروارد روتر مثلاً 7496>`, `SITE_ADDRESS=<IP عمومی/دامنه>`, `CORS_ORIGINS=https://<همان>:<پورت خارجی>`. روتر/فایروال شرکت فقط IPهای شرکت را مجاز کند (مهم‌ترین لایه). لایه‌ی دوم روی سرور: `sudo iptables -I DOCKER-USER -p tcp --dport 8443 ! -s <IP_شرکت>/32 -j DROP` (پایدار با `iptables-persistent`).
-- **قبل از باز شدن پورت ثبت‌نام عمومی را ببندید**: در `infra/caddy/Caddyfile`، قبل از `handle /api/* {` افزودن
-  ```
-  @register path /api/v1/auth/register
-  respond @register 403
-  ```
-  و `dc up -d --build caddy`. (در `app.caddy` مشترک این بلوک پیش‌فرض نیست.)
+- **بستن ثبت‌نام عمومی**: با تنظیم `ALLOW_PUBLIC_REGISTRATION=false` در `.env` ثبت‌نام عمومی بسته می‌شود (اولین کاربر خودکار سوپرادمین می‌شود؛ کاربران بعدی فقط توسط ادمین در `POST /api/v1/admin/users` ساخته می‌شوند). نیازی به دستکاری فایل‌های Caddy نیست.
 
 ## CI/CD (`.github/workflows/deploy.yml`)
 روی هر push به `main`: SSH به سرور → یافتن checkout `wikm360/Orbit-Corp` → `git fetch` + `git reset --hard origin/main` → `cd Frontend && npm install && npm run build` → `systemctl restart front`.
-⚠️ **backend/worker/migration/compose را deploy نمی‌کند**؛ فقط فرانت از طریق systemd. بک‌اند (Docker) باید روی سرور دستی با `git pull && dc up -d --build` به‌روز شود (طبق شواهد، ادغام این دو مسیر انجام نشده؛ merge شاخه‌ی infra-hardening، deploy را به compose سوییچ نکرده است). مستند قدیمی که می‌گفت CI migration و rebuild بک‌اند را انجام می‌دهد با کد فعلی ناسازگار است.
+⚠️ **backend/worker/migration/compose را deploy نمی‌کند**؛ فقط فرانت از طریق systemd. بک‌اند (Docker) باید روی سرور دستی با `git pull && docker compose up -d --build` به‌روز شود (طبق شواهد، ادغام این دو مسیر انجام نشده؛ merge شاخه‌ی infra-hardening، deploy را به compose سوییچ نکرده است). مستند قدیمی که می‌گفت CI migration و rebuild بک‌اند را انجام می‌دهد با کد فعلی ناسازگار است.
 
 ## اولین راه‌اندازی روی سرور
 ```bash
 git clone git@github.com:wikm360/Orbit-Corp.git /opt/orbit/Orbit-Corp && cd /opt/orbit/Orbit-Corp/Backend
 cp .env.example .env && chmod 600 .env && nano .env
+# متغیر COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml را در .env فعال کنید
 # فایل‌هایی که در git نیستند و دستی ریخته می‌شوند: (جدول پایین)
 chmod -R a+rX data/rahkaran-backups
-dc up -d --build
-dc logs rahkaran-refresh                    # باید: "done - the new data is live"
-dc ps                                       # همه healthy (migrate و rahkaran-refresh = exited عادی)
-dc exec backend python -m app.features.db_connector.ingest
+docker compose up -d --build
+docker compose logs rahkaran-refresh                    # باید: "done - the new data is live"
+docker compose ps                                       # همه healthy (migrate و rahkaran-refresh = exited عادی)
 ```
-سپس با تونل/VPN وارد شوید و **همان لحظه ثبت‌نام کنید** (اولین کاربر super_admin می‌شود)، بعد ثبت‌نام عمومی را ببندید.
+سپس با تونل/VPN وارد شوید و **همان لحظه ثبت‌نام کنید** (اولین کاربر super_admin می‌شود)، سپس در `.env` مقدار `ALLOW_PUBLIC_REGISTRATION=false` را بگذارید و `docker compose up -d backend` بزنید. hint ها نیز در استارتاپ بک‌اند به صورت خودکار ingest می‌شوند.
 
 | فایل | محل | چرا در git نیست |
 |---|---|---|

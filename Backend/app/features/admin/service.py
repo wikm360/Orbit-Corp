@@ -3,9 +3,32 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import ConflictError, NotFoundError
+from app.core.security import hash_password
 from app.features.auth.models import User, UserRole
 from app.features.documents.models import Document
+
+
+async def create_user(
+    db: AsyncSession,
+    email: str,
+    password: str,
+    full_name: str,
+    role: UserRole = UserRole.USER,
+) -> User:
+    existing = (await db.execute(select(User).where(User.email == email))).scalar_one_or_none()
+    if existing is not None:
+        raise ConflictError("A user with this email already exists")
+    user = User(
+        email=email,
+        hashed_password=hash_password(password),
+        full_name=full_name,
+        role=role,
+    )
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    return user
 
 
 async def list_users(db: AsyncSession) -> list[User]:

@@ -66,6 +66,9 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 30
     # Long-lived: refreshed silently by the client, rotated on every use.
     refresh_token_expire_days: int = 30
+    # Public sign-ups: when false, only the first user (super admin) can self-register;
+    # further users must be added by an admin.
+    allow_public_registration: bool = True
 
     # File storage
     upload_dir: str = "./data/uploads"

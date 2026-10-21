@@ -49,21 +49,15 @@ docker compose up -d --build         # postgres, redis, migrate, backend, worker
 docker compose ps
 docker compose logs -f backend worker
 ```
-- API روی `http://127.0.0.1:8000` (Swagger: `/docs`)، Redis روی `127.0.0.1:6379`، SQL Server روی `127.0.0.1:14330`. Postgres **پورت میزبان ندارد**.
+- API روی `http://127.0.0.1:8000` (Swagger: `/docs`)، Redis روی `127.0.0.1:6379`، SQL Server روی `127.0.0.1:14330`، و Postgres روی `127.0.0.1:5432`.
 - در dev یک worker کافی است: `WORKER_REPLICAS=1` در `.env`.
 - اگر mssql/راهکاران را نمی‌خواهید: `docker compose up -d --build postgres redis migrate backend worker`.
-- برای اولین بار volume راهکاران را بسازید: `docker volume create rahkaran_mssql_data`.
+- volumeها (از جمله دیتابیس راهکاران) خودکار بار اول توسط داکر ساخته می‌شوند.
 
 ### روش B — زیرساخت در Docker، اپ روی سیستم
-Postgres پورت میزبان ندارد؛ یک فایل محلی (در git نیست؛ نامش را نگه دارید یا در `.git/info/exclude` بگذارید) بسازید:
-```yaml
-# docker-compose.local.yml
-services:
-  postgres:
-    ports: ["127.0.0.1:5432:5432"]
-```
+پورت‌های Postgres و Redis در حالت dev خودکار روی `127.0.0.1` باز هستند:
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.local.yml up -d postgres redis
+docker compose up -d postgres redis
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 alembic upgrade head
@@ -71,7 +65,6 @@ uvicorn app.main:app --reload                 # terminal 1: API روی :8000
 python -m workers.ingestion_worker            # terminal 2: worker ingestion
 ```
 `DATABASE_URL=postgresql+asyncpg://postgres:<POSTGRES_PASSWORD>@localhost:5432/org_rag` و `REDIS_URL=redis://localhost:6379/0` باید در `.env` باشند.
-(نکته: `docker-compose.override.yml` Redis را روی `127.0.0.1:6379` باز می‌کند.)
 
 ## ۳. فرانت‌اند
 ```bash
@@ -98,6 +91,7 @@ docker compose up -d mssql
 docker compose run --rm rahkaran-refresh          # --dry-run / --force هم دارد
 ```
 ۴. hint ها (فایل‌های `sql/rahkaran/hints/out/` داخل git هستند):
+در استارتاپ بک‌اند به صورت خودکار اینجست می‌شوند؛ اجرای دستی (اختیاری):
 ```bash
 docker compose exec backend python -m app.features.db_connector.ingest        # روش A
 python -m app.features.db_connector.ingest                                    # روش B
@@ -114,8 +108,7 @@ pytest                       # DB تست جدا: <نام DB>_test؛ روی DB د
 pytest tests/features/retrieval -q
 pytest -k refresh_tokens
 ```
-- روش B: پورت Postgres را با `docker-compose.local.yml` باز کنید (بالا).
-- روش A (Postgres بدون پورت): `TEST_DATABASE_URL=postgresql+asyncpg://postgres:<رمز>@<IP کانتینر postgres>:5432/org_rag_test` (IP را با `docker inspect backend-postgres-1 --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'` بگیرید) و `REDIS_URL=redis://127.0.0.1:6379/0`.
+- پورت Postgres روی `127.0.0.1:5432` باز است؛ نیاز به کانفیگ اضافه نیست.
 - هیچ تستی به LLM/Embedding/SQL Server واقعی وصل نمی‌شود (stub). جزئیات: [.agents/ops/testing.md](.agents/ops/testing.md).
 - ارزیابی کیفیت جست‌وجو روی فایل‌های واقعی: [tools/retrieval_eval/README.md](tools/retrieval_eval/README.md).
 
@@ -140,7 +133,7 @@ docker compose exec postgres psql -U postgres org_rag
 ## ۹. نکته‌ها و تفاوت با production
 | | dev | production |
 |---|---|---|
-| compose | `docker-compose.yml` + override (خودکار) | `-f docker-compose.yml -f docker-compose.prod.yml` |
+| compose | `docker-compose.yml` + override (خودکار) | `COMPOSE_FILE=...` در `.env` (اجرای خودکار overlay بدون alias) |
 | پورت‌ها | backend 8000، redis 6379، mssql 14330 روی `127.0.0.1` | فقط Caddy |
 | secrets | env از `.env` | Docker secrets برای postgres/redis/mssql |
 | `DEBUG` | `true` (traceback و لاگ SQL) | `false` |

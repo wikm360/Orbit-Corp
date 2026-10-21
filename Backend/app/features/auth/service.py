@@ -3,7 +3,8 @@ from datetime import datetime, timezone
 from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import ConflictError, UnauthorizedError
+from app.core.config import get_settings
+from app.core.exceptions import ConflictError, ForbiddenError, UnauthorizedError
 from app.core.security import (
     create_access_token,
     generate_refresh_token,
@@ -34,6 +35,8 @@ async def register_user(db: AsyncSession, payload: UserRegister) -> TokenRespons
         raise ConflictError("A user with this email already exists")
 
     is_first_user = (await db.execute(select(User.id).limit(1))).first() is None
+    if not is_first_user and not get_settings().allow_public_registration:
+        raise ForbiddenError("Public registration is disabled")
 
     user = User(
         email=payload.email,

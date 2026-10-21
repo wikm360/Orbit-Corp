@@ -8,23 +8,26 @@
 ### 🔴 بحرانی قبل از قرار گرفتن روی شبکه‌ی عمومی
 | # | مورد | وضعیت امروز | اقدام |
 |---|---|---|---|
-| S1 | ثبت‌نام عمومی باز + ابزار مالی برای **هر** کاربر لاگین‌شده | 🔴 `POST /auth/register` باز است؛ پرچم `ALLOW_PUBLIC_REGISTRATION` و allow-list (`RAHKARAN_ALLOWED_*`) که در پلن بود **پیاده نشده‌اند** (هیچ ردی در کد). فقط راه‌حل دستی Caddy (`respond @register 403`) مستند است | پرچم ثبت‌نام یا دعوت‌نامه؛ endpoint ساخت کاربر توسط ادمین؛ کنترل نقش/ایمیل برای `ask_accounting_db` در `ToolRegistry`/ابزار |
+| S1 | ثبت‌نام عمومی و ساخت کاربر | ✅ رفع‌شده: پرچم `ALLOW_PUBLIC_REGISTRATION` پیاده شد (ثبت‌نام کاربر اول آزاد است، بعدی‌ها مسدود). endpoint ادمین `POST /api/v1/admin/users` برای ساخت کاربر اضافه شد | کنترل نقش/ایمیل برای `ask_accounting_db` در `ToolRegistry`/ابزار |
 | S7 | در چت گروهی با `@bot` نتیجه‌ی مالی برای همه‌ی اعضا پخش می‌شود | 🔴 ابزار مالی در گروه هم فعال است | غیرفعال در گروه یا فقط برای کاربر مجاز؛ تصمیم محصول |
 | S8 | بدون rate limit (login/register/chat) و بدون سقف هزینه LLM/DB برای هر کاربر | 🔴 | rate limit در اپ (مثلاً slowapi+Redis) یا Caddy plugin؛ سهمیه‌ی ساعتی برای ابزار مالی (مثلاً ۲۰/ساعت/کاربر)؛ semaphore هم‌زمانی |
 | S6 | خروج داده به شخص ثالث: پرسش، SQL و **ردیف‌های نتیجه** (حقوق، کد ملی، شبا…) به `LLM_API_BASE_URL` (واسطه/ریسلر) می‌رود | 🔴 تصمیم سازمانی | تأیید رسمی شرکت؛ provider مستقیم/خودمیزبان؛ **ماسک PII** (کد ملی، شبا، شماره حساب، موبایل) و کاهش ردیف‌های ارسالی؛ حذف ستون‌های حساس از ورودی مدل |
 | S5 | لاگ ترافیک بدنه‌ی پاسخ‌های مالی را می‌نویسد | 🟡 در prod compose خاموش (`REQUEST_LOGGING_ENABLED=false`) اما در کد مسیر حساس استثنا نشده | در کد: عدم لاگ بدنه‌ی `/chat` و `/accounting-db` حتی اگر روشن شد |
-| S4 | `DEBUG=true` و `/docs` عمومی | 🟡 prod compose `DEBUG=false` و Caddy 404 می‌دهد؛ **خود اپ** docs را غیرفعال نمی‌کند (`main.py` بدون `docs_url=None`) | `docs_url/redoc_url/openapi_url=None` وقتی `ENVIRONMENT=production` |
+| S4 | `DEBUG=true` و `/docs` عمومی | ✅ رفع‌شده: در صورت `ENVIRONMENT=production` مستقیماً `docs_url/redoc_url/openapi_url=None` در FastAPI اعمال می‌شود | — |
 | — | secrets برنامه از `.env` می‌آید و کل `.env` به کانتینرهای اپ می‌رسد | 🟡 secretهای زیرساخت blank می‌شوند ولی JWT/LLM/reader password هنوز در env | `Settings(secrets_dir="/run/secrets")` + Docker secrets برای `jwt_secret_key, llm_api_key, embedding_api_key, rahkaran_db_password` |
 | — | `JWT_SECRET_KEY` پیش‌فرض ناامن و `CORS_ORIGINS` پیش‌فرض شامل IPهای قدیمی سرور | 🔴 اگر env ست نشود | fail-fast در startup برای production |
 
 ### رفع‌شده (نسبت به SECURITY_PLAN)
 - ✅ A1 IDOR بازخورد: `_get_owned_log` (صاحب log یا admin) در feedback و export.
 - ✅ A2 `/accounting-db/freshness` اکنون نیاز به لاگین دارد.
+- ✅ S1 پرچم `ALLOW_PUBLIC_REGISTRATION` و endpoint ساخت کاربر توسط ادمین `POST /admin/users`.
 - ✅ S2 پورت‌ها: prod compose هیچ پورتی جز Caddy منتشر نمی‌کند؛ Redis با رمز؛ شبکه‌های internal.
 - ✅ S3 رمز SA پیش‌فرض از compose حذف شد (`${VAR:?}`) — ولی در تاریخچه‌ی git (commit `4a320ca`) هست: rotate کنید.
+- ✅ S4 غیرفعال‌سازی خودکار docs در صورت محیط production.
 - ✅ S9 لایسنس: پیش‌فرض `MSSQL_PID=Express`.
 - ✅ S12 کانتینرها: غیر root، `read_only`, `cap_drop`, `no-new-privileges`, محدودیت منابع، image pin.
 - ✅ A5 بخشی: `MONEY_COLUMNS` صریح برای UI (ولی ← «دو منطق مبلغ»).
+- ✅ A13 ولوم `rahkaran_mssql_data` دیگر external نیست و خودکار ساخته می‌شود.
 - ✅ امنیت اعتبارسنج SQL: AST + reader فقط‌خواندنی روی `ai` + سقف ردیف/timeout + formula-injection guard در export.
 
 ### 🟡/🔴 بازبینی کد اتصال دیتابیس (بندهای باز)

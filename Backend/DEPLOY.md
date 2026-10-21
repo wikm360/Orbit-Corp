@@ -4,7 +4,8 @@
 پشت‌صحنه و دلیل تصمیم‌ها: [.agents/ops/infra-and-deploy.md](.agents/ops/infra-and-deploy.md) و [.agents/ops/runbook.md](.agents/ops/runbook.md).
 
 > همهٔ دستورها داخل پوشهٔ `Backend/` روی سرور اجرا می‌شوند.
-> **هرگز** `docker compose up` را بدون `-f` نزنید (فایل dev را لود می‌کند) و **هرگز** `down -v` نزنید (volumeهای دیتابیس پاک می‌شوند).
+> با تنظیم `COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml` در `.env`، دستور استاندارد `docker compose` به طور خودکار فایل پروداکشن را لود می‌کند و نیازی به هیچ alias یا فلگ اضافی نیست.
+> **هرگز** `down -v` نزنید (volumeهای دیتابیس پاک می‌شوند).
 
 ---
 
@@ -36,8 +37,6 @@
 sudo mkdir -p /opt/orbit && sudo chown $USER /opt/orbit
 git clone git@github.com:wikm360/Orbit-Corp.git /opt/orbit/Orbit-Corp
 cd /opt/orbit/Orbit-Corp/Backend
-echo "alias dc='docker compose -f docker-compose.yml -f docker-compose.prod.yml'" >> ~/.bashrc && source ~/.bashrc
-docker volume create rahkaran_mssql_data        # volume خارجی دیتابیس راهکاران (فقط یک‌بار)
 ```
 
 ### ۲.۲ ساخت `.env`
@@ -50,6 +49,8 @@ nano .env
 
 | متغیر | مقدار |
 |---|---|
+| `COMPOSE_FILE` | `docker-compose.yml:docker-compose.prod.yml` (اتصال خودکار فایل پروداکشن) |
+| `ALLOW_PUBLIC_REGISTRATION` | `true` برای ثبت‌نام اولین کاربر (super_admin)؛ سپس `false` |
 | `ENVIRONMENT` / `DEBUG` | `production` / `false` |
 | `POSTGRES_PASSWORD` | رمز hex جدید (فقط بار اول روی volume خالی اعمال می‌شود) |
 | `REDIS_PASSWORD` | رمز hex جدید |
@@ -89,47 +90,42 @@ chmod -R a+rX data/rahkaran-backups
 
 ### ۲.۴ build و اجرا
 ```bash
-dc up -d --build
-dc ps                      # همه healthy؛ migrate و rahkaran-refresh با وضعیت exited عادی است
-dc logs migrate            # باید به alembic upgrade head برسد
-dc logs rahkaran-refresh   # آخرش: "done - the new data is live" (چند دقیقه طول می‌کشد)
+docker compose up -d --build
+docker compose ps                      # همه healthy؛ migrate و rahkaran-refresh با وضعیت exited عادی است
+docker compose logs migrate            # باید به alembic upgrade head برسد
+docker compose logs rahkaran-refresh   # آخرش: "done - the new data is live" (چند دقیقه طول می‌کشد)
 ```
 اولین build چند دقیقه است. اگر `rahkaran-refresh` خطا داد: [بخش ۸](#۸-مشکلات-رایج).
 
-### ۲.۵ hint های Text-to-SQL (یک‌بار؛ بعد از `rahkaran-refresh` و تنظیم کلید embedding)
+### ۲.۵ hint های Text-to-SQL (خودکار)
+هینت‌های پایگاه داده به صورت کاملاً خودکار در startup بک‌اند همگام‌سازی و بارگذاری می‌شوند (نیازی به اجرای دستور دستی نیست). اگر به هر دلیلی خواستید دستی آن را فراخوانی کنید:
 ```bash
-dc exec backend python -m app.features.db_connector.ingest
+docker compose exec backend python -m app.features.db_connector.ingest
 ```
 
 ### ۲.۶ اولین ادمین و بستن ثبت‌نام عمومی
-۱. با تونل/VPN (بخش ۴) وارد سایت شوید و **همان لحظه** ثبت‌نام کنید: اولین کاربر خودکار `super_admin` است.
-۲. **قبل از باز کردن پورت به شبکه**، ثبت‌نام عمومی را ببندید. در فایل مشترک `infra/caddy/app.caddy` (هر دو حالت HTTPS و HTTP از آن استفاده می‌کنند)، درست قبل از `handle /api/* {` این بلوک را اضافه کنید:
-```
-	@register path /api/v1/auth/register
-	respond @register 403
-```
+۱. با تونل/VPN (بخش ۴) یا آدرس سایت وارد شوید و ثبت‌نام کنید: اولین کاربر خودکار `super_admin` می‌شود.
+۲. در فایل `.env`، ثبت‌نام عمومی را ببندید:
 ```bash
-dc up -d --build caddy
+ALLOW_PUBLIC_REGISTRATION=false
 ```
-۳. ساخت کاربر بعدی (چون ثبت‌نام بسته است): از **داخل شبکهٔ docker** (Caddy را دور می‌زند):
-```bash
-dc exec -T backend python - <<'EOF'
-import json, urllib.request
-req = urllib.request.Request(
-    "http://localhost:8000/api/v1/auth/register",
-    data=json.dumps({"email": "user@example.com", "password": "ChangeMe-12345", "full_name": "نام کاربر"}).encode(),
-    headers={"Content-Type": "application/json"},
-)
-print(urllib.request.urlopen(req).status)
-EOF
+سپس با `docker compose up -d backend` آن را اعمال کنید. از این پس تلاش برای ثبت‌نام عمومی خطای ۴۰۳ دریافت می‌کند.
+۳. ساخت کاربران بعدی: ادمین‌ها می‌توانند مستقیماً از طریق API (`POST /api/v1/admin/users`) یا پنل کاربری کاربر جدید ایجاد کنند:
+```json
+{
+  "email": "user@example.com",
+  "password": "ChangeMe-12345",
+  "full_name": "نام کاربر",
+  "role": "user"
+}
 ```
-سپس super_admin نقش را در پنل/`PATCH /api/v1/admin/users/{id}/role` تنظیم می‌کند، و leader تیم کاربر را به تیم/پروژه اضافه می‌کند. (API ساخت کاربر برای ادمین هنوز وجود ندارد — [.agents/known-issues.md](.agents/known-issues.md).)
+سپس super_admin نقش را در پنل/`PATCH /api/v1/admin/users/{id}/role` در صورت نیاز تنظیم می‌کند، و leader تیم کاربر را به تیم/پروژه اضافه می‌کند.
 
 ## ۳. فرانت‌اند و CI
 
-- **در compose:** سرویس `frontend` (Next.js) با build-arg `NEXT_PUBLIC_API_URL=/api/v1` ساخته می‌شود و Caddy مسیر `/` را به آن می‌دهد؛ با `dc up -d --build` همراه بک‌اند بالا می‌آید.
+- **در compose:** سرویس `frontend` (Next.js) با build-arg `NEXT_PUBLIC_API_URL=/api/v1` ساخته می‌شود و Caddy مسیر `/` را به آن می‌دهد؛ با `docker compose up -d --build` همراه بک‌اند بالا می‌آید.
 - **GitHub Actions** (`.github/workflows/deploy.yml`): با هر push به `main` به سرور SSH می‌زند، `git reset --hard origin/main`، سپس `cd Frontend && npm install && npm run build` و `systemctl restart front`. **بک‌اند/migration/compose را deploy نمی‌کند.** این مسیر مربوط به اجرای فرانت با systemd است و با سرویس `frontend` در compose موازی/تکراری است؛ یکی را انتخاب کنید (در حالت compose، سرویس `front` را stop کنید تا پورت/منابع دوبار مصرف نشود). نیازمند secretهای repo: `SERVER_HOST`، `SERVER_USER`، `SERVER_SSH_KEY`.
-- پس بعد از هر push که کد بک‌اند را عوض می‌کند، روی سرور خودتان `git pull && dc up -d --build` را بزنید (بخش ۶.۱).
+- پس بعد از هر push که کد بک‌اند را عوض می‌کند، روی سرور خودتان `git pull && docker compose up -d --build` را بزنید (بخش ۶.۱).
 
 ## ۴. دسترسی کاربران
 
@@ -142,7 +138,7 @@ EOF
 
 برای حالت IP عمومی:
 - روتر/فایروال شرکت: پورت خارجی → `BIND_IP:PUBLIC_PORT` و **فقط IPهای شرکت** مجاز باشند (مهم‌ترین لایه).
-- لایهٔ دوم روی سرور (بعد از هر `dc up` بررسی و با `iptables-persistent` پایدار شود):
+- لایهٔ دوم روی سرور (بعد از هر `docker compose up` بررسی و با `iptables-persistent` پایدار شود):
   ```bash
   sudo iptables -I DOCKER-USER -p tcp --dport 8443 ! -s <IP_شرکت>/32 -j DROP
   ```
@@ -151,7 +147,7 @@ EOF
 ### گواهی HTTPS
 `tls internal` گواهی خودامضا (CA داخلی Caddy) می‌سازد. برای نصب روی سیستم کاربران:
 ```bash
-dc cp caddy:/data/caddy/pki/authorities/local/root.crt .
+docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt .
 ```
 و root.crt را از طریق IT روی مرورگر/سیستم کاربران نصب کنید؛ یا با دامنهٔ داخلی و گواهی CA سازمان جایگزین کنید.
 HTTP ساده (`CADDY_CONFIG=Caddyfile.http`) رمز، توکن و داده‌های مالی را بدون رمزگذاری می‌فرستد؛ فقط با allow-list سخت IP قابل‌قبول است.
@@ -160,7 +156,7 @@ HTTP ساده (`CADDY_CONFIG=Caddyfile.http`) رمز، توکن و داده‌ه
 
 - [ ] همهٔ secretها عوض شده‌اند (`POSTGRES_*`، `REDIS_PASSWORD`، `RAHKARAN_*`، `JWT_SECRET_KEY`) و `.env` با `chmod 600` است.
 - [ ] `ENVIRONMENT=production`، `DEBUG=false` (و `REQUEST_LOGGING_ENABLED` در prod خودکار false است).
-- [ ] ثبت‌نام عمومی بسته است؛ ادمین ساخته شده.
+- [ ] ثبت‌نام عمومی بسته است (`ALLOW_PUBLIC_REGISTRATION=false`)؛ ادمین ساخته شده.
 - [ ] `CORS_ORIGINS` فقط origin واقعی https.
 - [ ] پورت فقط از IPهای مجاز باز است؛ `BIND_IP` درست است.
 - [ ] گواهی روی سیستم کاربران نصب است (یا HTTP با allow-list).
@@ -175,8 +171,8 @@ HTTP ساده (`CADDY_CONFIG=Caddyfile.http`) رمز، توکن و داده‌ه
 ```bash
 cd /opt/orbit/Orbit-Corp/Backend
 git pull
-dc up -d --build        # migrate خودکار اجرا می‌شود؛ backend/worker/frontend بازسازی می‌شوند
-dc ps && dc logs --tail=50 migrate backend
+docker compose up -d --build        # migrate خودکار اجرا می‌شود؛ backend/worker/frontend بازسازی می‌شوند
+docker compose ps && docker compose logs --tail=50 migrate backend
 ```
 قبل از آپدیت‌هایی که migration دارند، backup بگیرید (بخش ۷). Migration (مثل `0008`) ممکن است جدول بزرگ را بازنویسی کند؛ در ساعت کم‌تردد اجرا کنید. **migration اجراشده را هرگز ویرایش نکنید**؛ برخی (مثل `0002`) برگشت‌ناپذیرند.
 
@@ -184,31 +180,31 @@ dc ps && dc logs --tail=50 migrate backend
 ```bash
 cp /path/FULL_*.bak /path/DIFF_*.bak data/rahkaran-backups/
 chmod -R a+rX data/rahkaran-backups
-dc up -d                                       # یا: dc run --rm rahkaran-refresh
-dc logs rahkaran-refresh
+docker compose up -d                                       # یا: docker compose run --rm rahkaran-refresh
+docker compose logs rahkaran-refresh
 ```
-خودکار جدیدترین FULL و DIFF هم‌زنجیره را انتخاب، در دیتابیس جانبی restore، لایهٔ `ai` را اعمال و تست می‌کند و بعد با چند ثانیه قطعی جایگزین می‌کند؛ در صورت خطا دیتابیس قبلی سالم می‌ماند. گزینه‌ها: `dc run --rm rahkaran-refresh --dry-run` / `--force`. اگر ساختار view ها عوض نشده، ingest مجدد hint لازم نیست.
+خودکار جدیدترین FULL و DIFF هم‌زنجیره را انتخاب، در دیتابیس جانبی restore، لایهٔ `ai` را اعمال و تست می‌کند و بعد با چند ثانیه قطعی جایگزین می‌کند؛ در صورت خطا دیتابیس قبلی سالم می‌ماند. گزینه‌ها: `docker compose run --rm rahkaran-refresh --dry-run` / `--force`. اگر ساختار view ها عوض نشده، ingest مجدد hint لازم نیست.
 
 ### ۶.۳ تغییر `.env`
 ```bash
 nano .env
-dc up -d backend worker      # تنظیمات فقط با restart اعمال می‌شوند
+docker compose up -d backend worker      # تنظیمات فقط با restart اعمال می‌شوند
 ```
-(رمز postgres/redis/mssql بعد از اولین راه‌اندازی با تغییر `.env` عوض نمی‌شود؛ برای Postgres: `dc exec postgres psql -U postgres -c "ALTER USER postgres PASSWORD '...'"`.)
+(رمز postgres/redis/mssql بعد از اولین راه‌اندازی با تغییر `.env` عوض نمی‌شود؛ برای Postgres: `docker compose exec postgres psql -U postgres -c "ALTER USER postgres PASSWORD '...'"`.)
 
 ### ۶.۴ تغییر مدل embedding
 ```bash
 nano .env                                                    # EMBEDDING_MODEL / DIMENSIONS / SEND_DIMENSIONS
-dc up -d backend worker
-dc exec backend python -m app.features.documents.reembed --dry-run
-dc exec backend python -m app.features.documents.reembed     # اسناد READY و حافظهٔ پروژه‌ها
-dc exec backend python -m app.features.db_connector.ingest   # hint ها
+docker compose up -d backend worker
+docker compose exec backend python -m app.features.documents.reembed --dry-run
+docker compose exec backend python -m app.features.documents.reembed     # اسناد READY و حافظهٔ پروژه‌ها
+docker compose exec backend python -m app.features.db_connector.ingest   # hint ها
 ```
 تا پایان re-embed نتایج جست‌وجو ترکیبی از دو مدل است؛ در ساعت کم‌تردد انجام دهید.
 
 ### ۶.۵ بازگشت (rollback)
 ```bash
-git log --oneline -5 && git checkout <commit-قبلی> && dc up -d --build
+git log --oneline -5 && git checkout <commit-قبلی> && docker compose up -d --build
 ```
 اگر migration جدیدی اجرا شده بود، کد قدیمی ممکن است با schema ناسازگار باشد؛ در صورت نیاز از backup Postgres برگردانید.
 
@@ -216,25 +212,25 @@ git log --oneline -5 && git checkout <commit-قبلی> && dc up -d --build
 
 ```bash
 # Postgres: کاربران، گفتگوها، اسناد (متادیتا و chunk)، حافظه، hint ها، لاگ پرسش‌ها
-dc exec -T postgres pg_dump -U postgres org_rag | gzip > pg_$(date +%F).sql.gz
+docker compose exec -T postgres pg_dump -U postgres org_rag | gzip > pg_$(date +%F).sql.gz
 
 # فایل‌های آپلودشده (volume uploads_data)
 docker run --rm -v backend_uploads_data:/d -v "$PWD":/b alpine tar czf /b/uploads_$(date +%F).tgz -C /d .
 ```
 هر دو را **خارج از سرور** نگه دارید (و در صورت امکان رمزگذاری). دیتابیس راهکاران از `.bak` شرکت قابل بازسازی است. اسم volume با `docker volume ls` تأیید شود (پیشوند `backend_` از `name: backend` در compose می‌آید).
-بازیابی Postgres: `gunzip -c pg_X.sql.gz | dc exec -T postgres psql -U postgres org_rag` روی دیتابیس خالی (پس از `dc stop backend worker`).
+بازیابی Postgres: `gunzip -c pg_X.sql.gz | docker compose exec -T postgres psql -U postgres org_rag` روی دیتابیس خالی (پس از `docker compose stop backend worker`).
 
 ## ۸. مشکلات رایج
 
 | علامت | علت / راه‌حل |
 |---|---|
-| `dc up` خطای `set POSTGRES_PASSWORD…` | متغیر الزامی در `.env` خالی است |
+| `docker compose up` خطای `set POSTGRES_PASSWORD…` | متغیر الزامی در `.env` خالی است |
 | `rahkaran-refresh`: `no FULL backup found` | فایل‌ها در `data/rahkaran-backups/` نیستند یا نام استاندارد ندارند |
 | refresh: خطای دسترسی | `chmod -R a+rX data/rahkaran-backups` |
-| refresh: `SQL Server not reachable` | mssql هنوز بالا نیامده (تا ۹۰ثانیه)؛ چند دقیقه بعد `dc run --rm rahkaran-refresh` |
-| چت مالی خطا می‌دهد | `RAHKARAN_DB_ENABLED=true`؟ backend بعد از تغییر env restart شده؟ ingest hint ها؟ رمز reader درست؟ `dc logs backend` |
+| refresh: `SQL Server not reachable` | mssql هنوز بالا نیامده (تا ۹۰ثانیه)؛ چند دقیقه بعد `docker compose run --rm rahkaran-refresh` |
+| چت مالی خطا می‌دهد | `RAHKARAN_DB_ENABLED=true`؟ backend بعد از تغییر env restart شده؟ ingest hint ها؟ رمز reader درست؟ `docker compose logs backend` |
 | مرورگر خطای گواهی | root.crt نصب نیست یا `SITE_ADDRESS` با آدرس مرورگر یکی نیست |
-| سند `processing` می‌ماند | `dc ps`/`dc logs worker`؛ Redis؛ job کشته‌شده (حافظه/timeout) ← حذف و دوباره آپلود |
+| سند `processing` می‌ماند | `docker compose ps`/`docker compose logs worker`؛ Redis؛ job کشته‌شده (حافظه/timeout) ← حذف و دوباره آپلود |
 | سند `failed` (429/قطع) | محدودیت API؛ `POST /projects/{id}/documents/{doc}/retry`؛ `WORKER_REPLICAS` یا `OCR_CONCURRENCY` را کم کنید |
 | رمز Postgres تغییر کرد و وصل نمی‌شود | رمز فقط روی volume خالی اعمال می‌شود (`ALTER USER`) |
 | `Permission denied` روی آپلود | volume قدیمی با root ساخته شده: `chown -R 10001:10001` روی volume |
@@ -243,11 +239,11 @@ docker run --rm -v backend_uploads_data:/d -v "$PWD":/b alpine tar czf /b/upload
 
 ## ۹. دستورهای روزمره
 ```bash
-dc ps                              # وضعیت
-dc logs -f backend                 # یا worker, caddy, frontend, mssql, postgres
-dc restart backend worker
-dc up -d --build backend           # بازسازی یک سرویس
-dc exec backend alembic current    # نسخهٔ migration
-dc exec postgres psql -U postgres org_rag
+docker compose ps                              # وضعیت
+docker compose logs -f backend                 # یا worker, caddy, frontend, mssql, postgres
+docker compose restart backend worker
+docker compose up -d --build backend           # بازسازی یک سرویس
+docker compose exec backend alembic current    # نسخهٔ migration
+docker compose exec postgres psql -U postgres org_rag
 ```
-سلامت: `curl -s http://127.0.0.1:8000/health` فقط از داخل شبکهٔ docker (`dc exec backend python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:8000/health').read())"`)؛ نام کانتینر mssql در prod: `backend-mssql-1`.
+سلامت: `curl -s http://127.0.0.1:8000/health` فقط از داخل شبکهٔ docker (`docker compose exec backend python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:8000/health').read())"`)؛ نام کانتینر mssql در prod: `backend-mssql-1`.

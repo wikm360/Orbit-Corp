@@ -1,6 +1,9 @@
 # DEV ONLY - auto-loaded by a plain `docker compose up`. Never used in production:
-# production runs `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d`, which skips this file.
+# production runs with COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml in .env, which skips this file.
 services:
+  postgres:
+    ports:
+      - "127.0.0.1:5432:5432"
   redis:
     ports:
       - "127.0.0.1:6379:6379"

@@ -41,3 +41,4 @@ system Admin CEO Leader.txt
 
 # Company files used for retrieval evaluation (tools/retrieval_eval) - never commit, never ship in images
 Backend/eval/
+mehvargostar_code.xlsx

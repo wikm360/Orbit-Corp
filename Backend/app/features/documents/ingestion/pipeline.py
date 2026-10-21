@@ -191,7 +191,10 @@ class PersistStep(IngestionStep):
 
     async def run(self, context: IngestionContext) -> None:
         if not context.page_chunks or not context.embeddings:
-            return
+            raise ValueError(
+                "No text could be extracted from the document, so nothing was indexed "
+                "(empty file, unreadable scan, or OCR disabled/failed)."
+            )
 
         for index, (chunk_obj, embedding) in enumerate(
             zip(context.page_chunks, context.embeddings, strict=True)
