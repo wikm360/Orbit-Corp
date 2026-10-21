@@ -39,8 +39,16 @@ class ToolRegistry:
     def __init__(self, tools: list[BaseTool]):
         self._tools: dict[str, BaseTool] = {tool.name: tool for tool in tools}
 
-    def to_openai_tools(self) -> list[dict]:
-        return [tool.to_openai_tool() for tool in self._tools.values()]
+    def to_openai_tools(
+        self,
+        context: UserContext | None = None,
+        conversation: Conversation | None = None,
+    ) -> list[dict]:
+        return [
+            tool.to_openai_tool()
+            for tool in self._tools.values()
+            if tool.is_available_for(context, conversation)
+        ]
 
     async def dispatch(
         self,
@@ -54,6 +62,9 @@ class ToolRegistry:
         tool = self._tools.get(name)
         if tool is None:
             return ToolExecutionResult(text=f"Unknown tool: '{name}'")
+
+        if not tool.is_available_for(context, conversation):
+            return ToolExecutionResult(text="Permission Denied: You do not have access to this tool.")
 
         try:
             arguments = json.loads(arguments_json) if arguments_json else {}

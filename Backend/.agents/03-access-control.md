@@ -60,8 +60,8 @@
 | دیدن چت شخصی دیگران | ✗ | ✗ | ✗ | ✓ | ✓ |
 | تغییر نقش سراسری | ✗ | ✗ | ✗ | ✗ | ✓ |
 | `/admin/users`, `/admin/documents` | ✗ | ✗ | ✗ | ✓ | ✓ |
-| `/accounting-db/queries`, `/queries/stats`, `/hints/ingest` | ✗ | ✗ | ✗ | ✓ | ✓ |
-| استفاده از ابزار مالی `ask_accounting_db` در چت | **هر کاربر لاگین‌شده** (وقتی `RAHKARAN_DB_ENABLED`) — ⚠️ فعلاً بدون نقش/allow-list، حتی در چت گروهی؛ ← [known-issues.md](known-issues.md) | | | | |
+| `/accounting-db/queries`, `/queries/stats`, `/hints/ingest`, `/freshness` | ✗ | ✗ | ✗ | ✓ | ✓ |
+| استفاده از ابزار مالی `ask_accounting_db` در چت | ✗ | ✗ | ✗ | ✓ | ✓ |
 
 قواعد مهم:
 1. دسترسی به **پروژه** فقط از راه `project_memberships` است و عضو پروژه باید عضو **تیمِ پروژه** هم باشد (در `add_project_member` چک می‌شود و در `get_user_project_ids` هم join است).

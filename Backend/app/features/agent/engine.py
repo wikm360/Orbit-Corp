@@ -76,7 +76,7 @@ class AgentEngine:
         persisted to the `messages` table by the caller, so it's picked up
         here as the last row of history rather than passed separately."""
         messages = await self._build_messages(db, conversation)
-        tools = self._registry.to_openai_tools()
+        tools = self._registry.to_openai_tools(context, conversation)
         llm_provider = get_llm_provider()
 
         all_citations: list[SourceCitation] = []

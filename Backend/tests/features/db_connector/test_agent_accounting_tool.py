@@ -60,7 +60,7 @@ async def test_agent_engine_dispatches_accounting_tool(db_session, monkeypatch):
         id=uuid.uuid4(),
         email="test-agent@example.com",
         hashed_password="pw",
-        role=UserRole.USER,
+        role=UserRole.ADMIN,
     )
     db_session.add(user)
     await db_session.flush()
@@ -126,4 +126,53 @@ async def test_agent_engine_dispatches_accounting_tool(db_session, monkeypatch):
     assert "مانده حساب مشخص است" in turn_result.content
     statuses = [a.get("status") for a in activities]
     assert "querying_database" in statuses
+
+
+@pytest.mark.asyncio
+async def test_accounting_tool_hidden_and_forbidden_for_normal_user(db_session, monkeypatch):
+    settings = get_settings()
+    monkeypatch.setattr(settings, "rahkaran_db_enabled", True)
+
+    normal_user = User(
+        id=uuid.uuid4(),
+        email="normal-user@example.com",
+        hashed_password="pw",
+        role=UserRole.USER,
+    )
+    admin_user = User(
+        id=uuid.uuid4(),
+        email="admin-user@example.com",
+        hashed_password="pw",
+        role=UserRole.ADMIN,
+    )
+    conv = Conversation(
+        id=uuid.uuid4(),
+        type=ConversationType.PERSONAL,
+        created_by=normal_user.id,
+        title="تست دسترسی",
+    )
+
+    reg = build_default_registry()
+
+    # 1. For normal user: tool is NOT in the tools offered to the model
+    user_context = UserContext(user=normal_user)
+    tools_for_user = reg.to_openai_tools(user_context, conv)
+    tool_names_for_user = [t["function"]["name"] for t in tools_for_user]
+    assert "ask_accounting_db" not in tool_names_for_user
+
+    # 2. For admin user: tool IS in the tools offered to the model
+    admin_context = UserContext(user=admin_user)
+    tools_for_admin = reg.to_openai_tools(admin_context, conv)
+    tool_names_for_admin = [t["function"]["name"] for t in tools_for_admin]
+    assert "ask_accounting_db" in tool_names_for_admin
+
+    # 3. If a normal user tries to dispatch it directly: Permission Denied
+    result = await reg.dispatch(
+        "ask_accounting_db",
+        json.dumps({"question": "حقوق مدیران چقدر است؟"}),
+        db=db_session,
+        context=user_context,
+        conversation=conv,
+    )
+    assert "Permission Denied" in result.text
 

@@ -32,6 +32,18 @@ class BaseTool(ABC):
             },
         }
 
+    def is_available_for(
+        self,
+        context: UserContext | None = None,
+        conversation: Conversation | None = None,
+    ) -> bool:
+        """Determines whether this tool should be offered in the LLM's prompt.
+
+        By default, tools are available to all authenticated callers unless
+        overridden by subclass logic.
+        """
+        return True
+
     @abstractmethod
     async def execute(
         self,

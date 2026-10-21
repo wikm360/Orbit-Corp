@@ -27,7 +27,9 @@ router = APIRouter(prefix="/accounting-db", tags=["accounting-db"])
 
 
 async def _get_owned_log(db: AsyncSession, query_id: uuid.UUID, context: UserContext) -> DbQueryLog:
-    """A query log is visible to the user who asked it (and to admins) - never to other users."""
+    """A query log is visible to the admin who asked it (and to other admins) - never to non-admins."""
+    if not context.is_admin:
+        raise ForbiddenError("Only administrators can access accounting query logs")
     log = (await db.execute(select(DbQueryLog).where(DbQueryLog.id == query_id))).scalar_one_or_none()
     if log is None:
         raise NotFoundError("Query log not found")
@@ -143,8 +145,8 @@ async def trigger_ingest_hints(db: AsyncSession = Depends(get_db)):
     return IngestResponse(**stats)
 
 
-@router.get("/freshness")
-async def get_freshness(_: UserContext = Depends(get_current_user_context)):
-    """Returns snapshot freshness metadata for the Rahkaran database (authenticated users only)."""
+@router.get("/freshness", dependencies=[Depends(require_admin)])
+async def get_freshness():
+    """Returns snapshot freshness metadata for the Rahkaran database (admins only)."""
     return await data_freshness()
 

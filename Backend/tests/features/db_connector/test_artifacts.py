@@ -75,7 +75,7 @@ class _Scripted:
 
 
 async def _seed(db_session):
-    user = User(id=uuid.uuid4(), email=f"{uuid.uuid4()}@example.com", hashed_password="pw", role=UserRole.USER)
+    user = User(id=uuid.uuid4(), email=f"{uuid.uuid4()}@example.com", hashed_password="pw", role=UserRole.ADMIN)
     db_session.add(user)
     await db_session.flush()
     conv = Conversation(id=uuid.uuid4(), type=ConversationType.PERSONAL, created_by=user.id, title="t")

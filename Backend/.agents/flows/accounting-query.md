@@ -24,7 +24,7 @@ run_accounting_query(db, question, user_id, conversation_id)
 
 ## ابزار agent
 `AskAccountingDbTool` (`agent/tools/accounting_tools.py`): پارامتر `question` (فارسی، خودبسنده). `include_sql_in_text=False` ← متن مدل SQL ندارد و با `MODEL_NOTE` شروع می‌شود (راهنمای نقل اعداد/عدم ساختن عدد). خروجی: `ToolExecutionResult(text, artifacts=[artifact])`.
-فقط وقتی `RAHKARAN_DB_ENABLED=true` ثبت می‌شود. ⚠️ هیچ چک نقش/allow-list/سهمیه‌ای در ابزار یا registry نیست.
+فقط وقتی `RAHKARAN_DB_ENABLED=true` فعال می‌شود و **منحصراً برای کاربران مدیر (`admin` و `super_admin`) در دسترس است**. برای کاربران عادی ابزار در لیست ابزارهای مدل ارائه نمی‌شود و فراخوانی مستقیم آن نیز `Permission Denied` می‌دهد.
 
 ## ۱. بازیابی hint (`hints.py`)
 **ورودی دانش** = `sql/rahkaran/hints/out/{hints.jsonl, core_prompt.md}` (در git هست — با `git add -f` ثبت شده چون `.gitignore` الگوی `out/` دارد؛ بازتولید: [accounting-data-refresh.md](accounting-data-refresh.md)). `ingest_hints` آن را در `schema_hints` می‌ریزد.
