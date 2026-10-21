@@ -88,7 +88,6 @@ def setup_admin_panel(app: FastAPI) -> None:
         column_list = [User.id, User.email, User.full_name, User.role, User.created_at]
         column_searchable_list = [User.email, User.full_name]
         column_sortable_list = [User.email, User.role, User.created_at]
-        column_exclude_list = [User.hashed_password]
         column_details_exclude_list = [User.hashed_password]
         form_excluded_columns = [User.team_memberships, User.created_at]
 
@@ -155,7 +154,6 @@ def setup_admin_panel(app: FastAPI) -> None:
         name_plural = "Document Chunks"
         icon = "fa-solid fa-file-lines"
         column_list = [DocumentChunk.id, DocumentChunk.document_id, DocumentChunk.chunk_index, DocumentChunk.created_at]
-        column_exclude_list = [DocumentChunk.embedding]
         column_details_exclude_list = [DocumentChunk.embedding]
         can_create = False
         form_excluded_columns = [DocumentChunk.embedding, DocumentChunk.created_at]
@@ -165,7 +163,6 @@ def setup_admin_panel(app: FastAPI) -> None:
         name_plural = "Project Memories"
         icon = "fa-solid fa-brain"
         column_list = [ProjectMemory.id, ProjectMemory.project_id, ProjectMemory.created_by_user_id, ProjectMemory.category, ProjectMemory.created_at]
-        column_exclude_list = [ProjectMemory.embedding]
         column_details_exclude_list = [ProjectMemory.embedding]
         form_excluded_columns = [ProjectMemory.embedding, ProjectMemory.created_at, ProjectMemory.updated_at]
 
@@ -202,7 +199,6 @@ def setup_admin_panel(app: FastAPI) -> None:
         icon = "fa-solid fa-lightbulb"
         column_list = [SchemaHint.id, SchemaHint.hint_key, SchemaHint.kind, SchemaHint.title]
         column_searchable_list = [SchemaHint.hint_key, SchemaHint.title]
-        column_exclude_list = [SchemaHint.embedding]
         column_details_exclude_list = [SchemaHint.embedding]
         form_excluded_columns = [SchemaHint.embedding, SchemaHint.updated_at]
 
