@@ -14,17 +14,17 @@
   | `artifact` | `{artifact}` | بلافاصله پس از اجرای ابزار (مثلاً نتیجه‌ی SQL) |
 
 ## ساخت prompt (`_build_messages`)
-1. `system` = `SYSTEM_PROMPT` (انگلیسی: دستیار داخلی سازمان؛ از ابزارها استفاده کن؛ فقط دو نوع فایل می‌بینی؛ هرگز ادعای خواندن فایلی که با ابزار باز نکردی نکن).
+1. `system` = `SYSTEM_PROMPT` (انگلیسی: دستیار داخلی سازمان؛ از ابزارها استفاده کن؛ فقط دو نوع فایل می‌بینی؛ هرگز ادعای خواندن فایلی که با ابزار باز نکردی نکن) + **روال پاسخ به سؤال سندی**: همیشه با `search_knowledge_base` شروع کن (نتیجه‌اش صفحه‌ی کامل برترین hitهاست)؛ اگر کافی نبود دوباره با پرسش بازنویسی‌شده؛ فقط اگر hit درست است و اطرافش لازم است چند صفحه با `read_document_pages`؛ `read_entire_document` فقط سند کوتاه یا خلاصه‌ی کل فایل به درخواست صریح. (اندازه‌گیری: در ۹ پرسش نمونه ابزار اول `search_knowledge_base` شد ۷ بار در برابر ۳ بار با پرامپت قبلی؛ پرسش «این فایل درباره‌ی چیست» عمداً می‌تواند `get_document_info` باشد.)
 2. اگر گفتگو سند دارد: فهرست **متادیتا** (نام، `document_id`، status؛ حداکثر ۵۰) — محتوا نه.
 3. اگر `project_group`: توضیح گروه‌بودن + پیشوند `@bot` + اینکه پیام انسان‌ها با نام فرستنده شروع می‌شود.
 4. اگر `RAHKARAN_DB_ENABLED`: بند طولانی درباره‌ی `ask_accounting_db` (یک‌بار صدا بزن؛ پرسش خودبسنده‌ی فارسی؛ UI خودش SQL/جدول را نشان می‌دهد پس کوتاه جواب بده؛ اعداد را عیناً نقل کن؛ واحد ریال/تومان؛ تعداد ردیف را از «total rows» ابزار بگو؛ نتیجه‌ی صفر ردیف ≠ نبودن داده).
 5. تاریخچه: **۳۰ پیام آخر** (`_load_history`)؛ نقش `assistant` برای پاسخ‌های AI، `user` برای بقیه. در گروه، پیام کاربر با `"<نام یا ایمیل>: "` شروع می‌شود (نام‌ها با یک query).
 ⚠️ فقط `content` پیام‌ها بازپخش می‌شود؛ `sources`/`artifacts` و نتایج ابزارهای turnهای قبلی نه. پس مدل در turn بعد جدول SQL قبلی را «نمی‌بیند» جز آنچه در متن پاسخ قبلی‌اش آمده.
 
-## حلقه (`MAX_STEPS = 4`)
+## حلقه (`MAX_STEPS = 6`)
 ```
-for step in 0..3:
-    tools = None if step == 3 else registry.to_openai_tools()     # آخرین گام بدون ابزار → مجبور به پاسخ
+for step in 0..5:
+    tools = None if step == 5 else registry.to_openai_tools()     # آخرین گام بدون ابزار → مجبور به پاسخ
     stream = llm.stream_chat(messages, tools)
       - content delta → callback("agent_activity",{generating}) (یک‌بار) + callback("delta")
       - tool_calls    → ذخیره
@@ -61,4 +61,4 @@ return AgentTurnResult(full_response, citations, artifacts)
 `SourceCitation{document_id, document_filename, chunk_index, snippet(≤300), score, page?}`.
 
 ## تست
-`tests/features/agent/test_engine.py` با `_ScriptedLLMProvider` (دنباله‌ی ثابت event) و `_AlwaysToolCallLLMProvider` (برای اثبات سقف ۴ گام و حذف ابزارها در گام آخر)؛ `tests/features/chat/test_tool_calling.py`.
+`tests/features/agent/test_engine.py` با `_ScriptedLLMProvider` (دنباله‌ی ثابت event) و `_AlwaysToolCallLLMProvider` (برای اثبات سقف `MAX_STEPS` گام و حذف ابزارها در گام آخر)؛ `tests/features/chat/test_tool_calling.py`.

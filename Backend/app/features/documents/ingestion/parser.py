@@ -129,6 +129,8 @@ def _parse_image_pages(file_path: str) -> list[DocumentPage]:
 
 def _try_render_pdf_page_with_pdftoppm(file_path: str, page_number: int) -> ExtractedImage | None:
     """Renders a PDF page to PNG using pdftoppm if available."""
+    settings = get_settings()
+    dpi = str(getattr(settings, "pdf_render_dpi", 200))
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             out_prefix = Path(tmpdir) / "page"
@@ -140,7 +142,7 @@ def _try_render_pdf_page_with_pdftoppm(file_path: str, page_number: int) -> Extr
                 "-l",
                 str(page_number),
                 "-r",
-                "150",
+                dpi,
                 file_path,
                 str(out_prefix),
             ]
@@ -223,7 +225,7 @@ def _parse_pdf_range_star(args: tuple[str, int, int]) -> tuple[list[DocumentPage
 
 def _parse_pdf_range(file_path: str, first: int, last: int) -> tuple[list[DocumentPage], dict]:
     """Parses pages `first..last` (1-indexed, inclusive); returns the pages and per-phase CPU seconds."""
-    from PIL import Image
+    from PIL import Image, ImageOps
     from pypdf import PdfReader
 
     settings = get_settings()
@@ -237,6 +239,7 @@ def _parse_pdf_range(file_path: str, first: int, last: int) -> tuple[list[Docume
 
     for idx in range(first, last + 1):
         page = reader.pages[idx - 1]
+        rotation = getattr(page, "rotation", 0) or 0
         phase = time.monotonic()
         page_text = (page.extract_text() or "").strip()
         text_layer = assess_text_layer(page_text)
@@ -259,12 +262,22 @@ def _parse_pdf_range(file_path: str, first: int, last: int) -> tuple[list[Docume
         )
         if scan_whole_page:
             text_layer = TEXT_SCAN
+        # A page flagged needs_ocr is re-read whole by the OCR step, which never looks at its embedded images (they are
+        # discarded when the replacement succeeds), so decoding them here is wasted CPU.
+        skip_images = scan_by_page_ocr and text_layer != TEXT_OK
 
         try:
-            for img in ([] if scan_whole_page else page.images):
+            for img in ([] if skip_images else page.images):
                 img_bytes = img.data
                 try:
                     with Image.open(io.BytesIO(img_bytes)) as pil_img:
+                        pil_img = ImageOps.exif_transpose(pil_img)
+                        if rotation in (90, 180, 270):
+                            pil_img = pil_img.rotate(-rotation, expand=True)
+                            buf = io.BytesIO()
+                            pil_img.save(buf, format="PNG")
+                            img_bytes = buf.getvalue()
+
                         w, h = pil_img.size
                         # Filter out tiny icons, spacers, dots, bullets
                         if w >= min_dim and h >= min_dim:

@@ -21,7 +21,8 @@ settings = get_settings()
 # Hard cap on tool-call round-trips per turn: on the final step, tools are
 # omitted from the request entirely, so the model is forced to answer with
 # whatever it has learned so far rather than looping forever.
-MAX_STEPS = 4
+# search -> (reworded search | read the exact pages) -> answer needs room; the last step has no tools, which caps the cost.
+MAX_STEPS = 6
 
 # Caps the attachment metadata injected into the prompt each turn.
 _MAX_LISTED_ATTACHMENTS = 50
@@ -34,7 +35,13 @@ SYSTEM_PROMPT = (
     "rather than guessing or asking the user to look something up themselves. "
     "You can only see two kinds of files: this chat's own uploads and the "
     "project's knowledge base. Never claim to have read a file you did not open "
-    "with a tool, and never describe a file that a tool did not return."
+    "with a tool, and never describe a file that a tool did not return.\n\n"
+    "How to answer questions about documents: ALWAYS start with search_knowledge_base (specific query; keep exact "
+    "numbers, codes and names). Its results already contain the full text of the best-matching pages, so answer from "
+    "them when they suffice. If they do not, search again with a reworded or narrower query; only if a hit is clearly "
+    "the right place but you need more around it, read just those pages with read_document_pages (a few pages, never a "
+    "whole large document). Use read_entire_document only for a short document or when the user explicitly asks for a "
+    "summary/overview of the whole file. Do not read pages 'to be safe' - every page you read costs context."
 )
 
 # Tools whose `agent_activity` status should read "reading_documents" rather

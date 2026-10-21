@@ -17,7 +17,7 @@
 10. **نقش از DB در هر درخواست** (نه از JWT) تا تغییر نقش فوراً اثر کند.
 
 ## چت و agent
-11. **Agent با tool-calling بومی** به‌جای pipeline ثابت retrieve→answer: مدل تصمیم می‌گیرد؛ ابزارها خطای خود را به متن تبدیل می‌کنند تا turn نمیرد؛ `MAX_STEPS=4` و حذف ابزارها در گام آخر برای تضمین پایان؛ dedup فراخوانی‌های یکسان.
+11. **Agent با tool-calling بومی** به‌جای pipeline ثابت retrieve→answer: مدل تصمیم می‌گیرد؛ ابزارها خطای خود را به متن تبدیل می‌کنند تا turn نمیرد؛ `MAX_STEPS=6` (قبلاً ۴؛ جا برای جست‌وجو، جست‌وجوی دوباره یا خواندن صفحه، و پاسخ) و حذف ابزارها در گام آخر برای تضمین پایان؛ dedup فراخوانی‌های یکسان.
 12. **engine مستقل از transport** (callback): همان موتور هم SSE شخصی و هم WS گروهی را سرویس می‌دهد.
 13. **ارسال گروهی از REST، دریافت از WS**: پیام قبل از پخش ذخیره شود؛ subscribe به Redis قبل از accept؛ catch-up با `(created_at, id)`. Redis pub/sub برای multi-instance.
 14. **session جدا در کارهای detached** (SSE و پاسخ گروه): lifecycle وابستگی FastAPI با طول عمر stream سازگار نیست.

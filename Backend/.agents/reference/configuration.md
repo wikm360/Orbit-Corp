@@ -55,12 +55,16 @@ OCR و SQL از همان `LLM_API_BASE_URL`/`LLM_API_KEY` استفاده می‌
 | `OCR_REPLACE_BAD_TEXT_LAYER` | true (صفحه‌ی PDF با لایه‌ی متنی خراب با OCR صفحه جایگزین شود) |
 | `OCR_MAX_REPLACED_PAGES` | 300 (هر صفحه یک فراخوانی vision = هزینه/زمان) |
 | `OCR_CONCURRENCY` | 12 (صفحه‌ی هم‌زمان در یک سند؛ بار واقعی = `WORKER_REPLICAS` × این عدد؛ با 429 کمش کنید) |
+| `PDF_RENDER_DPI` | 200 (رزولوشن رندر صفحات PDF با pdftoppm برای OCR شفاف ارقام و جداول) |
+| `OCR_MAX_IMAGE_DIMENSION` | 2560 (سقف ابعاد تصویر برای حفظ وضوح سلول‌های جدول و اعشار) |
+| `OCR_JPEG_QUALITY` | 95 (کیفیت تصویر بهینه‌شده برای حذف نویز فشرده‌سازی اطراف اعداد) |
 | `EMBEDDING_CONCURRENCY` | 4 (دسته‌ی ۶۴تایی embedding هم‌زمان در یک سند؛ بار واقعی = `WORKER_REPLICAS` × این عدد؛ با 429 کمش کنید) |
 | `OCR_MAX_TOKENS` | 6000 (سقف خروجی هر فراخوانی vision؛ قبلاً ثابت ۲۰۴۸ بود و صفحه‌ی جدول متراکم را (~۲٫۵–۳k توکن) می‌برید. مدل reasoning نگذارید: بودجه را صرف تفکر می‌کند و متنی برنمی‌گرداند) |
 | `PDF_PARSE_WORKERS` | 4 (process برای parse صفحات یک PDF؛ decode تصاویر اسکن CPU-bound است؛ ۱ = تک‌process؛ فقط برای PDFهای ≥۸ صفحه؛ بار واقعی CPU = `WORKER_REPLICAS` × این عدد) |
 | `INGESTION_JOB_TIMEOUT_SECONDS` | 3600 (timeout job RQ برای یک سند) |
 | `CHUNK_SIZE_TOKENS` / `CHUNK_OVERLAP_TOKENS` | 500 / 50 |
 | `RETRIEVAL_TOP_K` / `RETRIEVAL_SCORE_THRESHOLD` | 5 / 0.3 (آستانه‌ی cosine؛ chunk پیداشده‌ی واژگانی از آن معاف است) |
+| `SEARCH_PAGE_EXPANSION_MAX_TOKENS` | 6000 (بودجه‌ی متن صفحه‌ی کامل در هر `search_knowledge_base`؛ ۰ = گسترش خاموش و فقط chunk) |
 | `RETRIEVAL_HYBRID_ENABLED` | true (false = فقط برداری، مثل قبل) |
 | `RETRIEVAL_CANDIDATES` | 30 (کاندیدا از هر رتبه‌بندی پیش از ادغام) |
 | `RETRIEVAL_RRF_K` | 60 |

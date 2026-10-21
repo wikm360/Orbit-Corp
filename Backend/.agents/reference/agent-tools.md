@@ -6,7 +6,7 @@
 
 | ابزار | فایل | پارامترها | کار | scope |
 |---|---|---|---|---|
-| `search_knowledge_base` | document_tools | `query` | **hybrid** (برداری + full-text + trigram، ادغام RRF؛ ← flows/document-ingestion) و top_k (۵)؛ chunkهای با cosine < ۰٫۳ که واژگانی هم پیدا نشده‌اند حذف می‌شوند؛ اگر چیزی نماند «No relevant results found in the knowledge base.»؛ وگرنه متن `[Source i: filename (صفحه N)]\n…` + `citations` | اسناد گفتگو + پروژه‌ی scope |
+| `search_knowledge_base` | document_tools | `query`, `expand?` (`page` پیش‌فرض / `chunk`) | **hybrid** (برداری + full-text + trigram، ادغام RRF؛ ← flows/document-ingestion) و top_k (۵)؛ chunkهای با cosine < ۰٫۳ که واژگانی هم پیدا نشده‌اند حذف می‌شوند؛ اگر چیزی نماند «No relevant results found in the knowledge base.»؛ وگرنه متن `[Source i: filename (صفحه N) - full page]\n…` + `citations`. **گسترش به صفحه (small-to-big)**: با `expand=page` هر hit با متن **کامل صفحه‌اش** (از `.reconstructed.json`) برمی‌گردد، یک ورودی به‌ازای هر صفحه (hit بهتر اول)، تا بودجه‌ی `SEARCH_PAGE_EXPANSION_MAX_TOKENS` (۶۰۰۰ توکن؛ صفحه‌ی آخری که جا نشود برش می‌خورد)؛ hitهای بعد از بودجه، یا بدون شماره‌ی صفحه / بدون فایل بازسازی‌شده، همان متن chunk را می‌دهند. `citations` همچنان یکی به‌ازای هر chunk است | اسناد گفتگو + پروژه‌ی scope |
 | `get_document_info` | document_tools | `document_id` | metadata بدون خواندن محتوا: `{document_id, filename, content_type, status, scope(project|conversation), total_pages, chunk_count, estimated_tokens, fits_read_entire_document, has_images, uploaded_at}`. عمداً `uploaded_by` ندارد. فقط برای سند READY (فیلتر دسترسی فقط READY می‌دهد) | accessible |
 | `read_document_pages` | document_tools | `document_id, start_page, end_page` | متن صفحات (۱-پایه، inclusive)؛ `start_page≥1` و `end_page≥start_page` وگرنه BadRequest | accessible |
 | `read_entire_document` | document_tools | `document_id` | کل متن؛ بیش از ۳۰٬۰۰۰ توکن → JSON خطای `DOCUMENT_TOO_LARGE` همراه `total_pages`؛ بهتر است مدل قبلش `get_document_info` را بزند | accessible |
@@ -23,4 +23,5 @@
 - در `search_knowledge_base` شناسه‌ها/شماره‌بندها/نام‌های دقیق را باید در `query` نگه داشت (جست‌وجوی واژگانی آن‌ها را عیناً می‌یابد؛ توضیح ابزار به مدل همین را می‌گوید).
 - `search_knowledge_base` تنها ابزاری است که `citations` تولید می‌کند (که در `message.sources` و `done.sources` می‌آیند)؛ `snippet` = ۳۰۰ نویسه‌ی اول chunk، `score` گرد ۴ رقم.
 - نتیجه‌ی همه‌ی ابزارها متن است؛ ابزار مالی علاوه بر آن artifact برمی‌گرداند.
+- توضیح ابزارها عمداً مدل را از جست‌وجو شروع می‌دهد: `get_document_info` دیگر «قبل از هر خواندن» توصیه نشده و `read_document_pages` / `read_entire_document` صریحاً «فقط صفحه‌های لازم / فقط سند کوتاه» توصیف شده‌اند. ⚠️ `read_document_pages` هنوز سقف تعداد صفحه/توکن ندارد (بازه‌ی بزرگ = context بزرگ) — ← known-issues.
 - ترتیب ابزارها در لیست ارسالی به مدل = ترتیب ساخت در `build_default_registry` (سند، پروژه، حافظه، سپس مالی).

@@ -116,6 +116,12 @@ class Settings(BaseSettings):
     ocr_concurrency: int = 12
     # Processes used to parse the pages of one PDF (decoding scanned images is CPU-bound). 1 = single process.
     pdf_parse_workers: int = 4
+    # DPI used by pdftoppm when rendering PDF pages for OCR (200 DPI ensures crisp small numbers in tables).
+    pdf_render_dpi: int = 200
+    # Max dimension (width or height) to resize images before sending to Vision OCR (2560 preserves fine tabular details).
+    ocr_max_image_dimension: int = 2560
+    # JPEG quality for Vision OCR image optimization (95 prevents DCT quantization artifacts around small numbers).
+    ocr_jpeg_quality: int = 95
     # Output budget of one vision-OCR call. A dense table page needs ~2.5-3k tokens, so the old 2048 truncated it.
     # Keep it generous but use a non-reasoning model: reasoning models spend this budget on thinking and return no text.
     ocr_max_tokens: int = 6000
@@ -148,6 +154,9 @@ class Settings(BaseSettings):
     # Retrieval
     retrieval_top_k: int = 5
     retrieval_score_threshold: float = 0.3
+    # search_knowledge_base widens the top chunks to their full pages ("small-to-big"); this caps the page text returned per
+    # search. Hits beyond the budget fall back to their chunk text. 0 disables the widening.
+    search_page_expansion_max_tokens: int = 6000
     # Hybrid document retrieval: vector + Postgres full-text (+ trigram for short queries) fused with Reciprocal Rank Fusion.
     # Off = the previous vector-only behaviour.
     retrieval_hybrid_enabled: bool = True

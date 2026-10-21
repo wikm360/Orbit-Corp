@@ -120,3 +120,5 @@
 
 ## ۶. اختلاف‌های مستند قدیمی (`docs/BACKEND.md` حذف‌شده)
 برای مرجع تاریخی: آن سند agent/tools، memory، db_connector، OCR، batch/retry، artifacts و migrationهای ۰۳–۰۷ را نداشت؛ می‌گفت «بدون OCR» و «embedding ۱۰۲۴ بعد»؛ می‌گفت CI backend را migrate/rebuild می‌کند (کد فعلی فقط فرانت را deploy می‌کند)؛ می‌گفت بازیابی در `chat.service` انجام می‌شود (اکنون ابزار `search_knowledge_base` است). همه‌ی این موارد در `.agents` اصلاح شده‌اند.
+
+- `read_document_pages` بدون سقف تعداد صفحه/توکن است: مدل می‌تواند بازه‌ی بزرگ (مثلاً ۱–۱۴۴) بخواهد و context پر شود (فقط `read_entire_document` سقف ۳۰k توکن دارد). پرامپت/توضیح ابزارها مدل را از آن دور می‌کنند ولی سقف سخت نیست؛ پیشنهاد: سقف صفحه (~۸) و توکن (~۱۲k) + بودجه‌ی کل نتیجه‌ی ابزارها در هر turn.

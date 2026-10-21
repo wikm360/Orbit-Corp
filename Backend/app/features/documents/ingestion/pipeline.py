@@ -13,7 +13,7 @@ from app.core.database import async_session_factory
 from app.features.chat.ws import publish_event
 from app.features.documents.ingestion.chunker import PageChunk, chunk_document_pages, chunk_text
 from app.features.documents.ingestion.embedder import embed_chunks
-from app.features.documents.ingestion.ocr import extract_text_from_image
+from app.features.documents.ingestion.ocr import extract_text_from_image, ocr_client_session
 from app.features.documents.ingestion.ocr_cache import get_cached_ocr, ocr_cache_key, put_cached_ocr, vision_model_name
 from app.features.documents.ingestion.parser import DocumentPage, parse_document_pages, render_pdf_page
 from app.features.documents.ingestion.reconstructor import save_reconstructed_document
@@ -165,7 +165,8 @@ class OCRStep(IngestionStep):
                 vision_model_name(),
             )
             started = time.monotonic()
-            await asyncio.gather(*jobs)
+            async with ocr_client_session():
+                await asyncio.gather(*jobs)
             logger.info(
                 "OCR for document %s done in %.1fs: %d vision calls, %d cache hits, %d shared within the document",
                 context.document_id,

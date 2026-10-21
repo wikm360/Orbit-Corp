@@ -56,6 +56,19 @@ def test_optimize_image_for_ocr(tmp_path):
         assert pil_res.mode == "RGB"
 
 
+def test_optimize_image_for_ocr_defaults_and_quality():
+    img = Image.new("RGB", (3000, 1500), color=(100, 150, 200))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    raw_bytes = buf.getvalue()
+
+    optimized, mime_type = optimize_image_for_ocr(raw_bytes)
+    assert mime_type == "jpeg"
+    with Image.open(io.BytesIO(optimized)) as pil_res:
+        assert max(pil_res.size) <= 2560
+        assert pil_res.mode == "RGB"
+
+
 @pytest.mark.asyncio
 async def test_parse_image_file_as_document(tmp_path):
     png_path = _create_sample_png(tmp_path, width=200, height=150)
@@ -265,3 +278,38 @@ def test_small_images_do_not_make_a_scan_page(tmp_path):
     pages = parse_document_pages(_scan_pdf(tmp_path, pages=1, side=200))  # icon-sized, not a scanned page
 
     assert not pages[0].needs_ocr
+
+
+async def test_ocr_client_session_shares_one_client_between_calls():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from app.features.documents.ingestion import ocr as ocr_module
+
+    created = []
+
+    def make_client(**kwargs):
+        client = MagicMock()
+        client.close = AsyncMock()
+        client.chat.completions.create = AsyncMock(
+            return_value=SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="متن"))])
+        )
+        created.append(kwargs)
+        return client
+
+    png = b"\x89PNG" + b"x" * 500
+    with (
+        patch.object(ocr_module, "AsyncOpenAI", side_effect=make_client),
+        patch.object(ocr_module, "get_settings") as settings,
+    ):
+        settings.return_value.ocr_enabled = True
+        settings.return_value.llm_api_key = "k"
+        settings.return_value.llm_api_base_url = "http://x/v1"
+        settings.return_value.llm_vision_model = "m"
+        settings.return_value.ocr_max_tokens = 100
+        async with ocr_module.ocr_client_session():
+            assert await ocr_module.extract_text_from_image(png, "png") == "متن"
+            assert await ocr_module.extract_text_from_image(png + b"y", "png") == "متن"
+
+    assert len(created) == 1  # one client for both reads
+    assert created[0]["timeout"].connect >= 30  # not the SDK's 5s default

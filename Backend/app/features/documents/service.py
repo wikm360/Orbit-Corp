@@ -325,6 +325,50 @@ async def delete_document(db: AsyncSession, document_id: uuid.UUID) -> None:
 # ---------------------------------------------------------------------------
 
 
+def truncate_to_tokens(text: str, max_tokens: int) -> str:
+    """`text` cut to at most `max_tokens` tokens (same tokenizer/estimate as `_count_tokens`)."""
+    if max_tokens <= 0:
+        return ""
+    if _count_tokens(text) <= max_tokens:
+        return text
+    if _token_encoding is not None:
+        try:
+            return _token_encoding.decode(_token_encoding.encode(text)[:max_tokens])
+        except Exception:
+            pass
+    return " ".join(text.split()[: int(max_tokens * 0.75)])
+
+
+async def get_page_texts(
+    db: AsyncSession,
+    pages: Sequence[tuple[uuid.UUID, int]],
+    *,
+    project_id: uuid.UUID | None,
+    conversation_id: uuid.UUID,
+) -> dict[tuple[uuid.UUID, int], str]:
+    """Full text of the given `(document_id, page)` pairs, read from each document's reconstructed JSON.
+
+    Used to widen search hits from a chunk to its whole page. Scope is enforced here too (same filter as every
+    document query), so a pair outside this conversation's visible documents is simply absent from the result, as
+    is any page without a reconstructed file (the caller then keeps the chunk text)."""
+    document_ids = {doc_id for doc_id, _ in pages}
+    if not document_ids:
+        return {}
+    result = await db.execute(
+        select(Document.id, Document.file_path).where(
+            Document.id.in_(document_ids), accessible_documents_filter(project_id, conversation_id)
+        )
+    )
+    texts: dict[tuple[uuid.UUID, int], str] = {}
+    for doc_id, file_path in result.all():
+        recon = load_reconstructed_document(file_path)
+        by_page = {p.get("page"): p.get("text", "") for p in (recon or {}).get("pages", [])}
+        for wanted_doc, page in pages:
+            if wanted_doc == doc_id and by_page.get(page):
+                texts[(doc_id, page)] = by_page[page]
+    return texts
+
+
 # Above this many tokens `read_entire_document` refuses and the agent must read page ranges instead.
 FULL_DOCUMENT_MAX_TOKENS = 30_000
 
