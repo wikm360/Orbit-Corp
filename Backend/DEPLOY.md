@@ -73,7 +73,7 @@ EMBEDDING_SEND_DIMENSIONS=true       # با EMBEDDING_DIMENSIONS=1536
 RETRIEVAL_SCORE_THRESHOLD=0.4
 RETRIEVAL_RERANK_ENABLED=true
 LLM_RERANK_MODEL=gpt-4.1-mini
-LLM_VISION_MODEL=gpt-4.1-mini        # OCR سریع‌تر؛ OCR_CONCURRENCY پیش‌فرض ۱۲
+LLM_VISION_MODEL=gemini-3.5-flash-lite  # OCR: دقیق‌ترین و سریع‌ترین در اندازه‌گیری روی اسکن‌های فارسی (ops/retrieval-evaluation.md)؛ مدل reasoning نگذارید؛ OCR_CONCURRENCY پیش‌فرض ۱۲
 ```
 مدل embedding را **قبل از اولین ingest** تعیین کنید؛ بعداً تغییرش نیاز به re-embed دارد (بخش ۶.۴).
 

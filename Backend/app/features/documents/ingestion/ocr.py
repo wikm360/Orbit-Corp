@@ -67,7 +67,8 @@ async def extract_text_from_image(image_bytes: bytes, image_format: str = "png")
         return ""
 
     try:
-        optimized_bytes, mime_type = optimize_image_for_ocr(image_bytes)
+        # Pillow resize/encode is CPU-bound: off the event loop so other pages' requests aren't delayed behind it.
+        optimized_bytes, mime_type = await asyncio.to_thread(optimize_image_for_ocr, image_bytes)
         b64_img = base64.b64encode(optimized_bytes).decode("utf-8")
 
         vision_model = getattr(settings, "llm_vision_model", None) or getattr(settings, "llm_model", "gpt-4o")
@@ -93,7 +94,7 @@ async def extract_text_from_image(image_bytes: bytes, image_format: str = "png")
                             ],
                         }
                     ],
-                    max_tokens=2048,
+                    max_tokens=settings.ocr_max_tokens,
                 )
                 break
             except Exception as exc:  # transient gateway/rate-limit errors are common during bulk ingestion

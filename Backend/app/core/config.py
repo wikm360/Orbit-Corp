@@ -116,6 +116,9 @@ class Settings(BaseSettings):
     ocr_concurrency: int = 12
     # Processes used to parse the pages of one PDF (decoding scanned images is CPU-bound). 1 = single process.
     pdf_parse_workers: int = 4
+    # Output budget of one vision-OCR call. A dense table page needs ~2.5-3k tokens, so the old 2048 truncated it.
+    # Keep it generous but use a non-reasoning model: reasoning models spend this budget on thinking and return no text.
+    ocr_max_tokens: int = 6000
     # RQ job timeout for one document (OCR of a long scanned PDF is slow).
     ingestion_job_timeout_seconds: int = 3600
 

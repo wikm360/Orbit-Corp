@@ -42,7 +42,7 @@ Engine: `pool_pre_ping=True`, `pool_recycle=1800`, `echo=settings.debug`.
 | `LLM_API_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` | OpenAI / "" / gpt-4o | مدل چت agent (باید tool-calling و stream داشته باشد) |
 | `LLM_DISABLE_THINKING` | false | `extra_body.enable_thinking=false` برای مدل‌های reasoning (Qwen3…)؛ برای OpenAI خاموش بماند |
 | `LLM_STRIP_CONTENT_TAGS` | [] | نام تگ‌هایی (بدون <>) که بلوکشان از stream حذف شود (`thought`) |
-| `LLM_VISION_MODEL` | None→`LLM_MODEL` | مدل OCR تصاویر و صفحات. پیشنهاد: `gpt-4.1-mini` (۲٫۴× سریع‌تر از مدل چت فعلی با همان دقت؛ جدول بنچمارک در ops/retrieval-evaluation.md) |
+| `LLM_VISION_MODEL` | None→`LLM_MODEL` | مدل OCR تصاویر و صفحات. پیشنهاد: `gemini-3.5-flash-lite` (روی کثیف‌ترین اسکن شرکت ۵۷/۵۸ عدد درست در ~۱۲ثانیه در برابر ۲۳/۵۸ برای gpt-4.1-mini؛ جدول در ops/retrieval-evaluation.md). مدل reasoning نگذارید |
 | `LLM_SQL_MODEL` | None→`LLM_MODEL` | مدل نوشتن SQL |
 OCR و SQL از همان `LLM_API_BASE_URL`/`LLM_API_KEY` استفاده می‌کنند (provider جدا برای هر کدام وجود ندارد).
 
@@ -56,6 +56,7 @@ OCR و SQL از همان `LLM_API_BASE_URL`/`LLM_API_KEY` استفاده می‌
 | `OCR_MAX_REPLACED_PAGES` | 300 (هر صفحه یک فراخوانی vision = هزینه/زمان) |
 | `OCR_CONCURRENCY` | 12 (صفحه‌ی هم‌زمان در یک سند؛ بار واقعی = `WORKER_REPLICAS` × این عدد؛ با 429 کمش کنید) |
 | `EMBEDDING_CONCURRENCY` | 4 (دسته‌ی ۶۴تایی embedding هم‌زمان در یک سند؛ بار واقعی = `WORKER_REPLICAS` × این عدد؛ با 429 کمش کنید) |
+| `OCR_MAX_TOKENS` | 6000 (سقف خروجی هر فراخوانی vision؛ قبلاً ثابت ۲۰۴۸ بود و صفحه‌ی جدول متراکم را (~۲٫۵–۳k توکن) می‌برید. مدل reasoning نگذارید: بودجه را صرف تفکر می‌کند و متنی برنمی‌گرداند) |
 | `PDF_PARSE_WORKERS` | 4 (process برای parse صفحات یک PDF؛ decode تصاویر اسکن CPU-bound است؛ ۱ = تک‌process؛ فقط برای PDFهای ≥۸ صفحه؛ بار واقعی CPU = `WORKER_REPLICAS` × این عدد) |
 | `INGESTION_JOB_TIMEOUT_SECONDS` | 3600 (timeout job RQ برای یک سند) |
 | `CHUNK_SIZE_TOKENS` / `CHUNK_OVERLAP_TOKENS` | 500 / 50 |
