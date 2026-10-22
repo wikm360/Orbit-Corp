@@ -8,7 +8,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.features.documents.ingestion.ocr import SYSTEM_OCR_PROMPT
+from app.features.documents.ingestion.ocr import SYSTEM_OCR_PROMPT, preprocess_signature
 from app.features.documents.models import OcrCache
 
 logger = logging.getLogger(__name__)
@@ -20,8 +20,10 @@ def vision_model_name() -> str:
 
 
 def ocr_cache_key(image_bytes: bytes) -> str:
-    """sha256(image) + a short hash of (model, prompt): switching the OCR model or prompt must not serve stale text."""
-    reader = hashlib.sha256(f"{vision_model_name()}\n{SYSTEM_OCR_PROMPT}".encode()).hexdigest()[:16]
+    """sha256(image) + a short hash of (model, prompt, pre-processing): changing any of them must not serve stale text."""
+    reader = hashlib.sha256(
+        f"{vision_model_name()}\n{SYSTEM_OCR_PROMPT}\n{preprocess_signature()}".encode()
+    ).hexdigest()[:16]
     return f"{hashlib.sha256(image_bytes).hexdigest()}:{reader}"
 
 

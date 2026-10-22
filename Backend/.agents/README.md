@@ -33,6 +33,7 @@
 | پرسش مالی از دیتابیس راهکاران | [flows/accounting-query.md](flows/accounting-query.md) |
 | آپدیت داده‌ی راهکاران، ساخت view/hint | [flows/accounting-data-refresh.md](flows/accounting-data-refresh.md) + [guides/extend-accounting-layer.md](guides/extend-accounting-layer.md) |
 | کیفیت بازیابی اسناد، نتایج ارزیابی، اجرای دوباره‌ی ارزیابی | [ops/retrieval-evaluation.md](ops/retrieval-evaluation.md) + `../tools/retrieval_eval/` |
+| پیش‌پردازش تصویر OCR (جهت، صفحه‌ی خالی)، مقایسه‌ی مدل‌های vision، اجرای دوباره‌ی ارزیابی | [ops/ocr-preprocessing-evaluation.md](ops/ocr-preprocessing-evaluation.md) + `../tools/ocr_eval/` |
 | لیست endpointها، رویدادهای SSE/WS، شکل artifact | [reference/api-endpoints.md](reference/api-endpoints.md) |
 | متغیرهای env | [reference/configuration.md](reference/configuration.md) |
 | نقشه‌ی فایل‌به‌فایل کد | [reference/modules.md](reference/modules.md) |

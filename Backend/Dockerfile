@@ -9,6 +9,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     poppler-utils \
+    tesseract-ocr \
+    tesseract-ocr-osd \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

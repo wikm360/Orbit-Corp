@@ -57,6 +57,14 @@ OCR و SQL از همان `LLM_API_BASE_URL`/`LLM_API_KEY` استفاده می‌
 | `OCR_CONCURRENCY` | 12 (صفحه‌ی هم‌زمان در یک سند؛ بار واقعی = `WORKER_REPLICAS` × این عدد؛ با 429 کمش کنید) |
 | `PDF_RENDER_DPI` | 200 (رزولوشن رندر صفحات PDF با pdftoppm برای OCR شفاف ارقام و جداول) |
 | `OCR_MAX_IMAGE_DIMENSION` | 2560 (سقف ابعاد تصویر برای حفظ وضوح سلول‌های جدول و اعشار) |
+| `OCR_SKIP_BLANK_IMAGES` | true (تصویر/صفحه‌ی خالی بدون فراخوانی vision رد می‌شود) |
+| `OCR_AUTO_ORIENT` | true (کلید کلی راست‌کردن صفحه‌ی چرخیده قبل از OCR) |
+| `OCR_ORIENT_METHOD` | `hybrid` (پیش‌فرض) \| `osd` \| `model`. `osd`: فقط Tesseract OSD (محلی، بدون فراخوانی API)؛ `model`: probe مدل vision (۱ فراخوانی ارزان برای هر تصویر بزرگ، +۳ تأیید برای صفحه‌ی چرخیده)؛ `hybrid`: اول OSD، و مدل فقط چرخش پیشنهادی OSD را تأیید می‌کند یا وقتی OSD مطمئن نیست تصمیم می‌گیرد. OSD به بسته‌های `tesseract-ocr` و `tesseract-ocr-osd` نیاز دارد (در Dockerfile هست)؛ نبودنشان = یک warning در لاگ و برگشت به مدل |
+| `OCR_ORIENT_OSD_MIN_CONFIDENCE` | 2.0 (پاسخ OSD با اطمینان کمتر «نامطمئن» حساب می‌شود؛ پاسخ‌های درست در اندازه‌گیری ≥۲٫۲ بودند) |
+| `OCR_OSD_CONCURRENCY` | 4 (حداکثر پردازش Tesseract هم‌زمان در هر process worker؛ هر کدام تک‌نخی و ~۰٫۶ثانیه CPU) |
+| `OCR_ORIENT_MIN_DIMENSION` | 600 (px؛ تصویر کوچک‌تر—لوگو/مهر—هرگز بررسی جهت نمی‌شود) |
+| `OCR_DESKEW` | false (صاف‌کردن کجی؛ اندازه‌گیری سود پایدار نشان نداد) |
+| `OCR_CROP_MARGINS` | false (برش حاشیه‌ی خالی؛ همان) |
 | `OCR_JPEG_QUALITY` | 95 (کیفیت تصویر بهینه‌شده برای حذف نویز فشرده‌سازی اطراف اعداد) |
 | `EMBEDDING_CONCURRENCY` | 4 (دسته‌ی ۶۴تایی embedding هم‌زمان در یک سند؛ بار واقعی = `WORKER_REPLICAS` × این عدد؛ با 429 کمش کنید) |
 | `OCR_MAX_TOKENS` | 6000 (سقف خروجی هر فراخوانی vision؛ قبلاً ثابت ۲۰۴۸ بود و صفحه‌ی جدول متراکم را (~۲٫۵–۳k توکن) می‌برید. مدل reasoning نگذارید: بودجه را صرف تفکر می‌کند و متنی برنمی‌گرداند) |

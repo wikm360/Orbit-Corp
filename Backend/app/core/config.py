@@ -1,6 +1,6 @@
 import json
 from functools import lru_cache
-from typing import Annotated, Union
+from typing import Annotated, Literal, Union
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -106,6 +106,21 @@ class Settings(BaseSettings):
     # Ingestion OCR
     ocr_enabled: bool = True
     ocr_max_images_per_doc: int = 50
+    # Image clean-up before the vision call (see ingestion/image_preprocess.py, image_orientation.py).
+    # Blank images are not sent at all.
+    ocr_skip_blank_images: bool = True
+    # Rotate sideways/upside-down scans upright before OCR. Measured: Persian pages rotated 90/180/270 lose 20-80% of
+    # their key values with the vision model. OCR_ORIENT_METHOD: `osd` = Tesseract OSD only (local, no API call);
+    # `model` = one cheap probe per page-sized image (+3 confirmations when it says "rotated"); `hybrid` = OSD first, the
+    # model confirms a proposed rotation and decides when OSD is unsure. OSD needs the `tesseract-ocr` + `tesseract-ocr-osd`
+    # packages; without them hybrid/osd silently use the model.
+    ocr_auto_orient: bool = True
+    ocr_orient_method: Literal["model", "osd", "hybrid"] = "hybrid"
+    ocr_orient_osd_min_confidence: float = 2.0  # OSD answers below this are treated as "unsure" (correct answers were >=2.2)
+    ocr_osd_concurrency: int = 4  # Tesseract processes running at once per worker process (each is single-threaded)
+    ocr_orient_min_dimension: int = 600  # smaller images (logos, stamps, icons) are never checked
+    ocr_deskew: bool = False
+    ocr_crop_margins: bool = False
     ocr_min_image_dimension: int = 60
     # PDF pages whose text layer is unusable (visual-order Persian presentation forms, or symbol garbage) are rendered and
     # OCR'd instead of trusting the layer; capped per document because it is one vision call per page.

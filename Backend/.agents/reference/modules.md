@@ -40,7 +40,9 @@
 | `router.py` | endpointهای پروژه‌ای (list/upload/batch/retry/delete) |
 | `service.py` (531 خط) | آپلود و dedup، enqueue، batch، retry، delete؛ و خواندن ساخت‌یافته برای agent (info/page-range/full) |
 | `ingestion/parser.py` | `parse_document_pages` و parserهای هر فرمت، `SUPPORTED_EXTENSIONS`, `DocumentPage`, `ExtractedImage` |
-| `ingestion/ocr.py` | `extract_text_from_image`, `optimize_image_for_ocr`, `SYSTEM_OCR_PROMPT` |
+| `ingestion/ocr.py` | `extract_text_from_image`, `prepare_image_for_ocr`, `optimize_image_for_ocr`, `preprocess_signature`, `SYSTEM_OCR_PROMPT` |
+| `ingestion/image_preprocess.py` | توابع Pillow/numpy: `is_blank`، `estimate_skew`/`deskew`، `crop_margins`، `enhance_contrast`، `normalize_background`، `split_vertical` (فقط blank در pipeline فعال است؛ بقیه برای ارزیابی/خاموش) |
+| `ingestion/image_orientation.py` | `choose_rotation` (روش‌های `osd`/`model`/`hybrid`)، `detect_rotation_osd` (Tesseract)، `find_upright_rotation` (probe مدل + تأیید) |
 | `ingestion/reconstructor.py` | ذخیره/بارگذاری/پاکسازی `.reconstructed.txt/json` |
 | `ingestion/chunker.py` | `chunk_text`, `chunk_document_pages`, `PageChunk` |
 | `ingestion/embedder.py` | `embed_chunks` (دسته‌های ۶۴) |
