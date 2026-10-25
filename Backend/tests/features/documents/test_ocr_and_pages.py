@@ -57,7 +57,7 @@ def test_optimize_image_for_ocr(tmp_path):
 
 
 def test_optimize_image_for_ocr_defaults_and_quality():
-    img = Image.new("RGB", (3000, 1500), color=(100, 150, 200))
+    img = Image.new("RGB", (4000, 2000), color=(100, 150, 200))
     buf = io.BytesIO()
     img.save(buf, format="JPEG")
     raw_bytes = buf.getvalue()
@@ -65,7 +65,7 @@ def test_optimize_image_for_ocr_defaults_and_quality():
     optimized, mime_type = optimize_image_for_ocr(raw_bytes)
     assert mime_type == "jpeg"
     with Image.open(io.BytesIO(optimized)) as pil_res:
-        assert max(pil_res.size) <= 2560
+        assert max(pil_res.size) <= get_settings().ocr_max_image_dimension
         assert pil_res.mode == "RGB"
 
 

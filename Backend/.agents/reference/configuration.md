@@ -55,8 +55,10 @@ OCR و SQL از همان `LLM_API_BASE_URL`/`LLM_API_KEY` استفاده می‌
 | `OCR_REPLACE_BAD_TEXT_LAYER` | true (صفحه‌ی PDF با لایه‌ی متنی خراب با OCR صفحه جایگزین شود) |
 | `OCR_MAX_REPLACED_PAGES` | 300 (هر صفحه یک فراخوانی vision = هزینه/زمان) |
 | `OCR_CONCURRENCY` | 12 (صفحه‌ی هم‌زمان در یک سند؛ بار واقعی = `WORKER_REPLICAS` × این عدد؛ با 429 کمش کنید) |
-| `PDF_RENDER_DPI` | 200 (رزولوشن رندر صفحات PDF با pdftoppm برای OCR شفاف ارقام و جداول) |
-| `OCR_MAX_IMAGE_DIMENSION` | 2560 (سقف ابعاد تصویر برای حفظ وضوح سلول‌های جدول و اعشار) |
+| `PDF_RENDER_DPI` | 300 (رزولوشن رندر صفحات PDF با pdftoppm برای OCR فوق‌دقیق ارقام، دندانه‌ها و جداول فشرده) |
+| `OCR_MAX_IMAGE_DIMENSION` | 3500 (سقف ابعاد تصویر برای حفظ وضوح سلول‌های جدول و اعشار) |
+| `OCR_TWO_STAGE_ENABLED` | true (تشخیص دومرحله‌ای محدوده جداول با Mistral OCR قبل از استخراج دقیق با Gemini) |
+| `MISTRAL_API_KEY` | "" (کلید API برای مدل `mistral-ocr-latest`؛ alias: `mistral_key`) |
 | `OCR_CONTENT_FILTER_RETRIES` | 2 (تعداد retry بعد از پاسخ `content_filter` خالی مدل vision؛ هر retry با تصویر و prompt کمی متفاوت. خطای عادی شبکه جدا و ۳ بار است) |
 | `OCR_SKIP_BLANK_IMAGES` | true (تصویر/صفحه‌ی خالی بدون فراخوانی vision رد می‌شود) |
 | `OCR_AUTO_ORIENT` | true (کلید کلی راست‌کردن صفحه‌ی چرخیده قبل از OCR) |

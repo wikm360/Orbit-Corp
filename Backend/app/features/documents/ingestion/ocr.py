@@ -3,6 +3,7 @@ import base64
 import contextlib
 import io
 import logging
+import re
 from collections.abc import AsyncIterator
 from contextvars import ContextVar
 
@@ -19,6 +20,7 @@ from app.features.documents.ingestion.image_orientation import (
     parse_probe_answer,
     rotate_clockwise,
 )
+from app.features.documents.ingestion.layout_helper import crop_image_box, detect_tables_with_mistral
 
 logger = logging.getLogger(__name__)
 
@@ -50,16 +52,24 @@ async def ocr_client_session() -> AsyncIterator[None]:
         await client.close()
 
 SYSTEM_OCR_PROMPT = (
-    "شما یک موتور فوق‌العاده دقیق OCR و تحلیل تصویر اسناد، نقشه‌ها و صورتجلسات مهندسی و مالی هستید.\n"
-    "وظیفه شما رونویسی و استخراج دقیق، کلمه به کلمه و رقم به رقم تمام متون، ارقام، ممیزها، جداول، مهرها و دست‌نوشته‌های موجود در این تصویر است.\n\n"
-    "دستورالعمل‌های حیاتی:\n"
-    "۱. جهت تصویر (Orientation): اگر تصویر به صورت چرخیده (۹۰، ۱۸۰ یا ۲۷۰ درجه) است، ابتدا جهت منطقی خواندن را تراز کنید و متون را بر اساس چینش طبیعی سطرها و ستون‌ها بخوانید.\n"
-    "۲. دقت ارقام و اعداد (بسیار مهم): تمام اعداد، ارقام اعشاری (با ممیز یا نقطه اعشار)، صفرهای بعد از اعشار، واحدها، علامت‌های ریاضی و کیلومتراژها (مانند 2+100) را با دقت ۱۰۰٪ و بدون رند کردن یا تغییر رونویسی کنید. هرگز رقمی را حدس نزنید یا کوتاه نکنید.\n"
-    "۳. جدول‌ها و صورت‌جلسات فنی/مالی: ساختار جداول را دقیقاً به جدول Markdown تبدیل کنید. ستون‌ها را به درستی تفکیک کنید. در سطرهای «مجموع»، «جمع کل» یا خلاصه کارکرد، ارقام واقعی سطر مجموع را بنویسید و اکیداً از کپی کردن ارقام سطرهای قبلی در سطر مجموع خودداری کنید.\n"
-    "۴. مهرها، امضاها و سربرگ‌ها: تمام متون داخل مهرها (مانند نام شرکت، شماره ثبت، شماره کارگاه یا قطعه)، شماره و تاریخ قراردادها و شماره صورت‌جلسات را به طور کامل و جداگانه در متن بیاورید. از تولید اطلاعات فرضی و ساختگی (مانند شماره تلفن یا جملات تکراری ناموجود) اکیداً خودداری کنید.\n"
-    "۵. اگر تصویر نمودار، فلوچارت یا دیاگرام است، علاوه بر متون آن، ساختار، ارقام و روابط آن را به دقت تشریح کنید.\n"
-    "۶. اگر تصویر هیچ متن یا اطلاعات معناداری ندارد (فقط حاشیه، نویز یا خط ساده)، یک رشته خالی برگردانید.\n"
-    "۷. خروجی باید فقط و فقط محتوای استخراج‌شده باشد، بدون هرگونه پیش‌گفتار، سلام، توضیح اضافی یا نتیجه‌گیری."
+    "شما یک موتور فوق‌دقیق OCR برای اسناد فنی، عمرانی و مهندسی هستید.\n\n"
+    "قوانین استخراج:\n"
+    "۱. در صورت وجود جدول، خروجی فقط و فقط ساختار جدول استاندارد Markdown باشد (بدون تگ کد، بدون مقدمه و بدون متن اضافی).\n"
+    "۲. در خواندن ارقام فارسی (به‌ویژه دندانه‌های ۲، ۳، ۴ و تفاوت ۶ با ۴) نهایت دقت را داشته باشید و هرگز دندانه‌ها را حدس نزنید.\n"
+    "۳. ستون‌های مختصات (Easting و Northing)، ارتفاع (Height) و ضریب مقیاس (Scale Factor) باید رقم‌به‌رقم و با حفظ تمام صفرهای اعشار استخراج شوند.\n"
+    "۴. تمامی ردیف‌ها را از ابتدا تا انتها بدون خلاصه کردن (...) استخراج کنید.\n"
+    "۵. تمام متون سربرگ، مهر، امضا یا توضیحات خارج از جدول را نیز با دقت کامل و بدون دخل و تصرف رونویسی کنید.\n"
+    "۶. اگر تصویر هیچ متن یا اطلاعات معناداری ندارد، یک رشته خالی برگردانید."
+)
+
+SYSTEM_TABLE_OCR_PROMPT = (
+    "شما یک موتور فوق‌دقیق OCR برای اسناد فنی، عمرانی و مهندسی هستید.\n\n"
+    "دستورالعمل‌های حیاتی استخراج:\n"
+    "۱. سربرگ و اطلاعات اولیه: اگر در بالای تصویر متونی مانند عنوان طرح، عنوان پروژه، نام شرکت، کارفرما، پیمانکار، شماره قرارداد، تاریخ صورتجلسه، کیلومتراژ یا شماره زون وجود دارد، آن‌ها را به طور کامل در ابتدای خروجی استخراج کنید.\n"
+    "۲. جدول داده‌ها: ساختار جدول را به صورت جدول استاندارد Markdown استخراج کنید. در خواندن ارقام فارسی (به‌ویژه دندانه‌های ۲، ۳، ۴ و تفاوت ۶ با ۴) نهایت دقت را داشته باشید و هرگز دندانه‌ها را حدس نزنید.\n"
+    "۳. ستون‌های مختصات (Easting و Northing)، ارتفاع (Height) و ضریب مقیاس (Scale Factor) باید رقم‌به‌رقم و با حفظ تمام صفرهای اعشار استخراج شوند.\n"
+    "۴. تمامی ردیف‌ها را از ابتدا تا انتها بدون خلاصه کردن (...) استخراج کنید.\n"
+    "۵. پاورقی و امضاها: اگر در زیر جدول اطلاعاتی مانند مشخصات کارفرما، مشاور، پیمانکار، نام افراد و امضاها وجود دارد، آن‌ها را در انتهای خروجی بیاورید."
 )
 
 
@@ -150,47 +160,54 @@ async def _probe_rotation(thumb: Image.Image) -> int | None:
     return parse_probe_answer(response.choices[0].message.content or "")
 
 
+async def prepare_pil_image_for_ocr(
+    image_bytes: bytes, rotation: int | None = None, report: dict | None = None
+) -> Image.Image | None:
+    """Decodes, filters blank images, rotates upright, and cleans an image for OCR.
+    Returns the upright PIL Image or None for blank images."""
+    settings = get_settings()
+    # Pillow/numpy work is CPU-bound: off the event loop so other pages' requests aren't delayed behind it.
+    pil_img = await asyncio.to_thread(lambda: _to_rgb(Image.open(io.BytesIO(image_bytes))))
+    if getattr(settings, "ocr_skip_blank_images", True) and await asyncio.to_thread(pp.is_blank, pil_img):
+        return None
+    if rotation in (0, 90, 180, 270):
+        degrees = rotation
+        if degrees:
+            pil_img = await asyncio.to_thread(rotate_clockwise, pil_img, degrees)
+        if report is not None:
+            report["rotation"] = degrees
+    elif getattr(settings, "ocr_auto_orient", True) and min(pil_img.size) >= settings.ocr_orient_min_dimension:
+        method = getattr(settings, "ocr_orient_method", "hybrid")
+        degrees = await choose_rotation(
+            pil_img,
+            method=method,
+            probe=_probe_rotation,
+            osd=lambda image: detect_rotation_osd(image, settings.ocr_osd_concurrency),
+            min_confidence=settings.ocr_orient_osd_min_confidence,
+            upright_confidence=settings.ocr_orient_osd_upright_confidence,
+        )
+        if degrees:
+            logger.debug("OCR: page rotated %d degrees clockwise to be upright (%s)", degrees, method)
+            pil_img = await asyncio.to_thread(rotate_clockwise, pil_img, degrees)
+        if report is not None:
+            report["rotation"] = degrees
+    deskew = getattr(settings, "ocr_deskew", False)
+    crop = getattr(settings, "ocr_crop_margins", False)
+    if deskew or crop:
+        pil_img = await asyncio.to_thread(_clean_image, pil_img, deskew, crop)
+    return pil_img
+
+
 async def prepare_image_for_ocr(
     image_bytes: bytes, rotation: int | None = None, report: dict | None = None
 ) -> tuple[bytes, str] | None:
     """Decode -> (skip blank) -> (rotate upright) -> (deskew, crop empty borders) -> downscale + JPEG.
     Returns None for a blank image (nothing to read, no API call). Anything unexpected falls back to the plain
-    `optimize_image_for_ocr`, so pre-processing can only ever be skipped, never fail an ingestion.
-
-    `rotation` (clockwise degrees) is a rotation already worked out for this exact image - at ingestion, stored with the
-    page - so detection is skipped: finding it cost 1 to 4 model calls and ~20 s. Whenever the rotation is known, whether
-    given or just detected, it is written to `report["rotation"]` so the caller can store it."""
-    settings = get_settings()
+    `optimize_image_for_ocr`, so pre-processing can only ever be skipped, never fail an ingestion."""
     try:
-        # Pillow/numpy work is CPU-bound: off the event loop so other pages' requests aren't delayed behind it.
-        pil_img = await asyncio.to_thread(lambda: _to_rgb(Image.open(io.BytesIO(image_bytes))))
-        if getattr(settings, "ocr_skip_blank_images", True) and await asyncio.to_thread(pp.is_blank, pil_img):
+        pil_img = await prepare_pil_image_for_ocr(image_bytes, rotation=rotation, report=report)
+        if pil_img is None:
             return None
-        if rotation in (0, 90, 180, 270):
-            degrees = rotation
-            if degrees:
-                pil_img = await asyncio.to_thread(rotate_clockwise, pil_img, degrees)
-            if report is not None:
-                report["rotation"] = degrees
-        elif getattr(settings, "ocr_auto_orient", True) and min(pil_img.size) >= settings.ocr_orient_min_dimension:
-            method = getattr(settings, "ocr_orient_method", "hybrid")
-            degrees = await choose_rotation(
-                pil_img,
-                method=method,
-                probe=_probe_rotation,
-                osd=lambda image: detect_rotation_osd(image, settings.ocr_osd_concurrency),
-                min_confidence=settings.ocr_orient_osd_min_confidence,
-                upright_confidence=settings.ocr_orient_osd_upright_confidence,
-            )
-            if degrees:
-                logger.debug("OCR: page rotated %d degrees clockwise to be upright (%s)", degrees, method)
-                pil_img = await asyncio.to_thread(rotate_clockwise, pil_img, degrees)
-            if report is not None:
-                report["rotation"] = degrees
-        deskew = getattr(settings, "ocr_deskew", False)
-        crop = getattr(settings, "ocr_crop_margins", False)
-        if deskew or crop:
-            pil_img = await asyncio.to_thread(_clean_image, pil_img, deskew, crop)
         return await asyncio.to_thread(_encode_for_ocr, pil_img)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Image pre-processing failed (%s); sending the plain optimized image.", exc)
@@ -273,8 +290,23 @@ def _vision_model() -> str:
     return getattr(settings, "llm_vision_model", None) or getattr(settings, "llm_model", "gpt-4o")
 
 
+def _is_redundant_text(snippet: str, full_text: str) -> bool:
+    """Returns True if most significant words of snippet already appear in full_text."""
+    if not snippet or not snippet.strip():
+        return True
+    words = [w for w in re.findall(r"[\w\d\-]{3,}", snippet.lower()) if len(w) >= 3]
+    if not words:
+        return False
+    full_lower = full_text.lower()
+    matches = sum(1 for w in words if w in full_lower)
+    return (matches / len(words)) >= 0.5
+
+
 async def extract_text_from_image(image_bytes: bytes, image_format: str = "png", report: dict | None = None) -> str:
     """Uses a vision-capable LLM to perform OCR and structured data extraction from an image.
+    When tables are detected via Mistral layout analysis, crops each table for high-resolution
+    vision extraction, preserving surrounding header and footer metadata.
+    Automatically falls back to full-page vision OCR if table detection fails or no tables are found.
     `report` (optional) receives `rotation` - the clockwise degrees the image was turned to be upright - when it is known."""
     settings = get_settings()
     if not getattr(settings, "ocr_enabled", True):
@@ -288,11 +320,74 @@ async def extract_text_from_image(image_bytes: bytes, image_format: str = "png",
         return ""
 
     try:
-        prepared = await prepare_image_for_ocr(image_bytes, report=report)
-        if prepared is None:
-            logger.debug("Blank image, skipping Vision OCR.")
-            return ""
-        optimized_bytes, mime_type = prepared
+        pil_img = None
+        try:
+            pil_img = await prepare_pil_image_for_ocr(image_bytes, report=report)
+        except Exception:
+            pil_img = None
+
+        if pil_img is None:
+            prepared = await prepare_image_for_ocr(image_bytes, report=report)
+            if prepared is None:
+                logger.debug("Blank image, skipping Vision OCR.")
+                return ""
+            optimized_bytes, mime_type = prepared
+        else:
+            # Two-stage table layout detection (Mistral OCR -> Gemini Crop)
+            mistral_key = getattr(settings, "effective_mistral_api_key", "") or getattr(settings, "mistral_api_key", "") or getattr(settings, "mistral_key", "")
+            if getattr(settings, "ocr_two_stage_enabled", True) and mistral_key:
+                try:
+                    layout_res = await detect_tables_with_mistral(pil_img, padding=30)
+                    boxes = getattr(layout_res, "table_boxes", layout_res) if layout_res else []
+                    if boxes:
+                        logger.info("Two-stage OCR: extracting %d table crop(s) with vision model.", len(boxes))
+                        extracted_tables: list[str] = []
+                        for box in boxes:
+                            cropped = crop_image_box(pil_img, box)
+                            crop_bytes, crop_mime = await asyncio.to_thread(_encode_for_ocr, cropped)
+                            b64_crop = base64.b64encode(crop_bytes).decode("utf-8")
+                            resp = await _vision_chat(
+                                _vision_client(),
+                                _vision_model(),
+                                SYSTEM_TABLE_OCR_PROMPT,
+                                crop_mime,
+                                b64_crop,
+                                settings.ocr_max_tokens,
+                            )
+                            content = (resp.choices[0].message.content or "").strip()
+                            if content and content not in ("---", "N/A", "none", "خالی", "None"):
+                                extracted_tables.append(content)
+
+                        if extracted_tables:
+                            combined_tables = "\n\n".join(extracted_tables)
+
+                            # Stitch header & footer metadata if not already present in table output
+                            header_parts: list[str] = []
+                            if getattr(layout_res, "header_text", "") and not _is_redundant_text(layout_res.header_text, combined_tables):
+                                header_parts.append(layout_res.header_text)
+                            if getattr(layout_res, "pre_table_text", "") and not _is_redundant_text(layout_res.pre_table_text, combined_tables):
+                                header_parts.append(layout_res.pre_table_text)
+
+                            footer_parts: list[str] = []
+                            if getattr(layout_res, "post_table_text", "") and not _is_redundant_text(layout_res.post_table_text, combined_tables):
+                                footer_parts.append(layout_res.post_table_text)
+                            if getattr(layout_res, "footer_text", "") and not _is_redundant_text(layout_res.footer_text, combined_tables):
+                                footer_parts.append(layout_res.footer_text)
+
+                            final_sections: list[str] = []
+                            if header_parts:
+                                final_sections.append("### [سربرگ و مشخصات سند]\n" + "\n\n".join(header_parts))
+                            final_sections.append(combined_tables)
+                            if footer_parts:
+                                final_sections.append("### [پاورقی و اطلاعات تکمیلی / امضاها]\n" + "\n\n".join(footer_parts))
+
+                            return "\n\n".join(final_sections)
+                except Exception as layout_exc:  # noqa: BLE001
+                    logger.warning("Two-stage table extraction error (%s); falling back to full-page OCR.", layout_exc)
+
+            optimized_bytes, mime_type = await asyncio.to_thread(_encode_for_ocr, pil_img)
+
+        # Fallback / Default: full-page Vision OCR
         b64_img = base64.b64encode(optimized_bytes).decode("utf-8")
         response = await _vision_chat(
             _vision_client(), _vision_model(), SYSTEM_OCR_PROMPT, mime_type, b64_img, settings.ocr_max_tokens

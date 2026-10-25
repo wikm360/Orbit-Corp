@@ -144,12 +144,18 @@ class Settings(BaseSettings):
     ocr_concurrency: int = 12
     # Processes used to parse the pages of one PDF (decoding scanned images is CPU-bound). 1 = single process.
     pdf_parse_workers: int = 4
-    # DPI used by pdftoppm when rendering PDF pages for OCR (200 DPI ensures crisp small numbers in tables).
-    pdf_render_dpi: int = 200
-    # Max dimension (width or height) to resize images before sending to Vision OCR (2560 preserves fine tabular details).
-    ocr_max_image_dimension: int = 2560
+    # DPI used by pdftoppm when rendering PDF pages for OCR (300 DPI ensures crisp small numbers in tables).
+    pdf_render_dpi: int = 300
+    # Max dimension (width or height) to resize images before sending to Vision OCR (3500 preserves fine tabular details).
+    ocr_max_image_dimension: int = 3500
     # JPEG quality for Vision OCR image optimization (95 prevents DCT quantization artifacts around small numbers).
     ocr_jpeg_quality: int = 95
+    # Two-stage table detection with Mistral OCR before Gemini vision extraction
+    ocr_two_stage_enabled: bool = True
+    mistral_api_key: str = ""
+    mistral_key: str = ""
+    mistral_ocr_model: str = "mistral-ocr-latest"
+    mistral_ocr_timeout_seconds: float = 25.0
     # Output budget of one vision-OCR call. A dense table page needs ~2.5-3k tokens, so the old 2048 truncated it.
     # Keep it generous but use a non-reasoning model: reasoning models spend this budget on thinking and return no text.
     ocr_max_tokens: int = 6000
@@ -210,6 +216,10 @@ class Settings(BaseSettings):
     # Group chat: prefix that triggers an AI reply in a project group chat
     # (case-insensitive). Personal chats always reply, no trigger needed.
     ai_trigger_token: str = "@bot"
+
+    @property
+    def effective_mistral_api_key(self) -> str:
+        return self.mistral_api_key or self.mistral_key
 
 
 @lru_cache
