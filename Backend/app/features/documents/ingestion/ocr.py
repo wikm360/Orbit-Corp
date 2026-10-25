@@ -20,7 +20,7 @@ from app.features.documents.ingestion.image_orientation import (
     parse_probe_answer,
     rotate_clockwise,
 )
-from app.features.documents.ingestion.layout_helper import crop_image_box, detect_tables_with_mistral
+from app.features.documents.ingestion.layout_helper import LayoutBlockBox, crop_image_box, detect_tables_with_mistral
 
 logger = logging.getLogger(__name__)
 
@@ -302,12 +302,50 @@ def _is_redundant_text(snippet: str, full_text: str) -> bool:
     return (matches / len(words)) >= 0.5
 
 
+def replace_markdown_tables(full_text: str, precise_tables: list[str]) -> str:
+    """Replaces markdown table blocks in full_text with high-precision tables extracted from cropped regions.
+    If full_text has no markdown tables or fewer tables, remaining precise tables are appended cleanly."""
+    if not precise_tables:
+        return full_text
+    if not full_text or not full_text.strip():
+        return "\n\n".join(precise_tables)
+
+    table_pattern = re.compile(
+        r"(?:^[ \t]*\|[^\n]+\|[ \t]*$\n?)+",
+        re.MULTILINE,
+    )
+
+    matches = list(table_pattern.finditer(full_text))
+    if not matches:
+        combined = "\n\n".join(precise_tables)
+        return f"{full_text}\n\n### [جدول داده‌ها]\n{combined}".strip()
+
+    result_parts = []
+    last_idx = 0
+    for i, match in enumerate(matches):
+        result_parts.append(full_text[last_idx:match.start()])
+        if i < len(precise_tables):
+            result_parts.append(precise_tables[i].strip() + "\n")
+        else:
+            result_parts.append(match.group(0))
+        last_idx = match.end()
+    result_parts.append(full_text[last_idx:])
+
+    if len(precise_tables) > len(matches):
+        remaining = precise_tables[len(matches):]
+        result_parts.append("\n\n" + "\n\n".join(remaining))
+
+    return "".join(result_parts).strip()
+
+
 async def extract_text_from_image(image_bytes: bytes, image_format: str = "png", report: dict | None = None) -> str:
     """Uses a vision-capable LLM to perform OCR and structured data extraction from an image.
-    When tables are detected via Mistral layout analysis, crops each table for high-resolution
-    vision extraction, preserving surrounding header and footer metadata.
-    Automatically falls back to full-page vision OCR if table detection fails or no tables are found.
-    `report` (optional) receives `rotation` - the clockwise degrees the image was turned to be upright - when it is known."""
+    When layout analysis via Mistral is active, the page is broken into tight bounding boxes
+    (tables, headers, text paragraphs, footers) and each cropped region is sent to the vision
+    model in parallel. This completely eliminates empty page margins, dramatically saving tokens
+    and maximizing pixel density for both text and dense tables.
+    Falls back gracefully to full-page vision OCR if layout analysis fails or detects no blocks.
+    `report` (optional) receives `rotation` - the clockwise degrees the image was turned to be upright."""
     settings = get_settings()
     if not getattr(settings, "ocr_enabled", True):
         return ""
@@ -333,61 +371,50 @@ async def extract_text_from_image(image_bytes: bytes, image_format: str = "png",
                 return ""
             optimized_bytes, mime_type = prepared
         else:
-            # Two-stage table layout detection (Mistral OCR -> Gemini Crop)
-            mistral_key = getattr(settings, "effective_mistral_api_key", "") or getattr(settings, "mistral_api_key", "") or getattr(settings, "mistral_key", "")
-            if getattr(settings, "ocr_two_stage_enabled", True) and mistral_key:
-                try:
-                    layout_res = await detect_tables_with_mistral(pil_img, padding=30)
-                    boxes = getattr(layout_res, "table_boxes", layout_res) if layout_res else []
-                    if boxes:
-                        logger.info("Two-stage OCR: extracting %d table crop(s) with vision model.", len(boxes))
-                        extracted_tables: list[str] = []
-                        for box in boxes:
-                            cropped = crop_image_box(pil_img, box)
-                            crop_bytes, crop_mime = await asyncio.to_thread(_encode_for_ocr, cropped)
-                            b64_crop = base64.b64encode(crop_bytes).decode("utf-8")
-                            resp = await _vision_chat(
-                                _vision_client(),
-                                _vision_model(),
-                                SYSTEM_TABLE_OCR_PROMPT,
-                                crop_mime,
-                                b64_crop,
-                                settings.ocr_max_tokens,
-                            )
-                            content = (resp.choices[0].message.content or "").strip()
-                            if content and content not in ("---", "N/A", "none", "خالی", "None"):
-                                extracted_tables.append(content)
-
-                        if extracted_tables:
-                            combined_tables = "\n\n".join(extracted_tables)
-
-                            # Stitch header & footer metadata if not already present in table output
-                            header_parts: list[str] = []
-                            if getattr(layout_res, "header_text", "") and not _is_redundant_text(layout_res.header_text, combined_tables):
-                                header_parts.append(layout_res.header_text)
-                            if getattr(layout_res, "pre_table_text", "") and not _is_redundant_text(layout_res.pre_table_text, combined_tables):
-                                header_parts.append(layout_res.pre_table_text)
-
-                            footer_parts: list[str] = []
-                            if getattr(layout_res, "post_table_text", "") and not _is_redundant_text(layout_res.post_table_text, combined_tables):
-                                footer_parts.append(layout_res.post_table_text)
-                            if getattr(layout_res, "footer_text", "") and not _is_redundant_text(layout_res.footer_text, combined_tables):
-                                footer_parts.append(layout_res.footer_text)
-
-                            final_sections: list[str] = []
-                            if header_parts:
-                                final_sections.append("### [سربرگ و مشخصات سند]\n" + "\n\n".join(header_parts))
-                            final_sections.append(combined_tables)
-                            if footer_parts:
-                                final_sections.append("### [پاورقی و اطلاعات تکمیلی / امضاها]\n" + "\n\n".join(footer_parts))
-
-                            return "\n\n".join(final_sections)
-                except Exception as layout_exc:  # noqa: BLE001
-                    logger.warning("Two-stage table extraction error (%s); falling back to full-page OCR.", layout_exc)
-
             optimized_bytes, mime_type = await asyncio.to_thread(_encode_for_ocr, pil_img)
 
-        # Fallback / Default: full-page Vision OCR
+        mistral_key = (
+            getattr(settings, "effective_mistral_api_key", "")
+            or getattr(settings, "mistral_api_key", "")
+            or getattr(settings, "mistral_key", "")
+        )
+        two_stage_active = getattr(settings, "ocr_two_stage_enabled", True) and bool(mistral_key) and (pil_img is not None)
+
+        if two_stage_active:
+            try:
+                layout_res = await detect_tables_with_mistral(pil_img, padding=30)
+                blocks = (
+                    getattr(layout_res, "blocks", None)
+                    or getattr(layout_res, "table_boxes", None)
+                    or (layout_res if isinstance(layout_res, (list, tuple)) else [])
+                )
+                if blocks:
+                    logger.info("Layout-guided OCR: processing %d cropped block(s) with vision model.", len(blocks))
+
+                    async def _process_block(block: LayoutBlockBox) -> str:
+                        cropped = crop_image_box(pil_img, block)
+                        crop_bytes, crop_mime = await asyncio.to_thread(_encode_for_ocr, cropped)
+                        b64_crop = base64.b64encode(crop_bytes).decode("utf-8")
+                        prompt = SYSTEM_TABLE_OCR_PROMPT if block.block_type == "table" else SYSTEM_OCR_PROMPT
+                        resp = await _vision_chat(
+                            _vision_client(),
+                            _vision_model(),
+                            prompt,
+                            crop_mime,
+                            b64_crop,
+                            settings.ocr_max_tokens,
+                        )
+                        content = (resp.choices[0].message.content or "").strip()
+                        return "" if content in ("---", "N/A", "none", "خالی", "None") else content
+
+                    block_texts = await asyncio.gather(*[_process_block(b) for b in blocks])
+                    clean_parts = [t for t in block_texts if t]
+                    if clean_parts:
+                        return "\n\n".join(clean_parts)
+            except Exception as layout_exc:
+                logger.warning("Layout-guided block OCR failed (%s); falling back to full-page vision OCR.", layout_exc)
+
+        # Fallback: full-page Vision OCR (when Mistral is disabled, returns no blocks, or errors)
         b64_img = base64.b64encode(optimized_bytes).decode("utf-8")
         response = await _vision_chat(
             _vision_client(), _vision_model(), SYSTEM_OCR_PROMPT, mime_type, b64_img, settings.ocr_max_tokens
@@ -396,6 +423,7 @@ async def extract_text_from_image(image_bytes: bytes, image_format: str = "png",
         if cleaned in ("---", "N/A", "none", "خالی", "None", ""):
             return ""
         return cleaned
+
     except Exception as exc:
         logger.warning("Vision OCR request failed for image (%s): %s", image_format, exc)
         return ""

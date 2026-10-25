@@ -15,13 +15,14 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
-class TableBoundingBox:
-    """Bounding box coordinates [x1, y1, x2, y2] on the target image."""
+class LayoutBlockBox:
+    """Bounding box coordinates [x1, y1, x2, y2] and block type on the target image."""
 
     x1: int
     y1: int
     x2: int
     y2: int
+    block_type: str = "text"
 
     @property
     def width(self) -> int:
@@ -36,34 +37,40 @@ class TableBoundingBox:
         return self.width * self.height
 
 
+# Backward-compatible alias
+TableBoundingBox = LayoutBlockBox
+
+
 @dataclass
 class DocumentLayoutResult:
-    """Layout analysis result containing table bounding boxes and surrounding metadata."""
+    """Layout analysis result containing all content bounding boxes and separated table boxes."""
 
-    table_boxes: list[TableBoundingBox] = field(default_factory=list)
+    blocks: list[LayoutBlockBox] = field(default_factory=list)
+    table_boxes: list[LayoutBlockBox] = field(default_factory=list)
     header_text: str = ""
     footer_text: str = ""
     pre_table_text: str = ""
     post_table_text: str = ""
 
     def __iter__(self):
-        return iter(self.table_boxes)
+        return iter(self.blocks or self.table_boxes)
 
     def __len__(self):
-        return len(self.table_boxes)
+        return len(self.blocks or self.table_boxes)
 
     def __bool__(self):
-        return bool(self.table_boxes)
+        return bool(self.blocks or self.table_boxes)
 
     def __getitem__(self, index):
-        return self.table_boxes[index]
+        return (self.blocks or self.table_boxes)[index]
 
     def __eq__(self, other):
         if isinstance(other, list):
-            return self.table_boxes == other
+            return self.table_boxes == other or self.blocks == other
         if isinstance(other, DocumentLayoutResult):
             return (
                 self.table_boxes == other.table_boxes
+                and self.blocks == other.blocks
                 and self.header_text == other.header_text
                 and self.footer_text == other.footer_text
                 and self.pre_table_text == other.pre_table_text
@@ -72,23 +79,32 @@ class DocumentLayoutResult:
         return False
 
 
-def _boxes_intersect_or_near(b1: TableBoundingBox, b2: TableBoundingBox, margin: int = 40) -> bool:
-    """True if two bounding boxes overlap or are within `margin` px of each other."""
-    return not (
-        b1.x2 + margin < b2.x1
-        or b2.x2 + margin < b1.x1
-        or b1.y2 + margin < b2.y1
-        or b2.y2 + margin < b1.y1
-    )
+def _blocks_can_merge(b1: LayoutBlockBox, b2: LayoutBlockBox, margin_y: int = 35, margin_x: int = 60) -> bool:
+    """Checks if two blocks should be merged. Tables only merge with tables; text only with text."""
+    is_t1 = b1.block_type == "table"
+    is_t2 = b2.block_type == "table"
+    if is_t1 != is_t2:
+        return False
+
+    v_overlap = not (b1.y2 + margin_y < b2.y1 or b2.y2 + margin_y < b1.y1)
+    if not v_overlap:
+        return False
+
+    h_overlap = not (b1.x2 + margin_x < b2.x1 or b2.x2 + margin_x < b1.x1)
+    return h_overlap
 
 
-def merge_table_boxes(boxes: Sequence[TableBoundingBox], margin: int = 40) -> list[TableBoundingBox]:
-    """Combines overlapping or adjacent table bounding boxes into single enclosing boxes."""
-    if not boxes:
+def merge_layout_blocks(
+    blocks: Sequence[LayoutBlockBox],
+    margin_y: int = 35,
+    margin_x: int = 60,
+) -> list[LayoutBlockBox]:
+    """Combines overlapping or vertically/horizontally adjacent layout blocks into logical sections."""
+    if not blocks:
         return []
 
-    remaining = list(boxes)
-    merged: list[TableBoundingBox] = []
+    remaining = sorted(blocks, key=lambda b: (b.y1, b.x1))
+    merged: list[LayoutBlockBox] = []
 
     while remaining:
         current = remaining.pop(0)
@@ -97,12 +113,13 @@ def merge_table_boxes(boxes: Sequence[TableBoundingBox], margin: int = 40) -> li
             changed = False
             uncombined = []
             for other in remaining:
-                if _boxes_intersect_or_near(current, other, margin=margin):
-                    current = TableBoundingBox(
+                if _blocks_can_merge(current, other, margin_y=margin_y, margin_x=margin_x):
+                    current = LayoutBlockBox(
                         x1=min(current.x1, other.x1),
                         y1=min(current.y1, other.y1),
                         x2=max(current.x2, other.x2),
                         y2=max(current.y2, other.y2),
+                        block_type=current.block_type,
                     )
                     changed = True
                 else:
@@ -110,7 +127,12 @@ def merge_table_boxes(boxes: Sequence[TableBoundingBox], margin: int = 40) -> li
             remaining = uncombined
         merged.append(current)
 
-    return merged
+    return sorted(merged, key=lambda b: (b.y1, b.x1))
+
+
+def merge_table_boxes(boxes: Sequence[LayoutBlockBox], margin: int = 40) -> list[LayoutBlockBox]:
+    """Combines overlapping or adjacent table bounding boxes into single enclosing boxes."""
+    return merge_layout_blocks(boxes, margin_y=margin, margin_x=margin)
 
 
 def _encode_for_layout_analysis(pil_img: Image.Image, max_dim: int = 1600) -> str:
@@ -190,40 +212,48 @@ async def detect_tables_with_mistral(
         scale_y = orig_h / ref_dims.height
 
         blocks = getattr(page, "blocks", None) or []
-        boxes: list[TableBoundingBox] = []
+        all_raw_boxes: list[LayoutBlockBox] = []
+        table_raw_boxes: list[LayoutBlockBox] = []
 
         for block in blocks:
-            b_type = getattr(block, "type", "") or ""
-            if b_type.lower() == "table":
-                tl_x = getattr(block, "top_left_x", None)
-                tl_y = getattr(block, "top_left_y", None)
-                br_x = getattr(block, "bottom_right_x", None)
-                br_y = getattr(block, "bottom_right_y", None)
-                if None in (tl_x, tl_y, br_x, br_y):
-                    continue
+            b_type = (getattr(block, "type", "") or "text").lower()
+            tl_x = getattr(block, "top_left_x", None)
+            tl_y = getattr(block, "top_left_y", None)
+            br_x = getattr(block, "bottom_right_x", None)
+            br_y = getattr(block, "bottom_right_y", None)
+            if None in (tl_x, tl_y, br_x, br_y):
+                continue
 
-                x1 = max(0, int(tl_x * scale_x) - padding)
-                y1 = max(0, int(tl_y * scale_y) - padding)
-                x2 = min(orig_w, int(br_x * scale_x) + padding)
-                y2 = min(orig_h, int(br_y * scale_y) + padding)
+            pad = padding if b_type == "table" else max(15, padding // 2)
+            x1 = max(0, int(tl_x * scale_x) - pad)
+            y1 = max(0, int(tl_y * scale_y) - pad)
+            x2 = min(orig_w, int(br_x * scale_x) + pad)
+            y2 = min(orig_h, int(br_y * scale_y) + pad)
 
-                if x2 > x1 + 10 and y2 > y1 + 10:
-                    boxes.append(TableBoundingBox(x1=x1, y1=y1, x2=x2, y2=y2))
+            if x2 > x1 + 10 and y2 > y1 + 10:
+                box = LayoutBlockBox(x1=x1, y1=y1, x2=x2, y2=y2, block_type=b_type)
+                all_raw_boxes.append(box)
+                if b_type == "table":
+                    table_raw_boxes.append(box)
 
-        merged = merge_table_boxes(boxes, margin=padding)
+        # Merge adjacent blocks into cohesive reading sections
+        merged_all = merge_layout_blocks(all_raw_boxes, margin_y=35, margin_x=60)
+        merged_tables = [b for b in merged_all if b.block_type == "table"]
+        if not merged_tables and table_raw_boxes:
+            merged_tables = merge_table_boxes(table_raw_boxes, margin=padding)
 
         header_text = (getattr(page, "header", "") or "").strip()
         footer_text = (getattr(page, "footer", "") or "").strip()
         pre_blocks: list[str] = []
         post_blocks: list[str] = []
 
-        if merged:
-            min_table_y = min(b.y1 for b in merged)
-            max_table_y = max(b.y2 for b in merged)
+        if merged_tables:
+            min_table_y = min(b.y1 for b in merged_tables)
+            max_table_y = max(b.y2 for b in merged_tables)
 
             for block in blocks:
-                b_type = getattr(block, "type", "") or ""
-                if b_type.lower() != "table":
+                b_type = (getattr(block, "type", "") or "").lower()
+                if b_type != "table":
                     content = (getattr(block, "content", "") or "").strip()
                     if not content:
                         continue
@@ -234,10 +264,19 @@ async def detect_tables_with_mistral(
                     elif b_tl_y >= max_table_y - padding:
                         post_blocks.append(content)
 
-            logger.info("Mistral layout analysis detected %d table(s) on image (%dx%d).", len(merged), orig_w, orig_h)
+            logger.info(
+                "Mistral layout analysis detected %d block(s) (%d table(s)) on image (%dx%d).",
+                len(merged_all),
+                len(merged_tables),
+                orig_w,
+                orig_h,
+            )
+        elif merged_all:
+            logger.info("Mistral layout analysis detected %d content block(s) on image (%dx%d).", len(merged_all), orig_w, orig_h)
 
         return DocumentLayoutResult(
-            table_boxes=merged,
+            blocks=merged_all,
+            table_boxes=merged_tables,
             header_text=header_text,
             footer_text=footer_text,
             pre_table_text="\n\n".join(pre_blocks),
