@@ -32,6 +32,9 @@ class ToolExecutionResult:
     citations: list[SourceCitation] = field(default_factory=list)
     # Structured evidence for the client (e.g. the exact SQL + rows of a database answer), stored on the assistant message.
     artifacts: list[dict] = field(default_factory=list)
+    # Images (data URLs) the model should look at: a tool message can only carry text, so the engine delivers them in a
+    # user message right after the tool results (see `AgentEngine.run_agent_loop`). Used by `view_document_page`.
+    images: list[str] = field(default_factory=list)
 
 
 @dataclass

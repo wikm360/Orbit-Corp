@@ -1,4 +1,6 @@
+import base64
 import json
+import logging
 import uuid
 from typing import Any
 
@@ -8,10 +10,12 @@ from app.features.agent.schemas import SourceCitation, ToolExecutionResult
 from app.features.agent.scope import resolve_retrieval_scope
 from app.features.agent.tools.base import BaseTool
 from app.features.documents import service as documents_service
+from app.features.documents.ingestion.ocr import prepare_image_for_ocr
 from app.features.retrieval.service import get_retriever
 from app.providers.embedding_provider import get_embedding_provider
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 def _parse_document_id(value: Any) -> uuid.UUID:
@@ -208,3 +212,64 @@ class SearchKnowledgeBaseTool(BaseTool):
             else:
                 passages.append((label, chunk.content))
         return passages
+
+
+class ViewDocumentPageTool(BaseTool):
+    name = "view_document_page"
+    description = (
+        "Look at the actual IMAGE of one page of a PDF (or an uploaded image): the picture is attached to your next "
+        "message and you read it yourself. Use it when the extracted text of a page cannot answer the question because the "
+        "answer lives in the picture: engineering drawings/maps/diagrams (dimensions, spans, levels, labels drawn next to a "
+        "view), scanned forms and tables whose text came out as loose numbers or looks wrong, or when you doubt a number "
+        "read from the text. Find the page first with search_knowledge_base (a page note saying it is a drawing is a strong "
+        "hint), then call this with the document_id and page_number. It costs far more context than text (one image is "
+        "several thousand tokens) and the number of views per turn is limited: do not use it for ordinary text "
+        "questions, and view only the page you need. After you see the image, say where on the page you read a number."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            **_DOCUMENT_ID_PROPERTY,
+            "page_number": {"type": "integer", "description": "Page to look at (1-indexed; 1 for an image file)"},
+        },
+        "required": ["document_id", "page_number"],
+    }
+
+    async def execute(
+        self, *, db, context, conversation, document_id: str, page_number: int, **_: Any
+    ) -> ToolExecutionResult:
+        document, image, rotation = await documents_service.get_document_page_image(
+            db,
+            _parse_document_id(document_id),
+            int(page_number),
+            project_id=resolve_retrieval_scope(context, conversation),
+            conversation_id=conversation.id,
+        )
+        label = f"{document.filename} (صفحه {page_number})"
+        try:
+            # Same clean-up as OCR: blank check, upright rotation, downscale to <= OCR_MAX_IMAGE_DIMENSION, JPEG. The rotation
+            # found at ingestion is reused (finding it again would cost 1-4 model calls and ~20 s inside the chat turn).
+            prepared = await prepare_image_for_ocr(image, rotation=rotation)
+        except Exception:  # noqa: BLE001
+            logger.exception("view_document_page could not prepare %s", label)
+            return ToolExecutionResult(text=f"The page image of {label} could not be prepared. Use read_document_pages for its text.")
+        if prepared is None:
+            return ToolExecutionResult(text=f"{label} looks blank: nothing to see.")
+        data, mime = prepared
+        return ToolExecutionResult(
+            text=(
+                f"The image of {label} is attached in the next message. Read it yourself to answer; say where on the page "
+                "you read each number, and say so if you cannot tie a number to the drawing."
+            ),
+            images=[f"data:image/{mime};base64,{base64.b64encode(data).decode()}"],
+            citations=[
+                SourceCitation(
+                    document_id=str(document.id),
+                    document_filename=document.filename,
+                    chunk_index=-1,  # not a text chunk: the page image itself
+                    snippet=f"[page image] {label}",
+                    score=1.0,
+                    page=int(page_number),
+                )
+            ],
+        )

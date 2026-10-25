@@ -103,7 +103,7 @@ async def test_ocr_step_runs_pages_concurrently_but_within_the_limit():
     running = 0
     peak = 0
 
-    async def slow_ocr(data, fmt):
+    async def slow_ocr(data, fmt, report=None):
         nonlocal running, peak
         running += 1
         peak = max(peak, running)
@@ -166,7 +166,7 @@ async def test_repeated_images_do_not_use_up_the_image_budget():
     unique = ExtractedImage(data=b"table-bytes" * 30, name="t.png", format="png")
     pages = [DocumentPage(page_number=i, text="x", images=[logo]) for i in range(1, 6)]
     pages.append(DocumentPage(page_number=6, text="x", images=[unique]))
-    ocr = AsyncMock(side_effect=lambda data, fmt: "لوگو" if data.startswith(b"logo") else "جدول")
+    ocr = AsyncMock(side_effect=lambda data, fmt, report=None: "لوگو" if data.startswith(b"logo") else "جدول")
 
     with (
         patch("app.features.documents.ingestion.pipeline.extract_text_from_image", new=ocr),
@@ -233,3 +233,64 @@ async def test_changing_the_ocr_model_does_not_reuse_old_text(db_session):
         await run()
 
     assert ocr.await_count == 2
+
+
+async def test_the_rotation_found_at_ocr_time_is_stored_in_the_page_metadata_for_scan_pages_and_image_files():
+    from pathlib import Path
+
+    async def ocr_that_reports(data, fmt, report=None):
+        if report is not None:
+            report["rotation"] = 270
+        return "متن خوانده شده از تصویر صفحه"
+
+    # 1. a scan page read as a whole rendered page
+    scan = DocumentPage(page_number=4, text="", needs_ocr=True, metadata={"page": 4, "text_layer": "scan"})
+    rendered = ExtractedImage(data=b"x" * 200, name="p.png", format="png")
+    with (
+        patch("app.features.documents.ingestion.pipeline.render_pdf_page", return_value=rendered),
+        patch("app.features.documents.ingestion.pipeline.extract_text_from_image", new=ocr_that_reports),
+    ):
+        await OCRStep().run(_context([scan]))
+    assert scan.metadata["rotation"] == 270
+
+    # 2. an uploaded image file: the image is the page
+    image_page = DocumentPage(page_number=1, text="", images=[ExtractedImage(data=b"i" * 200, name="s.png", format="png")], metadata={"page": 1})
+    context = IngestionContext(document_id=uuid.uuid4(), file_path="/uploads/scan.PNG", db=None, pages=[image_page])
+    with patch("app.features.documents.ingestion.pipeline.extract_text_from_image", new=ocr_that_reports):
+        await OCRStep().run(context)
+    assert image_page.metadata["rotation"] == 270
+
+    # 3. an image embedded in a PDF page says nothing about the page's own rotation
+    embedded = DocumentPage(page_number=2, text="متن", images=[ExtractedImage(data=b"e" * 200, name="e.png", format="png")], metadata={"page": 2})
+    with patch("app.features.documents.ingestion.pipeline.extract_text_from_image", new=ocr_that_reports):
+        await OCRStep().run(_context([embedded]))
+    assert "rotation" not in embedded.metadata
+
+    # 4. a read that did not determine the rotation stores nothing
+    plain = DocumentPage(page_number=3, text="", needs_ocr=True, metadata={"page": 3})
+    with (
+        patch("app.features.documents.ingestion.pipeline.render_pdf_page", return_value=rendered),
+        patch("app.features.documents.ingestion.pipeline.extract_text_from_image", new=AsyncMock(return_value="متن خوانده شده از تصویر صفحه")),
+    ):
+        await OCRStep().run(_context([plain]))
+    assert "rotation" not in plain.metadata
+
+
+async def test_a_cache_hit_still_returns_the_stored_rotation(db_session):
+    from app.features.documents.ingestion.ocr_cache import get_cached_ocr, put_cached_ocr
+    from app.features.documents.ingestion.pipeline import OcrRead, _OcrReader
+
+    key = f"key-{uuid.uuid4()}"
+    await put_cached_ocr(db_session, key, "متن", 90)
+    assert await get_cached_ocr(db_session, key) == ("متن", 90)
+    await put_cached_ocr(db_session, f"{key}-old", "بدون چرخش")  # rows from before the column existed / undetermined
+    assert await get_cached_ocr(db_session, f"{key}-old") == ("بدون چرخش", None)
+
+    ocr = AsyncMock(side_effect=AssertionError("a cache hit must not call the vision model"))
+    reader = _OcrReader(db_session, 2)
+    with (
+        patch("app.features.documents.ingestion.pipeline.extract_text_from_image", new=ocr),
+        patch("app.features.documents.ingestion.pipeline.ocr_cache_key", return_value=key),
+    ):
+        assert await reader.read(b"anything", "png") == OcrRead("متن", 90)
+    assert reader.cache_hits == 1 and reader.api_calls == 0

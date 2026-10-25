@@ -14,6 +14,7 @@ from app.features.agent.tools.document_tools import (
     ReadDocumentPagesTool,
     ReadEntireDocumentTool,
     SearchKnowledgeBaseTool,
+    ViewDocumentPageTool,
 )
 from app.features.agent.tools.memory_tools import RecallProjectInsightsTool, RememberProjectInsightTool
 from app.features.agent.tools.project_tools import (
@@ -95,6 +96,7 @@ def build_default_registry() -> ToolRegistry:
         ReadDocumentPagesTool(),
         ReadEntireDocumentTool(),
         SearchKnowledgeBaseTool(),
+        *([ViewDocumentPageTool()] if get_settings().agent_page_vision_enabled else []),
         ListUserProjectsTool(),
         ListProjectDocumentsTool(),
         GetCurrentChatAttachmentsTool(),

@@ -179,3 +179,87 @@ async def test_a_failing_tool_call_does_not_abort_the_turn(db_session, monkeypat
     assert "not accessible" in tool_result_messages[0]["content"].lower() or "not found" in tool_result_messages[
         0
     ]["content"].lower()
+
+
+class _ImageTool:
+    """Stands in for `view_document_page`: returns text plus an image the engine must hand to the model."""
+
+    name = "view_document_page"
+
+    def __init__(self, images_per_call: int = 1):
+        self.images_per_call = images_per_call
+
+    async def execute(self, **kwargs):
+        from app.features.agent.schemas import ToolExecutionResult
+
+        n = int(kwargs.get("page_number", 1))
+        return ToolExecutionResult(text=f"page {n} attached", images=[f"data:image/jpeg;base64,PAGE{n}"] * self.images_per_call)
+
+
+def _engine_with_image_tool(monkeypatch):
+    from app.features.agent.tools.registry import ToolRegistry
+
+    tool = _ImageTool()
+    registry = ToolRegistry([])
+    monkeypatch.setattr(registry, "to_openai_tools", lambda *a, **k: [{"type": "function", "function": {"name": tool.name}}])
+
+    async def dispatch(name, arguments, **kwargs):
+        import json
+
+        return await tool.execute(**json.loads(arguments))
+
+    monkeypatch.setattr(registry, "dispatch", dispatch)
+    return AgentEngine(registry)
+
+
+async def test_page_images_reach_the_model_in_a_user_message_after_the_tool_results(db_session, monkeypatch):
+    user, conversation = await _seed_user_and_conversation(db_session)
+    provider = _ScriptedLLMProvider(
+        [
+            [{"type": "tool_calls", "calls": [
+                {"id": "c1", "name": "view_document_page", "arguments": '{"page_number": 1}'},
+                {"id": "c2", "name": "view_document_page", "arguments": '{"page_number": 2}'},
+            ]}],
+            [{"type": "content", "delta": "3 m"}],
+        ]
+    )
+    monkeypatch.setattr(engine_module, "get_llm_provider", lambda: provider)
+
+    async def callback(event, data):
+        pass
+
+    result = await _engine_with_image_tool(monkeypatch).run_agent_loop(db_session, conversation, _context_for(user), callback)
+    assert result.content == "3 m"
+
+    second_call = provider.calls_messages[1]
+    roles = [m["role"] for m in second_call]
+    # assistant(tool_calls), tool, tool, then ONE user message with both images: tool messages stay adjacent to the call
+    tail = roles[-4:]
+    assert tail == ["assistant", "tool", "tool", "user"]
+    images = second_call[-1]["content"]
+    assert images[0]["type"] == "text" and "not from the user" in images[0]["text"]
+    assert [p["image_url"]["url"] for p in images[1:]] == ["data:image/jpeg;base64,PAGE1", "data:image/jpeg;base64,PAGE2"]
+    assert all(isinstance(m["content"], str) for m in second_call[-3:-1])  # tool messages are text only
+
+
+async def test_page_images_are_capped_per_turn(db_session, monkeypatch):
+    user, conversation = await _seed_user_and_conversation(db_session)
+    monkeypatch.setattr(engine_module.settings, "agent_max_page_views_per_turn", 1)
+    provider = _ScriptedLLMProvider(
+        [
+            [{"type": "tool_calls", "calls": [
+                {"id": "c1", "name": "view_document_page", "arguments": '{"page_number": 1}'},
+                {"id": "c2", "name": "view_document_page", "arguments": '{"page_number": 2}'},
+            ]}],
+            [{"type": "content", "delta": "ok"}],
+        ]
+    )
+    monkeypatch.setattr(engine_module, "get_llm_provider", lambda: provider)
+
+    async def callback(event, data):
+        pass
+
+    await _engine_with_image_tool(monkeypatch).run_agent_loop(db_session, conversation, _context_for(user), callback)
+    second_call = provider.calls_messages[1]
+    assert [p["image_url"]["url"] for p in second_call[-1]["content"][1:]] == ["data:image/jpeg;base64,PAGE1"]
+    assert "limit reached" in second_call[-2]["content"] and "limit reached" not in second_call[-3]["content"]

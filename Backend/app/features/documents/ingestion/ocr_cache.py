@@ -27,22 +27,24 @@ def ocr_cache_key(image_bytes: bytes) -> str:
     return f"{hashlib.sha256(image_bytes).hexdigest()}:{reader}"
 
 
-async def get_cached_ocr(db: AsyncSession, key: str) -> str | None:
+async def get_cached_ocr(db: AsyncSession, key: str) -> tuple[str, int | None] | None:
+    """`(text, rotation)` of a cached read, or None."""
     try:
-        return (await db.execute(select(OcrCache.text).where(OcrCache.cache_key == key))).scalar_one_or_none()
+        row = (await db.execute(select(OcrCache.text, OcrCache.rotation).where(OcrCache.cache_key == key))).first()
+        return None if row is None else (row[0], row[1])
     except Exception as exc:  # noqa: BLE001 - a cache problem must never fail ingestion
         logger.warning("OCR cache lookup failed (%s); reading the image instead.", exc)
         await db.rollback()
         return None
 
 
-async def put_cached_ocr(db: AsyncSession, key: str, text: str) -> None:
+async def put_cached_ocr(db: AsyncSession, key: str, text: str, rotation: int | None = None) -> None:
     if not text:
         return
     try:
         await db.execute(
             insert(OcrCache)
-            .values(cache_key=key, text=text, vision_model=vision_model_name())
+            .values(cache_key=key, text=text, vision_model=vision_model_name(), rotation=rotation)
             .on_conflict_do_nothing(index_elements=["cache_key"])
         )
         await db.commit()

@@ -23,7 +23,6 @@ from app.features.documents.ingestion.image_orientation import (
 logger = logging.getLogger(__name__)
 
 _OCR_ATTEMPTS = 3
-_FILTER_ATTEMPTS = 8  # content-filter answers are random per request and cheap (no output), so they get their own budget
 
 
 class _ContentFiltered(Exception):
@@ -151,17 +150,29 @@ async def _probe_rotation(thumb: Image.Image) -> int | None:
     return parse_probe_answer(response.choices[0].message.content or "")
 
 
-async def prepare_image_for_ocr(image_bytes: bytes) -> tuple[bytes, str] | None:
+async def prepare_image_for_ocr(
+    image_bytes: bytes, rotation: int | None = None, report: dict | None = None
+) -> tuple[bytes, str] | None:
     """Decode -> (skip blank) -> (rotate upright) -> (deskew, crop empty borders) -> downscale + JPEG.
     Returns None for a blank image (nothing to read, no API call). Anything unexpected falls back to the plain
-    `optimize_image_for_ocr`, so pre-processing can only ever be skipped, never fail an ingestion."""
+    `optimize_image_for_ocr`, so pre-processing can only ever be skipped, never fail an ingestion.
+
+    `rotation` (clockwise degrees) is a rotation already worked out for this exact image - at ingestion, stored with the
+    page - so detection is skipped: finding it cost 1 to 4 model calls and ~20 s. Whenever the rotation is known, whether
+    given or just detected, it is written to `report["rotation"]` so the caller can store it."""
     settings = get_settings()
     try:
         # Pillow/numpy work is CPU-bound: off the event loop so other pages' requests aren't delayed behind it.
         pil_img = await asyncio.to_thread(lambda: _to_rgb(Image.open(io.BytesIO(image_bytes))))
         if getattr(settings, "ocr_skip_blank_images", True) and await asyncio.to_thread(pp.is_blank, pil_img):
             return None
-        if getattr(settings, "ocr_auto_orient", True) and min(pil_img.size) >= settings.ocr_orient_min_dimension:
+        if rotation in (0, 90, 180, 270):
+            degrees = rotation
+            if degrees:
+                pil_img = await asyncio.to_thread(rotate_clockwise, pil_img, degrees)
+            if report is not None:
+                report["rotation"] = degrees
+        elif getattr(settings, "ocr_auto_orient", True) and min(pil_img.size) >= settings.ocr_orient_min_dimension:
             method = getattr(settings, "ocr_orient_method", "hybrid")
             degrees = await choose_rotation(
                 pil_img,
@@ -169,10 +180,13 @@ async def prepare_image_for_ocr(image_bytes: bytes) -> tuple[bytes, str] | None:
                 probe=_probe_rotation,
                 osd=lambda image: detect_rotation_osd(image, settings.ocr_osd_concurrency),
                 min_confidence=settings.ocr_orient_osd_min_confidence,
+                upright_confidence=settings.ocr_orient_osd_upright_confidence,
             )
             if degrees:
-                logger.info("OCR: page rotated %d degrees clockwise to be upright (%s)", degrees, method)
+                logger.debug("OCR: page rotated %d degrees clockwise to be upright (%s)", degrees, method)
                 pil_img = await asyncio.to_thread(rotate_clockwise, pil_img, degrees)
+            if report is not None:
+                report["rotation"] = degrees
         deskew = getattr(settings, "ocr_deskew", False)
         crop = getattr(settings, "ocr_crop_margins", False)
         if deskew or crop:
@@ -183,8 +197,85 @@ async def prepare_image_for_ocr(image_bytes: bytes) -> tuple[bytes, str] | None:
         return await asyncio.to_thread(optimize_image_for_ocr, image_bytes)
 
 
-async def extract_text_from_image(image_bytes: bytes, image_format: str = "png") -> str:
-    """Uses a vision-capable LLM to perform OCR and structured data extraction from an image."""
+# Appended to the prompt on the n-th content-filter retry (n = 1, 2, ...): a slightly different request, same instructions.
+_RETRY_PROMPT_SUFFIXES = (
+    "\n\nنکته: خروجی را دقیقاً طبق دستورالعمل‌های بالا بنویس.",
+    "\n\nیادآوری: فقط متن و داده‌های موجود در تصویر را استخراج کن.",
+)
+
+
+def _vary_image_for_retry(jpeg_b64: str, retry: int) -> str:
+    """A barely different JPEG of the same page for a retry after a content-filter refusal: a 10 px white border (+2% scale
+    from the second retry on). Never sends the exact same bytes twice, in case the refusal depends on the input."""
+    with Image.open(io.BytesIO(base64.b64decode(jpeg_b64))) as img:
+        img = img.convert("RGB")
+        if retry >= 2:
+            img = img.resize((int(img.width * 0.98), int(img.height * 0.98)), Image.Resampling.LANCZOS)
+        img = ImageOps.expand(img, border=10 * min(retry, 2), fill="white")
+        out = io.BytesIO()
+        img.save(out, format="JPEG", quality=95)
+    return base64.b64encode(out.getvalue()).decode("utf-8")
+
+
+async def _vision_chat(client: AsyncOpenAI, model: str, prompt: str, mime_type: str, b64_img: str, max_tokens: int):
+    """One vision request with the shared retry policy: transient errors (`_OCR_ATTEMPTS`) and random content-filter
+    refusals (`OCR_CONTENT_FILTER_RETRIES`, own budget; each retry sends a slightly different image and prompt, see
+    `_vary_image_for_retry`). Raises when the budget is spent."""
+    retries = getattr(get_settings(), "ocr_content_filter_retries", 2)
+    base_b64, base_prompt, mime = b64_img, prompt, mime_type
+    attempt = filtered = 0
+    while True:
+        attempt += 1
+        try:
+            response = await client.chat.completions.create(
+                model=model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:image/{mime_type};base64,{b64_img}", "detail": "high"},
+                            },
+                        ],
+                    }
+                ],
+                max_tokens=max_tokens,
+            )
+            choice = response.choices[0]
+            if getattr(choice, "finish_reason", None) == "content_filter" and not (choice.message.content or "").strip():
+                raise _ContentFiltered("finish_reason=content_filter with empty content")
+            return response
+        except _ContentFiltered as exc:
+            attempt -= 1  # not counted against the error budget below
+            filtered += 1
+            if filtered > retries:
+                raise
+            logger.warning("Vision request refused (%s); retry %d/%d with a slightly different image and prompt", exc, filtered, retries)
+            try:
+                b64_img = await asyncio.to_thread(_vary_image_for_retry, base_b64, filtered)
+                mime_type = "jpeg"
+            except Exception as vary_exc:  # noqa: BLE001 - not an image we can re-encode: retry as it is
+                logger.debug("could not vary the image for the retry (%s)", vary_exc)
+                b64_img, mime_type = base_b64, mime
+            prompt = base_prompt + _RETRY_PROMPT_SUFFIXES[min(filtered, len(_RETRY_PROMPT_SUFFIXES)) - 1]
+            await asyncio.sleep(1.0)
+        except Exception as exc:  # transient gateway/rate-limit errors are common during bulk ingestion
+            if attempt == _OCR_ATTEMPTS:
+                raise
+            logger.warning("Vision request attempt %d/%d failed (%s); retrying", attempt, _OCR_ATTEMPTS, exc)
+            await asyncio.sleep(2.0 * attempt)
+
+
+def _vision_model() -> str:
+    settings = get_settings()
+    return getattr(settings, "llm_vision_model", None) or getattr(settings, "llm_model", "gpt-4o")
+
+
+async def extract_text_from_image(image_bytes: bytes, image_format: str = "png", report: dict | None = None) -> str:
+    """Uses a vision-capable LLM to perform OCR and structured data extraction from an image.
+    `report` (optional) receives `rotation` - the clockwise degrees the image was turned to be upright - when it is known."""
     settings = get_settings()
     if not getattr(settings, "ocr_enabled", True):
         return ""
@@ -197,59 +288,16 @@ async def extract_text_from_image(image_bytes: bytes, image_format: str = "png")
         return ""
 
     try:
-        prepared = await prepare_image_for_ocr(image_bytes)
+        prepared = await prepare_image_for_ocr(image_bytes, report=report)
         if prepared is None:
             logger.debug("Blank image, skipping Vision OCR.")
             return ""
         optimized_bytes, mime_type = prepared
         b64_img = base64.b64encode(optimized_bytes).decode("utf-8")
-
-        vision_model = getattr(settings, "llm_vision_model", None) or getattr(settings, "llm_model", "gpt-4o")
-        client = _vision_client()
-
-        response = None
-        attempt = filtered = 0
-        while True:
-            attempt += 1
-            try:
-                response = await client.chat.completions.create(
-                    model=vision_model,
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": SYSTEM_OCR_PROMPT},
-                                {
-                                    "type": "image_url",
-                                    "image_url": {
-                                        "url": f"data:image/{mime_type};base64,{b64_img}",
-                                        "detail": "high",
-                                    },
-                                },
-                            ],
-                        }
-                    ],
-                    max_tokens=settings.ocr_max_tokens,
-                )
-                choice = response.choices[0]
-                if getattr(choice, "finish_reason", None) == "content_filter" and not (choice.message.content or "").strip():
-                    raise _ContentFiltered("finish_reason=content_filter with empty content")
-                break
-            except _ContentFiltered as exc:
-                attempt -= 1  # not counted against the error budget below
-                filtered += 1
-                if filtered >= _FILTER_ATTEMPTS:
-                    raise
-                logger.warning("Vision OCR %d/%d: %s; retrying", filtered, _FILTER_ATTEMPTS, exc)
-                await asyncio.sleep(1.0)
-            except Exception as exc:  # transient gateway/rate-limit errors are common during bulk ingestion
-                if attempt == _OCR_ATTEMPTS:
-                    raise
-                logger.warning("Vision OCR attempt %d/%d failed (%s); retrying", attempt, _OCR_ATTEMPTS, exc)
-                await asyncio.sleep(2.0 * attempt)
-
-        content = response.choices[0].message.content or ""
-        cleaned = content.strip()
+        response = await _vision_chat(
+            _vision_client(), _vision_model(), SYSTEM_OCR_PROMPT, mime_type, b64_img, settings.ocr_max_tokens
+        )
+        cleaned = (response.choices[0].message.content or "").strip()
         if cleaned in ("---", "N/A", "none", "خالی", "None", ""):
             return ""
         return cleaned

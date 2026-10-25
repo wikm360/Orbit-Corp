@@ -57,12 +57,17 @@ OCR و SQL از همان `LLM_API_BASE_URL`/`LLM_API_KEY` استفاده می‌
 | `OCR_CONCURRENCY` | 12 (صفحه‌ی هم‌زمان در یک سند؛ بار واقعی = `WORKER_REPLICAS` × این عدد؛ با 429 کمش کنید) |
 | `PDF_RENDER_DPI` | 200 (رزولوشن رندر صفحات PDF با pdftoppm برای OCR شفاف ارقام و جداول) |
 | `OCR_MAX_IMAGE_DIMENSION` | 2560 (سقف ابعاد تصویر برای حفظ وضوح سلول‌های جدول و اعشار) |
+| `OCR_CONTENT_FILTER_RETRIES` | 2 (تعداد retry بعد از پاسخ `content_filter` خالی مدل vision؛ هر retry با تصویر و prompt کمی متفاوت. خطای عادی شبکه جدا و ۳ بار است) |
 | `OCR_SKIP_BLANK_IMAGES` | true (تصویر/صفحه‌ی خالی بدون فراخوانی vision رد می‌شود) |
 | `OCR_AUTO_ORIENT` | true (کلید کلی راست‌کردن صفحه‌ی چرخیده قبل از OCR) |
 | `OCR_ORIENT_METHOD` | `hybrid` (پیش‌فرض) \| `osd` \| `model`. `osd`: فقط Tesseract OSD (محلی، بدون فراخوانی API)؛ `model`: probe مدل vision (۱ فراخوانی ارزان برای هر تصویر بزرگ، +۳ تأیید برای صفحه‌ی چرخیده)؛ `hybrid`: اول OSD، و مدل فقط چرخش پیشنهادی OSD را تأیید می‌کند یا وقتی OSD مطمئن نیست تصمیم می‌گیرد. OSD به بسته‌های `tesseract-ocr` و `tesseract-ocr-osd` نیاز دارد (در Dockerfile هست)؛ نبودنشان = یک warning در لاگ و برگشت به مدل |
+| `OCR_ORIENT_OSD_UPRIGHT_CONFIDENCE` | 6.0 (فقط hybrid: جواب «راست است»‌ی OSD با اطمینان کمتر از این با مدل دوباره‌چک می‌شود. نقشه‌ی خوابیده (عدد و خط، حرف کم) با اطمینان ۲٫۶ «راست» گفته شد و خوابیده ماند؛ در ۶۴ حالت اندازه‌گیری، صفحه‌های واقعاً راست ۲٫۵–۱۸٫۶ گرفتند و دو «راست»‌ی غلط ۳٫۰ و ۵٫۳) |
 | `OCR_ORIENT_OSD_MIN_CONFIDENCE` | 2.0 (پاسخ OSD با اطمینان کمتر «نامطمئن» حساب می‌شود؛ پاسخ‌های درست در اندازه‌گیری ≥۲٫۲ بودند) |
 | `OCR_OSD_CONCURRENCY` | 4 (حداکثر پردازش Tesseract هم‌زمان در هر process worker؛ هر کدام تک‌نخی و ~۰٫۶ثانیه CPU) |
 | `OCR_ORIENT_MIN_DIMENSION` | 600 (px؛ تصویر کوچک‌تر—لوگو/مهر—هرگز بررسی جهت نمی‌شود) |
+| `OCR_MARK_DRAWING_PAGES` | true (صفحه‌ی نقشه/نمودار را با `page_kind=drawing` و یادداشت راهنما برای agent علامت می‌زند) |
+| `AGENT_PAGE_VISION_ENABLED` | true (ابزار `view_document_page`: تصویر یک صفحه‌ی PDF به خود مدل گفتگو پیوست می‌شود؛ مدل گفتگو باید vision داشته باشد) |
+| `AGENT_MAX_PAGE_VIEWS_PER_TURN` | 3 (حداکثر تصویر صفحه در هر turn؛ هر تصویر ≈۵k توکن ورودی و تا آخر turn در context می‌ماند) |
 | `OCR_DESKEW` | false (صاف‌کردن کجی؛ اندازه‌گیری سود پایدار نشان نداد) |
 | `OCR_CROP_MARGINS` | false (برش حاشیه‌ی خالی؛ همان) |
 | `OCR_JPEG_QUALITY` | 95 (کیفیت تصویر بهینه‌شده برای حذف نویز فشرده‌سازی اطراف اعداد) |

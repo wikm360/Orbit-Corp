@@ -42,7 +42,8 @@ ToolSpec = dict
 
 class ChatMessage(TypedDict, total=False):
     role: str
-    content: str | None
+    # A plain string, or a list of OpenAI content parts ({"type": "text"|"image_url", ...}) for a message with images.
+    content: str | list[dict] | None
     # Set on an assistant message that called tools instead of (or before)
     # answering, so it can be replayed back into history on the next turn.
     # This is the OpenAI wire format (not the flat `ToolCall` shape `stream_chat`

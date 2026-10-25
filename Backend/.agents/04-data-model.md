@@ -67,7 +67,7 @@ erDiagram
 ایندکس: `document_id`، **HNSW** `ix_document_chunks_embedding_hnsw (embedding vector_cosine_ops)`، **GIN** `ix_document_chunks_search_tsv`، **GIN trigram** `ix_document_chunks_search_text_trgm`.
 
 ### `ocr_cache` (`documents/models.py`)
-`cache_key` PK (`sha256(بایت‌های تصویر):hash16(مدل vision + prompt OCR)`) · `text` · `vision_model` · `created_at`. نتیجه‌ی OCR vision برای یک تصویر/صفحه‌ی رندرشده؛ بین سندها مشترک است و به project/conversation/user وابسته نیست (متن تابع محض بایت‌های تصویر است؛ هیچ chunk/سند/قاعده‌ی دسترسی‌ای در آن نیست). فقط نتیجه‌ی **غیرخالی** ذخیره می‌شود. پاک‌سازی/انقضا ندارد (رشد با تعداد تصویر یکتا؛ دستی: `DELETE FROM ocr_cache`). تغییر `LLM_VISION_MODEL` یا `SYSTEM_OCR_PROMPT` کلید را عوض می‌کند، پس متن قدیمی بازیابی نمی‌شود.
+`cache_key` PK (`sha256(بایت‌های تصویر):hash16(مدل vision + prompt OCR)`) · `text` · `vision_model` · `rotation` (SmallInteger، nullable؛ درجه‌ی ساعتگردی که تصویر برای راست‌شدن چرخیده: ۰/۹۰/۱۸۰/۲۷۰، NULL = نامعلوم؛ چون cache hit فراخوانی OCR را رد می‌کند و چرخش را از دست می‌داد) · `created_at`. نتیجه‌ی OCR vision برای یک تصویر/صفحه‌ی رندرشده؛ بین سندها مشترک است و به project/conversation/user وابسته نیست (متن تابع محض بایت‌های تصویر است؛ هیچ chunk/سند/قاعده‌ی دسترسی‌ای در آن نیست). فقط نتیجه‌ی **غیرخالی** ذخیره می‌شود. پاک‌سازی/انقضا ندارد (رشد با تعداد تصویر یکتا؛ دستی: `DELETE FROM ocr_cache`). تغییر `LLM_VISION_MODEL` یا `SYSTEM_OCR_PROMPT` کلید را عوض می‌کند، پس متن قدیمی بازیابی نمی‌شود.
 
 ### `project_memories` (`memory/models.py`)
 `id` · `project_id` FK CASCADE · `created_by_user_id` FK SET NULL · `fact_text` · `category` enum `memory_category` (`technical_decision|timeline|business_rule|convention`) · `confidence_score` float (پیش‌فرض ۱٫۰؛ **جایی استفاده نمی‌شود**) · `is_verified` bool · `embedding` Vector · `created_at` · `updated_at`. ایندکس: `project_id` و HNSW.
@@ -99,5 +99,6 @@ erDiagram
 | `0007_message_artifacts` | ستون `messages.artifacts` |
 | `0008_chunk_lexical_search` | افزونه‌ی `pg_trgm`؛ `document_chunks.search_text` (backfill دسته‌ای با همان `normalize` پایتون) و `search_tsv` generated + ایندکس‌های GIN. افزودن ستون generated جدول را یک‌بار بازنویسی می‌کند |
 | `0009_ocr_cache` | جدول `ocr_cache` (نتیجه‌ی OCR بر اساس هش تصویر + مدل/prompt) |
+| `0010_ocr_cache_rotation` | ستون `ocr_cache.rotation` (چرخش پیداشده برای تصویر) |
 
 قواعد: ← [guides/add-migration.md](guides/add-migration.md). تست `tests/test_migrations.py` تضمین می‌کند `upgrade head` دقیقاً همان جدول/ستون‌های `Base.metadata` را می‌سازد (فقط نام ستون‌ها مقایسه می‌شود، نه نوع/ایندکس).

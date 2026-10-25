@@ -5,6 +5,8 @@ import time
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import NamedTuple
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,7 +17,8 @@ from app.features.documents.ingestion.chunker import PageChunk, chunk_document_p
 from app.features.documents.ingestion.embedder import embed_chunks
 from app.features.documents.ingestion.ocr import extract_text_from_image, ocr_client_session
 from app.features.documents.ingestion.ocr_cache import get_cached_ocr, ocr_cache_key, put_cached_ocr, vision_model_name
-from app.features.documents.ingestion.parser import DocumentPage, parse_document_pages, render_pdf_page
+from app.features.documents.ingestion.page_kind import mark_drawing_page
+from app.features.documents.ingestion.parser import IMAGE_EXTENSIONS, DocumentPage, parse_document_pages, render_pdf_page
 from app.features.documents.ingestion.reconstructor import save_reconstructed_document
 from app.features.documents.models import Document, DocumentChunk, DocumentStatus
 from app.providers.embedding_provider import get_embedding_provider
@@ -59,6 +62,11 @@ class ParseStep(IngestionStep):
             page.text = page.text.replace("\x00", "")
 
 
+class OcrRead(NamedTuple):
+    text: str
+    rotation: int | None  # clockwise degrees the image was turned to be upright; None = not determined
+
+
 class _OcrReader:
     """Reads images through two cheap layers before paying for a vision call, for one document:
 
@@ -79,7 +87,7 @@ class _OcrReader:
         self.cache_hits = 0
         self.shared_in_document = 0
 
-    async def read(self, data: bytes, fmt: str) -> str:
+    async def read(self, data: bytes, fmt: str) -> OcrRead:
         key = ocr_cache_key(data)
         pending = self._reads.get(key)
         if pending is None:
@@ -88,20 +96,29 @@ class _OcrReader:
             self.shared_in_document += 1
         return await pending
 
-    async def _read_once(self, key: str, data: bytes, fmt: str) -> str:
+    async def _read_once(self, key: str, data: bytes, fmt: str) -> OcrRead:
         if self._db is not None:
             async with self._db_lock:
                 cached = await get_cached_ocr(self._db, key)
             if cached is not None:
                 self.cache_hits += 1
-                return cached
+                return OcrRead(*cached)
+        report: dict = {}
         async with self._api_slots:
             self.api_calls += 1
-            text = (await extract_text_from_image(data, fmt)).replace("\x00", "").strip()
+            text = (await extract_text_from_image(data, fmt, report=report)).replace("\x00", "").strip()
+        rotation = report.get("rotation")
         if text and self._db is not None:
             async with self._db_lock:
-                await put_cached_ocr(self._db, key, text)
-        return text
+                await put_cached_ocr(self._db, key, text, rotation)
+        return OcrRead(text, rotation)
+
+
+def _remember_rotation(page, rotation: int | None) -> None:
+    """Stores the clockwise rotation that makes the page upright in its metadata (-> chunk metadata and
+    `.reconstructed.json`), so showing the page later does not have to find it again (1-4 model calls, ~20 s)."""
+    if rotation in (0, 90, 180, 270):
+        page.metadata["rotation"] = rotation
 
 
 class OCRStep(IngestionStep):
@@ -126,6 +143,7 @@ class OCRStep(IngestionStep):
         replace_budget = getattr(settings, "ocr_max_replaced_pages", 300)
         replace_enabled = getattr(settings, "ocr_replace_bad_text_layer", True)
         counted_images: set[str] = set()  # a repeated image costs no API call, so it does not use up the budget
+        is_image_file = Path(context.file_path).suffix.lower() in IMAGE_EXTENSIONS and len(context.pages) == 1
 
         jobs = []
         for page in context.pages:
@@ -154,7 +172,7 @@ class OCRStep(IngestionStep):
                     counted_images.add(digest)
                 selected.append(img)
             if selected:
-                jobs.append(self._append_image_text(page, selected, reader))
+                jobs.append(self._append_image_text(page, selected, reader, whole_page_image=is_image_file))
 
         if jobs:
             logger.info(
@@ -184,27 +202,43 @@ class OCRStep(IngestionStep):
                 rendered = await asyncio.to_thread(render_pdf_page, context.file_path, page.page_number)
             if rendered is None:
                 return
-            ocr_text = await reader.read(rendered.data, rendered.format)
+            ocr = await reader.read(rendered.data, rendered.format)
         except Exception as exc:
             logger.warning("Page OCR failed for page %d of %s: %s", page.page_number, context.document_id, exc)
             return
-        if len(ocr_text) >= _MIN_REPLACEMENT_OCR_CHARS:
-            page.text = ocr_text
+        if len(ocr.text) >= _MIN_REPLACEMENT_OCR_CHARS:
+            page.text = ocr.text
             page.images = []
             page.metadata["text_layer"] = "ocr"
+            # The OCR'd image is the whole rendered page, so its rotation is the page's: view_document_page reuses it.
+            _remember_rotation(page, ocr.rotation)
 
-    async def _append_image_text(self, page, images, reader: _OcrReader) -> None:
+    async def _append_image_text(self, page, images, reader: _OcrReader, whole_page_image: bool = False) -> None:
         for img in images:
             try:
-                ocr_text = await reader.read(img.data, img.format)
+                ocr = await reader.read(img.data, img.format)
             except Exception as exc:
                 logger.warning("OCR extraction failed for image %s on page %d: %s", img.name, page.page_number, exc)
                 continue
+            ocr_text = ocr.text
+            if ocr_text and whole_page_image:
+                _remember_rotation(page, ocr.rotation)  # an uploaded image file: the image is the page
             if ocr_text:
                 section_label = (
                     f"\n\n[محتوای استخراج‌شده از تصویر / جدول]:\n{ocr_text}" if page.text else ocr_text
                 )
                 page.text += section_label
+
+
+class PageKindStep(IngestionStep):
+    """Flags drawing/chart pages (loose numbers, no labels) so the agent knows to look at the page image, see `page_kind`."""
+
+    async def run(self, context: IngestionContext) -> None:
+        if not getattr(get_settings(), "ocr_mark_drawing_pages", True):
+            return
+        marked = [page.page_number for page in context.pages if mark_drawing_page(page)]
+        if marked:
+            logger.info("Document %s: pages flagged as drawings/charts: %s", context.document_id, marked)
 
 
 class ReconstructStep(IngestionStep):
@@ -283,6 +317,7 @@ class PersistStep(IngestionStep):
 DEFAULT_PIPELINE: list[IngestionStep] = [
     ParseStep(),
     OCRStep(),
+    PageKindStep(),
     ReconstructStep(),
     ChunkStep(),
     EmbedStep(),

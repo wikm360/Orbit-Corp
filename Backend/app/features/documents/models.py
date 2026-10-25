@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import CheckConstraint, Computed, DateTime, Enum, ForeignKey, Index, Integer, String, Text, event, func
+from sqlalchemy import CheckConstraint, Computed, DateTime, Enum, ForeignKey, Index, Integer, SmallInteger, String, Text, event, func
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -139,4 +139,7 @@ class OcrCache(Base):
     cache_key: Mapped[str] = mapped_column(String(128), primary_key=True)
     text: Mapped[str] = mapped_column(Text, nullable=False)
     vision_model: Mapped[str] = mapped_column(String(200), nullable=False)
+    # Clockwise degrees the image was turned to be upright (0/90/180/270) when OCR'd; NULL = not determined. Stored here
+    # because a cache hit skips the OCR call that finds it, and the page still needs it (see `view_document_page`).
+    rotation: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

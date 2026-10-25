@@ -23,7 +23,9 @@ from app.features.documents.ingestion import ocr as ocr_module  # noqa: E402
 from app.features.documents.ingestion.image_orientation import choose_rotation, detect_rotation_osd  # noqa: E402
 
 
-async def evaluate(method: str, pages: list[tuple[str, Image.Image]], sem: asyncio.Semaphore, min_conf: float) -> None:
+async def evaluate(
+    method: str, pages: list[tuple[str, Image.Image]], sem: asyncio.Semaphore, min_conf: float, upright_conf: float
+) -> None:
     counts = {"probe": 0, "osd": 0}
 
     async def probe(thumb):
@@ -37,7 +39,9 @@ async def evaluate(method: str, pages: list[tuple[str, Image.Image]], sem: async
     async def one(name, page, applied):
         scanned = page.rotate(applied, expand=True, fillcolor=(255, 255, 255))  # counter-clockwise
         async with sem:
-            got = await choose_rotation(scanned, method=method, probe=probe, osd=osd, min_confidence=min_conf)
+            got = await choose_rotation(
+                scanned, method=method, probe=probe, osd=osd, min_confidence=min_conf, upright_confidence=upright_conf
+            )
         return name, applied, got
 
     results = await asyncio.gather(*(one(n, p, a) for n, p in pages for a in (0, 90, 180, 270)))
@@ -65,10 +69,12 @@ async def main() -> None:
         pages.append((path.name, img))
     settings = get_settings()
     print(f"{len(pages)} pages x 4 rotations; model={settings.llm_vision_model or settings.llm_model}; "
-          f"min OSD confidence {settings.ocr_orient_osd_min_confidence}")
+          f"min OSD confidence {settings.ocr_orient_osd_min_confidence}, upright {settings.ocr_orient_osd_upright_confidence}")
     sem = asyncio.Semaphore(args.concurrency)
     for method in args.methods:
-        await evaluate(method, pages, sem, settings.ocr_orient_osd_min_confidence)
+        await evaluate(
+            method, pages, sem, settings.ocr_orient_osd_min_confidence, settings.ocr_orient_osd_upright_confidence
+        )
 
 
 if __name__ == "__main__":

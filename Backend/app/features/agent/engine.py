@@ -41,7 +41,13 @@ SYSTEM_PROMPT = (
     "them when they suffice. If they do not, search again with a reworded or narrower query; only if a hit is clearly "
     "the right place but you need more around it, read just those pages with read_document_pages (a few pages, never a "
     "whole large document). Use read_entire_document only for a short document or when the user explicitly asks for a "
-    "summary/overview of the whole file. Do not read pages 'to be safe' - every page you read costs context."
+    "summary/overview of the whole file. Do not read pages 'to be safe' - every page you read costs context.\n\n"
+    "Pictures: some pages are engineering drawings, maps or scans whose text comes out as loose numbers with no labels "
+    "(a page note may say so). If the answer is a dimension/level/label read off a drawing, or the page text cannot say "
+    "what a number measures, do NOT guess from the loose numbers or from other pages: find the page with "
+    "search_knowledge_base, then call view_document_page with that document_id and page number - the page image is "
+    "attached to your next message and you read it yourself. Say where on the drawing you read a number; if you cannot "
+    "tie it to the drawing, say you are not sure."
 )
 
 # Tools whose `agent_activity` status should read "reading_documents" rather
@@ -49,6 +55,7 @@ SYSTEM_PROMPT = (
 _DOCUMENT_READ_TOOLS = {
     "get_document_info",
     "read_document_pages",
+    "view_document_page",
     "read_entire_document",
     "get_current_chat_attachments",
     "list_project_documents",
@@ -92,6 +99,7 @@ class AgentEngine:
         # (in parallel or in consecutive steps); repeating a database question costs two LLM calls and two queries for nothing.
         executed_calls: dict[tuple[str, str], ToolExecutionResult] = {}
         full_response = ""
+        page_images_sent = 0
 
         for step in range(MAX_STEPS):
             is_last_step = step == MAX_STEPS - 1
@@ -130,6 +138,7 @@ class AgentEngine:
                 }
             )
 
+            step_images: list[str] = []
             for call in tool_calls:
                 call_key = (call["name"], _canonical_args(call["arguments"]))
                 if call_key in executed_calls:
@@ -155,7 +164,38 @@ class AgentEngine:
                 # even if the model's closing summary fails to stream.
                 for artifact in result.artifacts:
                     await callback("artifact", {"artifact": artifact})
-                messages.append({"role": "tool", "tool_call_id": call["id"], "content": result.text})
+                tool_text = result.text
+                if result.images:
+                    room = max(0, settings.agent_max_page_views_per_turn - page_images_sent)
+                    kept = result.images[:room]
+                    page_images_sent += len(kept)
+                    step_images.extend(kept)
+                    if len(kept) < len(result.images):
+                        tool_text += (
+                            f"\n(Page-image limit reached for this turn ({settings.agent_max_page_views_per_turn}): "
+                            "this page was NOT attached. Answer from what you have and say so.)"
+                        )
+                messages.append({"role": "tool", "tool_call_id": call["id"], "content": tool_text})
+
+            if step_images:
+                # Tool messages are text-only, and they must directly follow the assistant's tool calls: the page images go
+                # in one user message after all of them. They are not saved to the conversation, only used for this turn.
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": (
+                                    "[System message, not from the user: the page image(s) you asked to see are attached "
+                                    "below, in the order you requested them. Look at them yourself to answer the user's "
+                                    "last question; quote numbers exactly as drawn and say where on the page you read them.]"
+                                ),
+                            },
+                            *({"type": "image_url", "image_url": {"url": url, "detail": "high"}} for url in step_images),
+                        ],
+                    }
+                )
 
         return AgentTurnResult(content=full_response, citations=all_citations, artifacts=all_artifacts)
 

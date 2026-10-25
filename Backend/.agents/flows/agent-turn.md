@@ -62,3 +62,7 @@ return AgentTurnResult(full_response, citations, artifacts)
 
 ## تست
 `tests/features/agent/test_engine.py` با `_ScriptedLLMProvider` (دنباله‌ی ثابت event) و `_AlwaysToolCallLLMProvider` (برای اثبات سقف `MAX_STEPS` گام و حذف ابزارها در گام آخر)؛ `tests/features/chat/test_tool_calling.py`.
+
+
+## تصویر صفحه (`view_document_page`)
+ابزار `ToolExecutionResult.images` برمی‌گرداند؛ چون پیام `tool` فقط متن می‌پذیرد، engine بعد از **همه‌ی** پیام‌های tool همان step یک پیام `user` با partهای `text` + `image_url` می‌گذارد (متن: پیام سیستمی، نه از کاربر). تصویر فقط در همان turn در `messages` هست و ذخیره‌ی DB نمی‌شود. سقف `AGENT_MAX_PAGE_VIEWS_PER_TURN`. تماس تکراری با همان آرگومان دوباره تصویر نمی‌فرستد (dedup). prompt سیستم می‌گوید برای ابعاد/برچسب نقشه از روی اعداد پراکنده یا صفحه‌ی دیگر حدس نزن و ابزار را بزن.

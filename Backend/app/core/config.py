@@ -103,11 +103,19 @@ class Settings(BaseSettings):
     # Dedicated model for writing SQL for the accounting-database connector (falls back to llm_model if None)
     llm_sql_model: str | None = None
 
+    # Agent tool `view_document_page`: the chat model itself looks at the image of one PDF page (attached to its next message).
+    # Each image costs ~5k input tokens on gpt-5.6-luna and stays in the context for the rest of the turn.
+    agent_page_vision_enabled: bool = True
+    agent_max_page_views_per_turn: int = 3
+
     # Ingestion OCR
     ocr_enabled: bool = True
     ocr_max_images_per_doc: int = 50
     # Image clean-up before the vision call (see ingestion/image_preprocess.py, image_orientation.py).
     # Blank images are not sent at all.
+    # The vision model sometimes answers a page with `finish_reason=content_filter` and no text, at random (seen on an office
+    # letter with stamps: 1 to 5 of 8 identical requests). Retries after such a refusal, each with a slightly different image/prompt.
+    ocr_content_filter_retries: int = 2
     ocr_skip_blank_images: bool = True
     # Rotate sideways/upside-down scans upright before OCR. Measured: Persian pages rotated 90/180/270 lose 20-80% of
     # their key values with the vision model. OCR_ORIENT_METHOD: `osd` = Tesseract OSD only (local, no API call);
@@ -117,8 +125,13 @@ class Settings(BaseSettings):
     ocr_auto_orient: bool = True
     ocr_orient_method: Literal["model", "osd", "hybrid"] = "hybrid"
     ocr_orient_osd_min_confidence: float = 2.0  # OSD answers below this are treated as "unsure" (correct answers were >=2.2)
+    # hybrid only: an OSD "upright" answer below this confidence is double-checked with the model. A sideways drawing
+    # (numbers and lines, few letters) was called upright at 2.6; across 64 test cases, upright pages scored 2.5-18.6 and the
+    # two wrong "upright" answers 3.0 and 5.3. 6 sends about a third of upright pages to the model.
+    ocr_orient_osd_upright_confidence: float = 6.0
     ocr_osd_concurrency: int = 4  # Tesseract processes running at once per worker process (each is single-threaded)
     ocr_orient_min_dimension: int = 600  # smaller images (logos, stamps, icons) are never checked
+    ocr_mark_drawing_pages: bool = True  # flag pages whose text is loose numbers (drawings) so the agent looks at the image
     ocr_deskew: bool = False
     ocr_crop_margins: bool = False
     ocr_min_image_dimension: int = 60

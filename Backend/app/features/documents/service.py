@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import logging
 import uuid
@@ -12,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.exceptions import BadRequestError, NotFoundError
-from app.features.documents.ingestion.parser import SUPPORTED_EXTENSIONS
+from app.features.documents.ingestion.parser import IMAGE_EXTENSIONS, SUPPORTED_EXTENSIONS, render_pdf_page
 from app.features.documents.ingestion.reconstructor import (
     cleanup_reconstructed_files,
     get_reconstructed_txt_path,
@@ -457,6 +458,51 @@ async def get_document_info(
         "has_images": has_images,
         "uploaded_at": document.created_at.isoformat() if document.created_at else None,
     }
+
+
+def _stored_rotation(recon: dict | None, page_number: int) -> int | None:
+    for page in (recon or {}).get("pages", []):
+        if page.get("page") == page_number:
+            rotation = (page.get("metadata") or {}).get("rotation")
+            return rotation if rotation in (0, 90, 180, 270) else None
+    return None
+
+
+async def get_document_page_image(
+    db: AsyncSession,
+    document_id: uuid.UUID,
+    page_number: int,
+    *,
+    project_id: uuid.UUID | None,
+    conversation_id: uuid.UUID,
+) -> tuple[Document, bytes, int | None]:
+    """The image of one page of an accessible document, for the agent's `view_document_page`: a PDF page rendered with
+    `pdftoppm` (original file, so a scan keeps its pixels and a vector drawing is rasterised fresh), or the file itself
+    for an image upload (page 1). Other formats have no page image. The third value is the clockwise rotation found for
+    this page at ingestion (stored in the page metadata), or None for a document ingested before that was recorded."""
+    document = await _get_accessible_document(
+        db, document_id, project_id=project_id, conversation_id=conversation_id
+    )
+    if page_number < 1:
+        raise BadRequestError("'page_number' must be >= 1")
+    suffix = Path(document.file_path).suffix.lower()
+    if suffix in IMAGE_EXTENSIONS:
+        if page_number != 1:
+            raise BadRequestError("This document is a single image: only page 1 exists")
+        recon = load_reconstructed_document(document.file_path)
+        return document, await asyncio.to_thread(Path(document.file_path).read_bytes), _stored_rotation(recon, 1)
+    if suffix != ".pdf":
+        raise BadRequestError(
+            f"Page images are only available for PDF and image files, not '{suffix}'. Use read_document_pages for its text."
+        )
+    recon = load_reconstructed_document(document.file_path)
+    total_pages = recon.get("total_pages") if recon else None
+    if total_pages and page_number > int(total_pages):
+        raise BadRequestError(f"'page_number' {page_number} is beyond the last page ({total_pages})")
+    rendered = await asyncio.to_thread(render_pdf_page, document.file_path, page_number)
+    if rendered is None:
+        raise BadRequestError("The page could not be rendered (pdftoppm is unavailable or the page does not exist)")
+    return document, rendered.data, _stored_rotation(recon, page_number)
 
 
 async def get_document_page_range(

@@ -24,6 +24,7 @@ dc up -d --build           # migrate خودکار اجرا می‌شود؛ backe
 ```bash
 dc ps
 dc logs -f backend            # یا worker, caddy, frontend, mssql, rahkaran-refresh
+dc logs worker | grep 'OCR orientation'   # مسیر تصمیم تشخیص جهت هر تصویر (OSD/مدل/نتیجه)
 dc restart backend worker
 dc up -d --build backend      # بازسازی فقط یک سرویس
 ```

@@ -20,6 +20,7 @@ import re
 import shutil
 import subprocess
 import threading
+import time
 from collections.abc import Awaitable, Callable
 
 from PIL import Image
@@ -61,21 +62,38 @@ def rotate_clockwise(image: Image.Image, degrees: int) -> Image.Image:
     return image.rotate(-degrees, expand=True, fillcolor=(255, 255, 255)) if degrees else image
 
 
-async def find_upright_rotation(image: Image.Image, probe: Probe) -> int:
+async def find_upright_rotation(image: Image.Image, probe: Probe, trace: list[str] | None = None) -> int:
     """Degrees to rotate `image` clockwise to make it upright (0 = leave it alone). Never raises: any probe failure
-    means "do not rotate"."""
+    means "do not rotate". `trace` (optional) collects a human-readable account of what the model said.
+
+    The model's own direction is right about half the time, so it is only a hint. The hint is verified first (one call:
+    ask again about the rotated page); only when it fails are the two other rotations tried, together. A page whose hint
+    is right costs 2 calls, a wrong hint 4 - the same accuracy as checking all three at once, with fewer calls on average."""
+    note = trace.append if trace is not None else (lambda _: None)
     thumb = probe_thumbnail(image)
     try:
         first = await probe(thumb)
-        if first in (None, 0):
+        if first is None:
+            note("model: no usable answer")
             return 0
-        candidates = [first] + [d for d in (90, 270, 180) if d != first]
-        answers = await asyncio.gather(*(probe(rotate_clockwise(thumb, d)) for d in candidates))
-    except Exception:
+        if first == 0:
+            note("model: upright")
+            return 0
+        checked: list[str] = []
+        if await probe(rotate_clockwise(thumb, first)) == 0:
+            note(f"model: says rotated, hint {first} confirmed")
+            return first
+        others = [d for d in (90, 270, 180) if d != first]
+        answers = await asyncio.gather(*(probe(rotate_clockwise(thumb, d)) for d in others))
+    except Exception as exc:  # noqa: BLE001
+        note(f"model: failed ({type(exc).__name__})")
         return 0
-    for degrees, answer in zip(candidates, answers):
-        if answer == 0:  # the first such candidate is the model's own hint when it was right
+    checked = [f"{first}->not upright"] + [f"{d}->{'upright' if a == 0 else a}" for d, a in zip(others, answers)]
+    note(f"model: says rotated, hint {first} not confirmed; checked {','.join(checked)}")
+    for degrees, answer in zip(others, answers):
+        if answer == 0:
             return degrees
+    note("model: no candidate rotation looked upright")
     return 0
 
 
@@ -144,24 +162,62 @@ async def choose_rotation(
     probe: Probe,
     osd: OsdDetect,
     min_confidence: float,
+    upright_confidence: float = 0.0,
 ) -> int:
-    """Clockwise degrees to rotate `image` so it is upright, by the configured method (never raises)."""
+    """Clockwise degrees to rotate `image` so it is upright, by the configured method (never raises).
+    Logs one INFO line per image with the path the decision took, e.g.
+    `OCR orientation [hybrid] 1240x1949: osd 90 (conf 6.3) -> model confirmed -> rotate 90 (osd+model, 2.1s)`."""
+    started = time.monotonic()
+    steps: list[str] = []
+    degrees = await _choose(image, method, probe, osd, min_confidence, upright_confidence, steps)
+    logger.info(
+        "OCR orientation [%s] %dx%d: %s => %s (%.1fs)",
+        method, image.width, image.height, " -> ".join(steps) or "no steps",
+        f"rotate {degrees}" if degrees else "keep as is", time.monotonic() - started,
+    )
+    return degrees
+
+
+async def _choose(image, method, probe, osd, min_confidence, upright_confidence, steps: list[str]) -> int:
     if method == "model":
-        return await find_upright_rotation(image, probe)
+        return await find_upright_rotation(image, probe, steps)
     try:
         degrees, confidence = await osd(image)
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
         degrees, confidence = None, 0.0
+        steps.append(f"osd: failed ({type(exc).__name__})")
+    else:
+        if degrees is None:
+            steps.append("osd: no answer (too little text or tesseract missing)")
+        else:
+            steps.append(f"osd: {degrees} (confidence {confidence:.1f}{'' if confidence >= min_confidence else f', below {min_confidence:g} = unsure'})")
     if degrees is not None and confidence >= min_confidence:
-        if degrees == 0 or method == "osd":
+        if method == "osd":
+            steps.append("accepted: no model call")
             return degrees
+        if degrees == 0:
+            # "upright" is the answer OSD gets wrong most dangerously: a sideways drawing (few letters, mostly numbers and
+            # lines) was called upright at confidence 2.6 and the page stayed sideways. Only a confident "upright" is
+            # taken without asking the model.
+            if confidence >= upright_confidence:
+                steps.append("accepted: no model call")
+                return 0
+            steps.append(f"upright answer below {upright_confidence:g}: asking the model")
+            return await find_upright_rotation(image, probe, steps)
         # hybrid: a proposed rotation is only used if the model agrees the rotated page is upright
         try:
-            if await probe(probe_thumbnail(rotate_clockwise(image, degrees))) == 0:
-                return degrees
-        except Exception:  # noqa: BLE001
-            pass
-        logger.info("OSD proposed %d degrees (confidence %.1f) but the model disagreed; asking the model.", degrees, confidence)
+            verdict = await probe(probe_thumbnail(rotate_clockwise(image, degrees)))
+        except Exception as exc:  # noqa: BLE001
+            verdict = None
+            steps.append(f"model confirmation failed ({type(exc).__name__})")
+        if verdict == 0:
+            steps.append("model confirmed")
+            return degrees
+        if verdict is not None:
+            steps.append(f"model disagreed (said {verdict} after the rotation)")
     elif method == "osd":
-        return 0  # unsure and no model fallback requested: leave the page as it is
-    return await find_upright_rotation(image, probe)
+        steps.append("unsure: left as is, no model fallback in osd mode")
+        return 0
+    else:
+        steps.append("falling back to the model")
+    return await find_upright_rotation(image, probe, steps)
