@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 
@@ -93,6 +94,17 @@ class AgentEngine:
         tools = self._registry.to_openai_tools(context, conversation)
         llm_provider = get_llm_provider()
 
+        turn_start = time.monotonic()
+        user_msg = messages[-1].get("content", "") if messages else ""
+        user_preview = " ".join(str(user_msg)[:120].split())
+        logger.info("=" * 70)
+        logger.info(
+            "[AGENT:TURN_START] Conv: %s | User: %s",
+            conversation.id,
+            getattr(context, "email", "user"),
+        )
+        logger.info("[AGENT:USER_QUERY] %s", repr(user_preview))
+
         all_citations: list[SourceCitation] = []
         all_artifacts: list[dict] = []
         # Identical tool calls (same name + arguments) within one turn run once: the model sometimes issues the same call twice
@@ -154,9 +166,30 @@ class AgentEngine:
                     "agent_activity",
                     {"status": status, "tool": call["name"], "args": _safe_parse_args(call["arguments"])},
                 )
+
+                logger.info(
+                    "[AGENT:TOOL_CALL] Step %d/%d -> Function '%s' | Args: %s",
+                    step + 1,
+                    MAX_STEPS,
+                    call["name"],
+                    call["arguments"],
+                )
+                tool_t0 = time.monotonic()
                 result = await self._registry.dispatch(
                     call["name"], call["arguments"], db=db, context=context, conversation=conversation
                 )
+                tool_dur = time.monotonic() - tool_t0
+                preview_text = " ".join(result.text[:90].split()) if result.text else ""
+                logger.info(
+                    "[AGENT:TOOL_RESULT] '%s' in %.2fs -> %d chars, %d citations, %d images | Preview: %s",
+                    call["name"],
+                    tool_dur,
+                    len(result.text),
+                    len(result.citations),
+                    len(result.images),
+                    repr(preview_text),
+                )
+
                 executed_calls[call_key] = result
                 all_citations.extend(result.citations)
                 all_artifacts.extend(result.artifacts)
@@ -196,6 +229,16 @@ class AgentEngine:
                         ],
                     }
                 )
+
+        turn_dur = time.monotonic() - turn_start
+        logger.info(
+            "[AGENT:TURN_COMPLETE] Turn finished in %.2fs | Response: %d chars | Citations: %d | Artifacts: %d",
+            turn_dur,
+            len(full_response),
+            len(all_citations),
+            len(all_artifacts),
+        )
+        logger.info("=" * 70)
 
         return AgentTurnResult(content=full_response, citations=all_citations, artifacts=all_artifacts)
 

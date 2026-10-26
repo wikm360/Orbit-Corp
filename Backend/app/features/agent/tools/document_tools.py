@@ -148,6 +148,8 @@ class SearchKnowledgeBaseTool(BaseTool):
         [query_embedding] = await embedding_provider.embed([query])
 
         project_id = resolve_retrieval_scope(context, conversation)
+        logger.info("[RAG:SEARCH] Query: %s | Scope: %s", repr(query), project_id or conversation.id)
+
         retriever = get_retriever()
         chunks = await retriever.retrieve(
             db,
@@ -160,7 +162,20 @@ class SearchKnowledgeBaseTool(BaseTool):
         )
 
         if not chunks:
+            logger.info("[RAG:RESULTS] No chunks matched threshold (min_similarity=%.2f)", settings.retrieval_score_threshold)
             return ToolExecutionResult(text="No relevant results found in the knowledge base.")
+
+        logger.info("[RAG:RESULTS] Found %d matching chunk(s):", len(chunks))
+        for idx, chunk in enumerate(chunks, 1):
+            snippet_preview = " ".join(chunk.content[:70].split())
+            logger.info(
+                "   %d. Doc: '%s' (p.%s) | Score: %.3f | Snippet: %s",
+                idx,
+                chunk.document_filename,
+                getattr(chunk, "page_number", "?"),
+                chunk.score,
+                repr(snippet_preview),
+            )
 
         citations = [
             SourceCitation(
@@ -246,6 +261,7 @@ class ViewDocumentPageTool(BaseTool):
             conversation_id=conversation.id,
         )
         label = f"{document.filename} (صفحه {page_number})"
+        logger.info("[AGENT:VIEW_PAGE] Reading raw page image directly: %s", label)
         try:
             # Same clean-up as OCR: blank check, upright rotation, downscale to <= OCR_MAX_IMAGE_DIMENSION, JPEG. The rotation
             # found at ingestion is reused (finding it again would cost 1-4 model calls and ~20 s inside the chat turn).

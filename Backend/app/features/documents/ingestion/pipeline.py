@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import inspect
 import logging
 import time
 import uuid
@@ -67,6 +68,17 @@ class OcrRead(NamedTuple):
     rotation: int | None  # clockwise degrees the image was turned to be upright; None = not determined
 
 
+def _supports_kwarg(fn, kwarg_name: str) -> bool:
+    target = getattr(fn, "side_effect", None) or fn
+    try:
+        sig = inspect.signature(target)
+        return kwarg_name in sig.parameters or any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        )
+    except Exception:
+        return False
+
+
 class _OcrReader:
     """Reads images through two cheap layers before paying for a vision call, for one document:
 
@@ -87,16 +99,16 @@ class _OcrReader:
         self.cache_hits = 0
         self.shared_in_document = 0
 
-    async def read(self, data: bytes, fmt: str) -> OcrRead:
+    async def read(self, data: bytes, fmt: str, debug_info: dict | None = None) -> OcrRead:
         key = ocr_cache_key(data)
         pending = self._reads.get(key)
         if pending is None:
-            pending = self._reads[key] = asyncio.ensure_future(self._read_once(key, data, fmt))
+            pending = self._reads[key] = asyncio.ensure_future(self._read_once(key, data, fmt, debug_info=debug_info))
         else:
             self.shared_in_document += 1
         return await pending
 
-    async def _read_once(self, key: str, data: bytes, fmt: str) -> OcrRead:
+    async def _read_once(self, key: str, data: bytes, fmt: str, debug_info: dict | None = None) -> OcrRead:
         if self._db is not None:
             async with self._db_lock:
                 cached = await get_cached_ocr(self._db, key)
@@ -106,7 +118,11 @@ class _OcrReader:
         report: dict = {}
         async with self._api_slots:
             self.api_calls += 1
-            text = (await extract_text_from_image(data, fmt, report=report)).replace("\x00", "").strip()
+            kw = {"report": report}
+            if debug_info and _supports_kwarg(extract_text_from_image, "debug_info"):
+                kw["debug_info"] = debug_info
+            raw_ocr = await extract_text_from_image(data, fmt, **kw)
+            text = (raw_ocr or "").replace("\x00", "").strip()
         rotation = report.get("rotation")
         if text and self._db is not None:
             async with self._db_lock:
@@ -202,7 +218,8 @@ class OCRStep(IngestionStep):
                 rendered = await asyncio.to_thread(render_pdf_page, context.file_path, page.page_number)
             if rendered is None:
                 return
-            ocr = await reader.read(rendered.data, rendered.format)
+            debug_info = {"document_id": str(context.document_id), "page_number": page.page_number}
+            ocr = await reader.read(rendered.data, rendered.format, debug_info=debug_info)
         except Exception as exc:
             logger.warning("Page OCR failed for page %d of %s: %s", page.page_number, context.document_id, exc)
             return
@@ -216,7 +233,8 @@ class OCRStep(IngestionStep):
     async def _append_image_text(self, page, images, reader: _OcrReader, whole_page_image: bool = False) -> None:
         for img in images:
             try:
-                ocr = await reader.read(img.data, img.format)
+                debug_info = {"document_id": str(getattr(page, "document_id", "adhoc")), "page_number": page.page_number}
+                ocr = await reader.read(img.data, img.format, debug_info=debug_info)
             except Exception as exc:
                 logger.warning("OCR extraction failed for image %s on page %d: %s", img.name, page.page_number, exc)
                 continue

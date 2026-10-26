@@ -4,8 +4,10 @@ import contextlib
 import io
 import logging
 import re
+import time
 from collections.abc import AsyncIterator
 from contextvars import ContextVar
+from typing import Any
 
 import httpx
 from openai import AsyncOpenAI
@@ -21,6 +23,7 @@ from app.features.documents.ingestion.image_orientation import (
     rotate_clockwise,
 )
 from app.features.documents.ingestion.layout_helper import LayoutBlockBox, crop_image_box, detect_tables_with_mistral
+from app.features.documents.ingestion.ocr_debugger import save_ocr_debug_artifacts
 
 logger = logging.getLogger(__name__)
 
@@ -338,12 +341,19 @@ def replace_markdown_tables(full_text: str, precise_tables: list[str]) -> str:
     return "".join(result_parts).strip()
 
 
-async def extract_text_from_image(image_bytes: bytes, image_format: str = "png", report: dict | None = None) -> str:
+async def extract_text_from_image(
+    image_bytes: bytes,
+    image_format: str = "png",
+    report: dict | None = None,
+    debug_info: dict | None = None,
+) -> str:
     """Uses a vision-capable LLM to perform OCR and structured data extraction from an image.
     When layout analysis via Mistral is active, the page is broken into tight bounding boxes
     (tables, headers, text paragraphs, footers) and each cropped region is sent to the vision
     model in parallel. This completely eliminates empty page margins, dramatically saving tokens
     and maximizing pixel density for both text and dense tables.
+    Also produces live step-by-step console logs and persists visual debug inspection artifacts
+    (annotated image with colored bounding boxes, crop image files, and debug_trace.json).
     Falls back gracefully to full-page vision OCR if layout analysis fails or detects no blocks.
     `report` (optional) receives `rotation` - the clockwise degrees the image was turned to be upright."""
     settings = get_settings()
@@ -356,6 +366,10 @@ async def extract_text_from_image(image_bytes: bytes, image_format: str = "png",
     if not settings.llm_api_key:
         logger.debug("LLM API key is empty, skipping Vision OCR.")
         return ""
+
+    doc_id = str(debug_info.get("document_id", "adhoc")) if debug_info else "adhoc"
+    page_num = int(debug_info.get("page_number", 1)) if debug_info else 1
+    start_total = time.monotonic()
 
     try:
         pil_img = None
@@ -373,6 +387,10 @@ async def extract_text_from_image(image_bytes: bytes, image_format: str = "png",
         else:
             optimized_bytes, mime_type = await asyncio.to_thread(_encode_for_ocr, pil_img)
 
+        orig_w, orig_h = pil_img.size if pil_img is not None else (0, 0)
+        logger.info("=" * 70)
+        logger.info("[OCR:START] Doc: %s | Page: %s | Image: %dx%d (300 DPI)", doc_id, page_num, orig_w, orig_h)
+
         mistral_key = (
             getattr(settings, "effective_mistral_api_key", "")
             or getattr(settings, "mistral_api_key", "")
@@ -382,16 +400,41 @@ async def extract_text_from_image(image_bytes: bytes, image_format: str = "png",
 
         if two_stage_active:
             try:
+                mistral_start = time.monotonic()
+                logger.info("[OCR:LAYOUT] Sending image to Mistral OCR for layout detection...")
                 layout_res = await detect_tables_with_mistral(pil_img, padding=30)
+                mistral_dur_ms = (time.monotonic() - mistral_start) * 1000
+
                 blocks = (
                     getattr(layout_res, "blocks", None)
                     or getattr(layout_res, "table_boxes", None)
                     or (layout_res if isinstance(layout_res, (list, tuple)) else [])
                 )
                 if blocks:
-                    logger.info("Layout-guided OCR: processing %d cropped block(s) with vision model.", len(blocks))
+                    table_count = sum(1 for b in blocks if getattr(b, "block_type", "") == "table")
+                    logger.info(
+                        "[OCR:LAYOUT] Mistral detected %d cohesive block(s) in %.2fs (%d table(s))",
+                        len(blocks),
+                        mistral_dur_ms / 1000,
+                        table_count,
+                    )
+                    for idx, b in enumerate(blocks, 1):
+                        logger.info(
+                            "   -> Block #%d [%s]: box=[%d, %d, %d, %d] (%dx%d px)",
+                            idx,
+                            b.block_type,
+                            b.x1,
+                            b.y1,
+                            b.x2,
+                            b.y2,
+                            b.width,
+                            b.height,
+                        )
 
-                    async def _process_block(block: LayoutBlockBox) -> str:
+                    logger.info("[OCR:VISION] Dispatching %d crop(s) concurrently to Vision model...", len(blocks))
+
+                    async def _process_block(idx: int, block: LayoutBlockBox) -> dict[str, Any]:
+                        b_start = time.monotonic()
                         cropped = crop_image_box(pil_img, block)
                         crop_bytes, crop_mime = await asyncio.to_thread(_encode_for_ocr, cropped)
                         b64_crop = base64.b64encode(crop_bytes).decode("utf-8")
@@ -405,24 +448,80 @@ async def extract_text_from_image(image_bytes: bytes, image_format: str = "png",
                             settings.ocr_max_tokens,
                         )
                         content = (resp.choices[0].message.content or "").strip()
-                        return "" if content in ("---", "N/A", "none", "خالی", "None") else content
+                        content = "" if content in ("---", "N/A", "none", "خالی", "None") else content
+                        dur_ms = (time.monotonic() - b_start) * 1000
 
-                    block_texts = await asyncio.gather(*[_process_block(b) for b in blocks])
-                    clean_parts = [t for t in block_texts if t]
+                        preview = " ".join(content[:70].split())
+                        if len(content) > 70:
+                            preview += "..."
+                        logger.info(
+                            "[OCR:VISION] Block #%d [%s] completed in %.2fs (%d chars): %s",
+                            idx,
+                            block.block_type,
+                            dur_ms / 1000,
+                            len(content),
+                            repr(preview),
+                        )
+                        return {
+                            "block_index": idx,
+                            "block_type": block.block_type,
+                            "text": content,
+                            "duration_ms": round(dur_ms, 1),
+                        }
+
+                    block_results = await asyncio.gather(*[_process_block(i, b) for i, b in enumerate(blocks, 1)])
+                    clean_parts = [r["text"] for r in block_results if r["text"]]
+                    final_text = "\n\n".join(clean_parts)
+                    total_dur_ms = (time.monotonic() - start_total) * 1000
+
+                    # Save visual debug artifacts and trace
+                    saved_path = await asyncio.to_thread(
+                        save_ocr_debug_artifacts,
+                        document_id=doc_id,
+                        page_number=page_num,
+                        pil_img=pil_img,
+                        blocks=blocks,
+                        block_results=block_results,
+                        final_text=final_text,
+                        total_duration_ms=total_dur_ms,
+                        mistral_duration_ms=mistral_dur_ms,
+                    )
+                    if saved_path:
+                        logger.info("[OCR:DEBUG] Saved visual inspection overlay and crops to: %s", saved_path)
+
+                    logger.info(
+                        "[OCR:DONE] Page %s complete in %.2fs (Total text: %d chars from %d blocks)",
+                        page_num,
+                        total_dur_ms / 1000,
+                        len(final_text),
+                        len(clean_parts),
+                    )
+                    logger.info("=" * 70)
                     if clean_parts:
-                        return "\n\n".join(clean_parts)
+                        return final_text
             except Exception as layout_exc:
                 logger.warning("Layout-guided block OCR failed (%s); falling back to full-page vision OCR.", layout_exc)
 
         # Fallback: full-page Vision OCR (when Mistral is disabled, returns no blocks, or errors)
+        logger.info("[OCR:FALLBACK] Running full-page Vision OCR for doc %s page %s...", doc_id, page_num)
         b64_img = base64.b64encode(optimized_bytes).decode("utf-8")
         response = await _vision_chat(
             _vision_client(), _vision_model(), SYSTEM_OCR_PROMPT, mime_type, b64_img, settings.ocr_max_tokens
         )
         cleaned = (response.choices[0].message.content or "").strip()
-        if cleaned in ("---", "N/A", "none", "خالی", "None", ""):
-            return ""
-        return cleaned
+        cleaned_text = "" if cleaned in ("---", "N/A", "none", "خالی", "None") else cleaned
+        total_dur_ms = (time.monotonic() - start_total) * 1000
+        logger.info(
+            "[OCR:DONE] Fallback full-page OCR finished in %.2fs (%d chars)",
+            total_dur_ms / 1000,
+            len(cleaned_text),
+        )
+        logger.info("=" * 70)
+        return cleaned_text
+
+    except Exception as exc:
+        logger.warning("Vision OCR request failed for image (%s): %s", image_format, exc)
+        return ""
 
     except Exception as exc:
         logger.warning("Vision OCR request failed for image (%s): %s", image_format, exc)
