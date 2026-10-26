@@ -15,11 +15,14 @@ logger = logging.getLogger(__name__)
 def setup_admin_panel(app: FastAPI) -> None:
     """Mounts SQLAdmin at /db-admin with session-based authentication."""
     try:
-        from sqladmin import Admin, ModelView
+        from sqladmin import Admin, ModelView, BaseView, expose
         from sqladmin.authentication import AuthenticationBackend
+        from starlette.responses import HTMLResponse, RedirectResponse
     except ImportError:
         logger.warning("sqladmin not installed, skipping admin panel setup.")
         return
+
+    from app.features.admin.ocr_inspector_template import OCR_INSPECTOR_HTML
 
     from app.features.access_control.models import Team, TeamMembership
     from app.features.auth.models import RefreshToken, User, UserRole
@@ -202,6 +205,23 @@ def setup_admin_panel(app: FastAPI) -> None:
         column_details_exclude_list = [SchemaHint.embedding]
         form_excluded_columns = [SchemaHint.embedding, SchemaHint.updated_at]
 
+    class OCRInspectorAdmin(BaseView):
+        name = "OCR Inspector"
+        icon = "fa-solid fa-eye"
+
+        def is_accessible(self, request: Request) -> bool:
+            user_role = request.session.get("user_role")
+            return user_role in (UserRole.SUPER_ADMIN.value, UserRole.ADMIN.value)
+
+        def is_visible(self, request: Request) -> bool:
+            return self.is_accessible(request)
+
+        @expose("/ocr-inspector", methods=["GET"])
+        async def inspector_page(self, request: Request) -> HTMLResponse | RedirectResponse:
+            if not self.is_accessible(request):
+                return RedirectResponse("/db-admin/login", status_code=302)
+            return HTMLResponse(OCR_INSPECTOR_HTML)
+
     admin.add_view(UserAdmin)
     admin.add_view(RefreshTokenAdmin)
     admin.add_view(TeamAdmin)
@@ -215,5 +235,6 @@ def setup_admin_panel(app: FastAPI) -> None:
     admin.add_view(MessageAdmin)
     admin.add_view(DbQueryLogAdmin)
     admin.add_view(SchemaHintAdmin)
+    admin.add_base_view(OCRInspectorAdmin)
 
     logger.info("SQLAdmin panel mounted at /db-admin")

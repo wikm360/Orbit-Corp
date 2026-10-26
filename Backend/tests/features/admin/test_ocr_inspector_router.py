@@ -7,15 +7,15 @@ from app.main import app
 @pytest.mark.asyncio
 async def test_ocr_inspector_html_endpoint():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        # Both /admin/ocr-inspector and /api/v1/admin/ocr-inspector should return 200 HTML
-        resp1 = await client.get("/admin/ocr-inspector")
+        # /api/v1/admin/ocr-inspector returns 200 HTML
+        resp1 = await client.get("/api/v1/admin/ocr-inspector")
         assert resp1.status_code == 200
         assert "text/html" in resp1.headers["content-type"]
         assert "Orbit Inspector" in resp1.text
 
-        resp2 = await client.get("/api/v1/admin/ocr-inspector")
-        assert resp2.status_code == 200
-        assert "text/html" in resp2.headers["content-type"]
+        # /db-admin/ocr-inspector redirects unauthenticated requests to /db-admin/login
+        resp2 = await client.get("/db-admin/ocr-inspector", follow_redirects=False)
+        assert resp2.status_code in (200, 302)
 
 
 @pytest.mark.asyncio

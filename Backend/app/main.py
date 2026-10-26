@@ -99,7 +99,6 @@ app.include_router(chat_router, prefix=settings.api_prefix)
 app.include_router(accounting_db_router, prefix=settings.api_prefix)
 app.include_router(admin_router, prefix=settings.api_prefix)
 app.include_router(inspector_router, prefix=settings.api_prefix)
-app.include_router(inspector_router)
 
 setup_admin_panel(app)
 

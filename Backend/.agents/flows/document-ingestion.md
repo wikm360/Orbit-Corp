@@ -68,7 +68,7 @@ worker: Parse ─► OCR ─► Reconstruct ─► Chunk ─► Embed ─► Per
        - تصویر صفحه همراه با جعبه‌های رنگی مشخص (`page_<n>_annotated.png`): قرمز برای جدول (`table`)، آبی برای سربرگ (`header`)، سبز برای متن (`text`)، نارنجی برای پاورقی (`footer`).
        - تصاویر برش‌خورده تک‌تک بلوک‌ها (`page_<n>_crop_<idx>_<type>.png`).
        - فایل کامل متادیتا و لاگ استخراج (`debug_trace.json`) شامل مختصات، ابعاد، متن استخراج‌شده مدل برای هر بلوک، مدت زمان پردازش، و متن نهایی سرهم‌شده.
-     - **داشبورد بازرسی بصری در ادمین**: مسیر `/admin/ocr-inspector` (و APIهای `/admin/ocr-debug/list`، `/admin/ocr-debug/{doc_id}`، `/admin/ocr-debug/{doc_id}/image/{filename}`) برای مشاهده لیست اسناد، پیش‌نمایش تصویر حاشیه‌نویسی‌شده همراه با Bounding Boxها، مقایسه تصویر هر بلوک کراپ‌شده در کنار متن استخراج‌شده توسط مدل ویژن.
+     - **داشبورد بازرسی بصری در ادمین**: مسیر `/db-admin/ocr-inspector` (و APIهای `/admin/ocr-debug/list`، `/admin/ocr-debug/{doc_id}`، `/admin/ocr-debug/{doc_id}/image/{filename}`) برای مشاهده لیست اسناد، پیش‌نمایش تصویر حاشیه‌نویسی‌شده همراه با Bounding Boxها، مقایسه تصویر هر بلوک کراپ‌شده در کنار متن استخراج‌شده توسط مدل ویژن.
      - **لاگ‌های زنده در Docker Compose (`docker compose logs -f worker` و `backend`)**:
        - OCR: تگ‌های `[OCR:START]`، `[OCR:LAYOUT]`، `[OCR:VISION]`، `[OCR:DEBUG]`، `[OCR:DONE]`.
        - چت و ایجنت: تگ‌های `[AGENT:TURN_START]`، `[AGENT:USER_QUERY]`، `[RAG:SEARCH]`، `[RAG:RESULTS]` (امتیاز و عنوان چانک‌ها)، `[AGENT:TOOL_CALL]`، `[AGENT:TOOL_RESULT]`، `[AGENT:VIEW_PAGE]`، `[AGENT:TURN_COMPLETE]`.
