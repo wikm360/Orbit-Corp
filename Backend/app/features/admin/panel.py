@@ -28,7 +28,7 @@ def setup_admin_panel(app: FastAPI) -> None:
     from app.features.auth.models import RefreshToken, User, UserRole
     from app.features.chat.models import Conversation, Message
     from app.features.db_connector.models import DbQueryLog, SchemaHint
-    from app.features.documents.models import Document, DocumentChunk
+    from app.features.documents.models import Document, DocumentChunk, OcrCache
     from app.features.memory.models import ProjectMemory
     from app.features.projects.models import Project, ProjectMembership
 
@@ -205,6 +205,18 @@ def setup_admin_panel(app: FastAPI) -> None:
         column_details_exclude_list = [SchemaHint.embedding]
         form_excluded_columns = [SchemaHint.embedding, SchemaHint.updated_at]
 
+    class OcrCacheAdmin(ModelView, model=OcrCache):
+        name = "OCR Cache"
+        name_plural = "OCR Caches"
+        icon = "fa-solid fa-memory"
+        column_list = [OcrCache.cache_key, OcrCache.vision_model, OcrCache.rotation, OcrCache.created_at]
+        column_searchable_list = [OcrCache.cache_key, OcrCache.text]
+        column_sortable_list = [OcrCache.created_at, OcrCache.vision_model]
+        column_details_list = [OcrCache.cache_key, OcrCache.text, OcrCache.vision_model, OcrCache.rotation, OcrCache.created_at]
+        can_create = False
+        can_edit = False
+        can_delete = True
+
     class OCRInspectorAdmin(BaseView):
         name = "OCR Inspector"
         icon = "fa-solid fa-eye"
@@ -230,6 +242,7 @@ def setup_admin_panel(app: FastAPI) -> None:
     admin.add_view(ProjectMembershipAdmin)
     admin.add_view(DocumentAdmin)
     admin.add_view(DocumentChunkAdmin)
+    admin.add_view(OcrCacheAdmin)
     admin.add_view(ProjectMemoryAdmin)
     admin.add_view(ConversationAdmin)
     admin.add_view(MessageAdmin)
