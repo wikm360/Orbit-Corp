@@ -135,15 +135,16 @@ def merge_table_boxes(boxes: Sequence[LayoutBlockBox], margin: int = 40) -> list
     return merge_layout_blocks(boxes, margin_y=margin, margin_x=margin)
 
 
-def _encode_for_layout_analysis(pil_img: Image.Image, max_dim: int = 1600) -> str:
-    """Encodes a moderately sized JPEG for layout analysis to avoid large network payloads."""
+def _encode_for_layout_analysis(pil_img: Image.Image, max_dim: int = 1100, quality: int = 78) -> str:
+    """Encodes an optimized, lightweight JPEG for layout analysis to avoid network payload timeouts.
+    Retains crisp lines and structural contours while keeping payload size under ~70-90 KB."""
     img = pil_img.convert("RGB")
     w, h = img.size
     if max(w, h) > max_dim:
         scale = max_dim / max(w, h)
         img = img.resize((int(w * scale), int(h * scale)), Image.Resampling.LANCZOS)
     buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=85)
+    img.save(buf, format="JPEG", quality=quality, optimize=True)
     return base64.b64encode(buf.getvalue()).decode("utf-8")
 
 
@@ -189,15 +190,26 @@ async def detect_tables_with_mistral(
         if orig_w < 100 or orig_h < 100:
             return DocumentLayoutResult()
 
-        b64_img = await asyncio.to_thread(_encode_for_layout_analysis, pil_img)
+        b64_img = await asyncio.to_thread(_encode_for_layout_analysis, pil_img, 1100, 78)
         model = getattr(settings, "mistral_ocr_model", "mistral-ocr-latest")
         timeout_sec = float(getattr(settings, "mistral_ocr_timeout_seconds", 25.0))
         timeout_ms = int(timeout_sec * 1000)
 
-        response = await asyncio.wait_for(
-            asyncio.to_thread(_call_mistral_ocr_sync, api_key, model, b64_img, timeout_ms),
-            timeout=timeout_sec + 2.0,
-        )
+        try:
+            response = await asyncio.wait_for(
+                asyncio.to_thread(_call_mistral_ocr_sync, api_key, model, b64_img, timeout_ms),
+                timeout=timeout_sec + 2.0,
+            )
+        except Exception as first_exc:
+            logger.warning(
+                "Mistral layout analysis initial request failed (%s). Retrying with ultra-lightweight payload...",
+                first_exc,
+            )
+            light_b64 = await asyncio.to_thread(_encode_for_layout_analysis, pil_img, 900, 70)
+            response = await asyncio.wait_for(
+                asyncio.to_thread(_call_mistral_ocr_sync, api_key, model, light_b64, timeout_ms),
+                timeout=timeout_sec + 2.0,
+            )
 
         pages = getattr(response, "pages", None) or []
         if not pages:

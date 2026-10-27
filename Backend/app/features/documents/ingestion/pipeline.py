@@ -188,7 +188,7 @@ class OCRStep(IngestionStep):
                     counted_images.add(digest)
                 selected.append(img)
             if selected:
-                jobs.append(self._append_image_text(page, selected, reader, whole_page_image=is_image_file))
+                jobs.append(self._append_image_text(context, page, selected, reader, whole_page_image=is_image_file))
 
         if jobs:
             logger.info(
@@ -230,10 +230,12 @@ class OCRStep(IngestionStep):
             # The OCR'd image is the whole rendered page, so its rotation is the page's: view_document_page reuses it.
             _remember_rotation(page, ocr.rotation)
 
-    async def _append_image_text(self, page, images, reader: _OcrReader, whole_page_image: bool = False) -> None:
+    async def _append_image_text(
+        self, context: IngestionContext, page, images, reader: _OcrReader, whole_page_image: bool = False
+    ) -> None:
         for img in images:
             try:
-                debug_info = {"document_id": str(getattr(page, "document_id", "adhoc")), "page_number": page.page_number}
+                debug_info = {"document_id": str(context.document_id), "page_number": page.page_number}
                 ocr = await reader.read(img.data, img.format, debug_info=debug_info)
             except Exception as exc:
                 logger.warning("OCR extraction failed for image %s on page %d: %s", img.name, page.page_number, exc)
