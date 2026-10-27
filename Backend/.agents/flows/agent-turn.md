@@ -14,8 +14,8 @@
   | `artifact` | `{artifact}` | بلافاصله پس از اجرای ابزار (مثلاً نتیجه‌ی SQL) |
 
 ## ساخت prompt (`_build_messages`)
-1. `system` = `SYSTEM_PROMPT` (انگلیسی: دستیار داخلی سازمان؛ از ابزارها استفاده کن؛ فقط دو نوع فایل می‌بینی؛ هرگز ادعای خواندن فایلی که با ابزار باز نکردی نکن) + **روال پاسخ به سؤال سندی**: همیشه با `search_knowledge_base` شروع کن (نتیجه‌اش صفحه‌ی کامل برترین hitهاست)؛ اگر کافی نبود دوباره با پرسش بازنویسی‌شده؛ فقط اگر hit درست است و اطرافش لازم است چند صفحه با `read_document_pages`؛ `read_entire_document` فقط سند کوتاه یا خلاصه‌ی کل فایل به درخواست صریح. (اندازه‌گیری: در ۹ پرسش نمونه ابزار اول `search_knowledge_base` شد ۷ بار در برابر ۳ بار با پرامپت قبلی؛ پرسش «این فایل درباره‌ی چیست» عمداً می‌تواند `get_document_info` باشد.)
-2. اگر گفتگو سند دارد: فهرست **متادیتا** (نام، `document_id`، status؛ حداکثر ۵۰) — محتوا نه.
+1. `system` = `SYSTEM_PROMPT` (انگلیسی: دستیار داخلی سازمان؛ از ابزارها استفاده کن؛ فقط دو نوع فایل می‌بینی؛ هرگز ادعای خواندن فایلی که با ابزار باز نکردی نکن) + **روال اسناد و تصاویر**: اسناد و تصاویر آپلودشده قبلاً توسط پایپ‌لاین OCR استخراج متن شده‌اند. برای درخواست کل متن/رونویسی یک فایل یا تصویر، بلافاصله `read_entire_document` (یا `read_document_pages`) با `document_id` از فهرست فایل‌های آپلودشده چت فراخوانی شود (نام فایل در RAG سرچ نشود و از `view_document_page` برای متن استفاده نشود). برای سؤالات موضوعی و جزئی از `search_knowledge_base` استفاده شود. ابزار دیداری `view_document_page` فقط مخصوص نقشه‌های فنی، کروکی و دیاگرام‌های غیرمتنی است.
+2. اگر گفتگو سند دارد: فهرست **متادیتا** (نام، `document_id`، status؛ حداکثر ۵۰) با راهنمایی صریح که متن استخراج‌شده از طریق `read_entire_document` در دسترس است.
 3. اگر `project_group`: توضیح گروه‌بودن + پیشوند `@bot` + اینکه پیام انسان‌ها با نام فرستنده شروع می‌شود.
 4. اگر `RAHKARAN_DB_ENABLED`: بند طولانی درباره‌ی `ask_accounting_db` (یک‌بار صدا بزن؛ پرسش خودبسنده‌ی فارسی؛ UI خودش SQL/جدول را نشان می‌دهد پس کوتاه جواب بده؛ اعداد را عیناً نقل کن؛ واحد ریال/تومان؛ تعداد ردیف را از «total rows» ابزار بگو؛ نتیجه‌ی صفر ردیف ≠ نبودن داده).
 5. تاریخچه: **۳۰ پیام آخر** (`_load_history`)؛ نقش `assistant` برای پاسخ‌های AI، `user` برای بقیه. در گروه، پیام کاربر با `"<نام یا ایمیل>: "` شروع می‌شود (نام‌ها با یک query).
@@ -57,7 +57,7 @@ return AgentTurnResult(full_response, citations, artifacts)
   | سایر | لاگ + `Tool '<name>' failed unexpectedly. Try a different approach.` |
 
 ## `ToolExecutionResult`
-`text` (برای مدل) · `citations: list[SourceCitation]` (برای `sources` نهایی؛ فقط `search_knowledge_base` پر می‌کند) · `artifacts: list[dict]` (برای کلاینت؛ فقط ابزار مالی).
+`text` (برای مدل) · `citations: list[SourceCitation]` (برای `sources` نهایی؛ توسط `search_knowledge_base`، `read_entire_document`، `read_document_pages` و `view_document_page` پر می‌شود) · `artifacts: list[dict]` (برای کلاینت؛ فقط ابزار مالی).
 `SourceCitation{document_id, document_filename, chunk_index, snippet(≤300), score, page?}`.
 
 ## تست

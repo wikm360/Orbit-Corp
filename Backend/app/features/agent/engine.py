@@ -37,18 +37,21 @@ SYSTEM_PROMPT = (
     "You can only see two kinds of files: this chat's own uploads and the "
     "project's knowledge base. Never claim to have read a file you did not open "
     "with a tool, and never describe a file that a tool did not return.\n\n"
-    "How to answer questions about documents: ALWAYS start with search_knowledge_base (specific query; keep exact "
-    "numbers, codes and names). Its results already contain the full text of the best-matching pages, so answer from "
-    "them when they suffice. If they do not, search again with a reworded or narrower query; only if a hit is clearly "
-    "the right place but you need more around it, read just those pages with read_document_pages (a few pages, never a "
-    "whole large document). Use read_entire_document only for a short document or when the user explicitly asks for a "
-    "summary/overview of the whole file. Do not read pages 'to be safe' - every page you read costs context.\n\n"
-    "Pictures: some pages are engineering drawings, maps or scans whose text comes out as loose numbers with no labels "
-    "(a page note may say so). If the answer is a dimension/level/label read off a drawing, or the page text cannot say "
-    "what a number measures, do NOT guess from the loose numbers or from other pages: find the page with "
-    "search_knowledge_base, then call view_document_page with that document_id and page number - the page image is "
-    "attached to your next message and you read it yourself. Say where on the drawing you read a number; if you cannot "
-    "tie it to the drawing, say you are not sure."
+    "Document and image processing: ALL documents and images uploaded to this system (PDFs, Word documents, "
+    "scanned letters, and images like PNG/JPEG) are automatically pre-processed by a multi-stage layout OCR pipeline. "
+    "Their full extracted text is already clean, indexed, and directly accessible via your document tools.\n\n"
+    "How to read and answer questions about documents and images:\n"
+    "1. When the user asks for the full text, content, transcription, or summary of an uploaded file, image, or document "
+    "(e.g., 'متن این تصویر را بده', 'کل نامه را بنویس', 'فایل را بخوان'): Immediately call 'read_entire_document' with the "
+    "document_id from the chat uploaded files list (or 'read_document_pages' for specific pages). Do NOT search file names in "
+    "search_knowledge_base (file names are not part of document text), and NEVER use view_document_page to read or transcribe "
+    "text from document images or letters - the clean, high-precision OCR text is in read_entire_document.\n"
+    "2. For specific topical or factual questions across documents (e.g., specific terms, numbers, clauses, dates): "
+    "Use 'search_knowledge_base' with a targeted Persian query describing the fact/topic. Its results already include the "
+    "full text of matching pages.\n"
+    "3. Visual inspection ('view_document_page'): Use ONLY for non-text visual graphics such as architectural/engineering "
+    "drawings (beams, dimensions drawn on blueprints), floor plans, maps, or graphical diagrams where visual layout inspection "
+    "is strictly necessary. NEVER use view_document_page to read or transcribe textual letters, documents, or forms."
 )
 
 # Tools whose `agent_activity` status should read "reading_documents" rather
@@ -256,8 +259,9 @@ class AgentEngine:
                 for doc in attachments[:_MAX_LISTED_ATTACHMENTS]
             )
             system_content += (
-                "\n\nFiles uploaded to this chat (metadata only; read one with your "
-                "document tools when it is relevant to the question):\n" + listing
+                "\n\nFiles uploaded directly to this chat (all text and OCR processing is completed; "
+                "to read the full text/transcription of an uploaded file or image, call read_entire_document with its document_id):\n"
+                + listing
             )
         group = conversation.type == ConversationType.PROJECT_GROUP
         if group:

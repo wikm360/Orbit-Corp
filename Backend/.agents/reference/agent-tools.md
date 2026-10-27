@@ -22,7 +22,7 @@
 - `document_id` باید UUID معتبر باشد (`BadRequestError("'document_id' must be a valid UUID")` وگرنه).
 - ابزارهای سند و حافظه `resolve_retrieval_scope` را صدا می‌زنند؛ اگر گفتگو به پروژه‌ای وصل نیست، فقط اسناد خود گفتگو در دسترس است و ابزارهای memory/`list_project_documents` پیام «isn't linked to any project» می‌دهند.
 - در `search_knowledge_base` شناسه‌ها/شماره‌بندها/نام‌های دقیق را باید در `query` نگه داشت (جست‌وجوی واژگانی آن‌ها را عیناً می‌یابد؛ توضیح ابزار به مدل همین را می‌گوید).
-- `search_knowledge_base` تنها ابزاری است که `citations` تولید می‌کند (که در `message.sources` و `done.sources` می‌آیند)؛ `snippet` = ۳۰۰ نویسه‌ی اول chunk، `score` گرد ۴ رقم.
+- ابزارهای `search_knowledge_base`، `read_entire_document`، `read_document_pages` و `view_document_page` همگی `citations` تولید می‌کنند (که در `message.sources` و `done.sources` می‌آیند)؛ `snippet` = ۳۰۰ نویسه‌ی اول متن/چانک.
 - نتیجه‌ی همه‌ی ابزارها متن است؛ ابزار مالی علاوه بر آن artifact برمی‌گرداند.
 - توضیح ابزارها عمداً مدل را از جست‌وجو شروع می‌دهد: `get_document_info` دیگر «قبل از هر خواندن» توصیه نشده و `read_document_pages` / `read_entire_document` صریحاً «فقط صفحه‌های لازم / فقط سند کوتاه» توصیف شده‌اند. ⚠️ `read_document_pages` هنوز سقف تعداد صفحه/توکن ندارد (بازه‌ی بزرگ = context بزرگ) — ← known-issues.
 - ترتیب ابزارها در لیست ارسالی به مدل = ترتیب ساخت در `build_default_registry` (سند، پروژه، حافظه، سپس مالی).

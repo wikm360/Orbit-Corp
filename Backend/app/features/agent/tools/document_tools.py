@@ -55,9 +55,8 @@ class GetDocumentInfoTool(BaseTool):
 class ReadDocumentPagesTool(BaseTool):
     name = "read_document_pages"
     description = (
-        "Read a specific page range of a document (1-indexed, inclusive). Use it for the few pages that "
-        "search_knowledge_base pointed you to (e.g. the neighbours of a hit), not to scan a document: read "
-        "only the pages you need."
+        "Read the extracted text/OCR for a specific page range of a document (1-indexed, inclusive). "
+        "Use it to read specific pages that the user asked for or that search_knowledge_base pointed you to."
     )
     parameters = {
         "type": "object",
@@ -80,24 +79,42 @@ class ReadDocumentPagesTool(BaseTool):
         end_page: int,
         **_: Any,
     ) -> ToolExecutionResult:
-        text = await documents_service.get_document_page_range(
+        parsed_id = _parse_document_id(document_id)
+        project_id = resolve_retrieval_scope(context, conversation)
+        document = await documents_service.get_accessible_document(
             db,
-            _parse_document_id(document_id),
-            int(start_page),
-            int(end_page),
-            project_id=resolve_retrieval_scope(context, conversation),
+            parsed_id,
+            project_id=project_id,
             conversation_id=conversation.id,
         )
-        return ToolExecutionResult(text=text)
+        text = await documents_service.get_document_page_range(
+            db,
+            parsed_id,
+            int(start_page),
+            int(end_page),
+            project_id=project_id,
+            conversation_id=conversation.id,
+        )
+        citations = [
+            SourceCitation(
+                document_id=str(document.id),
+                document_filename=document.filename,
+                chunk_index=0,
+                snippet=text[:300],
+                score=1.0,
+                page=int(start_page),
+            )
+        ]
+        return ToolExecutionResult(text=text, citations=citations)
 
 
 class ReadEntireDocumentTool(BaseTool):
     name = "read_entire_document"
     description = (
-        "Read a document's full content - only for a SHORT document, or when the user explicitly asks for a summary or "
-        "overview of the whole file. For specific questions use search_knowledge_base instead. Guarded by a size "
-        "limit - if the document is too large, this returns a DOCUMENT_TOO_LARGE error; then use "
-        "search_knowledge_base / read_document_pages."
+        "Read the full extracted text of a document (including clean OCR text for uploaded images/scans). "
+        "Use this whenever the user asks for the full text, transcription, content, or summary of an uploaded file or image. "
+        "Guarded by a size limit - if the document is too large, this returns a DOCUMENT_TOO_LARGE error; then use "
+        "read_document_pages."
     )
     parameters = {
         "type": "object",
@@ -106,27 +123,43 @@ class ReadEntireDocumentTool(BaseTool):
     }
 
     async def execute(self, *, db, context, conversation, document_id: str, **_: Any) -> ToolExecutionResult:
+        parsed_id = _parse_document_id(document_id)
+        project_id = resolve_retrieval_scope(context, conversation)
+        document = await documents_service.get_accessible_document(
+            db,
+            parsed_id,
+            project_id=project_id,
+            conversation_id=conversation.id,
+        )
         result = await documents_service.get_full_document_content(
             db,
-            _parse_document_id(document_id),
-            project_id=resolve_retrieval_scope(context, conversation),
+            parsed_id,
+            project_id=project_id,
             conversation_id=conversation.id,
         )
         if isinstance(result, dict):
             return ToolExecutionResult(text=json.dumps(result, ensure_ascii=False))
-        return ToolExecutionResult(text=result)
+        citations = [
+            SourceCitation(
+                document_id=str(document.id),
+                document_filename=document.filename,
+                chunk_index=0,
+                snippet=result[:300],
+                score=1.0,
+                page=1,
+            )
+        ]
+        return ToolExecutionResult(text=result, citations=citations)
 
 
 class SearchKnowledgeBaseTool(BaseTool):
     name = "search_knowledge_base"
     description = (
-        "PRIMARY tool for any question about the content of documents - use it FIRST, before reading anything. "
-        "Hybrid search (meaning + exact words) across every document visible in this conversation (the project's "
-        "knowledge base and this chat's uploads). It returns the best-matching passages, each widened to its FULL page "
-        "(page text with surrounding tables/columns) when the page is available, so you normally do not need to read "
-        "pages yourself afterwards. Keep exact terms such as clause numbers, codes and names in the query - they are "
-        "matched literally. If the first results do not answer the question, search again with a reworded or more "
-        "specific query. Always scoped to what this conversation can already see."
+        "Search the knowledge base for specific topics, questions, facts, or clauses across all visible documents. "
+        "Hybrid search (semantic meaning + exact keywords). It returns the best-matching passages widened to their full page. "
+        "Keep exact terms such as clause numbers, codes and names in the query. "
+        "DO NOT put file names or generic requests (like 'Dropped Image.png' or 'read entire text') as the query - "
+        "to read an uploaded file or image, use read_entire_document or read_document_pages with its document_id."
     )
     parameters = {
         "type": "object",
@@ -232,14 +265,12 @@ class SearchKnowledgeBaseTool(BaseTool):
 class ViewDocumentPageTool(BaseTool):
     name = "view_document_page"
     description = (
-        "Look at the actual IMAGE of one page of a PDF (or an uploaded image): the picture is attached to your next "
-        "message and you read it yourself. Use it when the extracted text of a page cannot answer the question because the "
-        "answer lives in the picture: engineering drawings/maps/diagrams (dimensions, spans, levels, labels drawn next to a "
-        "view), scanned forms and tables whose text came out as loose numbers or looks wrong, or when you doubt a number "
-        "read from the text. Find the page first with search_knowledge_base (a page note saying it is a drawing is a strong "
-        "hint), then call this with the document_id and page_number. It costs far more context than text (one image is "
-        "several thousand tokens) and the number of views per turn is limited: do not use it for ordinary text "
-        "questions, and view only the page you need. After you see the image, say where on the page you read a number."
+        "Look at the actual raw visual IMAGE of one page of a PDF or image file (costs several thousand image tokens). "
+        "DO NOT use this to read or transcribe text from letters, documents, or forms - all text and OCR is already "
+        "extracted with high precision and available via read_entire_document and read_document_pages! "
+        "Use this ONLY when visual non-text inspection is strictly needed: architectural/engineering drawings (lines, "
+        "dimensions on blueprints), maps, graphical diagrams, stamps, signatures, or when the user specifically asks "
+        "to inspect the visual drawing/layout."
     )
     parameters = {
         "type": "object",

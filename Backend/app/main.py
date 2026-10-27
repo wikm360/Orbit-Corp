@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import sys
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -19,6 +20,16 @@ from app.features.db_connector.router import router as accounting_db_router
 from app.features.documents.router import router as documents_router
 from app.features.memory.router import router as memory_router
 from app.features.projects.router import router as projects_router
+
+# Configure root/app logging so agent loop steps, RAG queries, and tool calls appear in docker compose logs
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    stream=sys.stdout,
+    force=True,
+)
+logging.getLogger("app").setLevel(logging.INFO)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 settings = get_settings()

@@ -403,6 +403,9 @@ async def _get_accessible_document(
     return document
 
 
+get_accessible_document = _get_accessible_document
+
+
 async def get_document_info(
     db: AsyncSession,
     document_id: uuid.UUID,

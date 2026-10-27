@@ -187,3 +187,54 @@ async def test_the_stored_rotation_is_read_from_the_reconstructed_page_metadata(
             (await documents_service.get_document_page_image(db_session, document.id, page, **scope))[2] for page in (1, 2, 3)
         ]
     assert rotations == [None, 270, 0]  # unknown, known sideways, known upright (0 is a real answer, not "missing")
+
+
+async def test_read_entire_document_returns_citations_and_content():
+    from app.features.agent.tools.document_tools import ReadEntireDocumentTool
+
+    doc_id = uuid.uuid4()
+    mock_doc = SimpleNamespace(id=doc_id, filename="letter.png")
+
+    with (
+        patch.object(document_tools, "resolve_retrieval_scope", return_value=None),
+        patch.object(documents_service, "get_accessible_document", new=AsyncMock(return_value=mock_doc)),
+        patch.object(documents_service, "get_full_document_content", new=AsyncMock(return_value="متن کامل نامه اداری OCR شده")),
+    ):
+        result = await ReadEntireDocumentTool().execute(
+            db=None,
+            context=SimpleNamespace(),
+            conversation=SimpleNamespace(id=uuid.uuid4()),
+            document_id=str(doc_id),
+        )
+
+    assert result.text == "متن کامل نامه اداری OCR شده"
+    assert len(result.citations) == 1
+    assert result.citations[0].document_filename == "letter.png"
+    assert result.citations[0].snippet == "متن کامل نامه اداری OCR شده"
+    assert result.citations[0].score == 1.0
+
+
+async def test_read_document_pages_returns_citations_and_content():
+    from app.features.agent.tools.document_tools import ReadDocumentPagesTool
+
+    doc_id = uuid.uuid4()
+    mock_doc = SimpleNamespace(id=doc_id, filename="contract.pdf")
+
+    with (
+        patch.object(document_tools, "resolve_retrieval_scope", return_value=None),
+        patch.object(documents_service, "get_accessible_document", new=AsyncMock(return_value=mock_doc)),
+        patch.object(documents_service, "get_document_page_range", new=AsyncMock(return_value="صفحه ۱ قرارداد")),
+    ):
+        result = await ReadDocumentPagesTool().execute(
+            db=None,
+            context=SimpleNamespace(),
+            conversation=SimpleNamespace(id=uuid.uuid4()),
+            document_id=str(doc_id),
+            start_page=1,
+            end_page=1,
+        )
+
+    assert result.text == "صفحه ۱ قرارداد"
+    assert len(result.citations) == 1
+    assert result.citations[0].document_filename == "contract.pdf"
+    assert result.citations[0].page == 1
