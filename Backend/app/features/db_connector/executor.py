@@ -3,6 +3,7 @@
 import asyncio
 import datetime
 import decimal
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -67,6 +68,32 @@ def _connect():
     )
 
 
+def _clean_pymssql_error(exc: pymssql.Error) -> tuple[str, bool]:
+    text = str(exc)
+    code = exc.args[0] if exc.args and isinstance(exc.args[0], int) else None
+    is_timeout = code == 20047 or "timeout" in text.lower() or "timed out" in text.lower()
+
+    if is_timeout:
+        msg = (
+            "Query timed out (>30s). The query execution was too heavy to complete within the time limit. "
+            "Please optimize the query (e.g. by applying narrower date/period filters, using TOP, or avoiding full-table scans)."
+        )
+        return msg, True
+
+    if len(exc.args) > 1:
+        raw_msg = exc.args[1]
+        msg = raw_msg.decode("utf-8", errors="replace") if isinstance(raw_msg, bytes) else str(raw_msg)
+    else:
+        msg = text
+
+    # Strip FreeTDS / DB-Lib boilerplate wrappers while preserving the actual database error message
+    msg = re.sub(r"DB-Lib error message \d+, severity \d+:\s*", "", msg)
+    msg = re.sub(r"Net-Lib error during .*?\n", "", msg)
+    msg = re.sub(r"DB-Library:?\s*", "", msg)
+    clean = msg.strip().replace("\n", " ")
+    return clean[:400] or "SQL Server error", False
+
+
 def _run_sync(sql: str, max_rows: int) -> tuple[list[str], list[list], bool]:
     conn = _connect()
     try:
@@ -80,11 +107,8 @@ def _run_sync(sql: str, max_rows: int) -> tuple[list[str], list[list], bool]:
         rows = [[_jsonable(v) for v in row] for row in fetched[:max_rows]]
         return columns, rows, truncated
     except pymssql.Error as exc:
-        text = str(exc)
-        timeout = "timeout" in text.lower() or "timed out" in text.lower()
-        # pymssql errors look like (207, b"Invalid column name 'x'.DB-Lib error ...") - keep the readable part.
-        readable = text.split("DB-Lib")[0].strip("(), ")
-        raise DbExecutionError(readable[:400] or "SQL Server error", timeout=timeout) from exc
+        readable, timeout = _clean_pymssql_error(exc)
+        raise DbExecutionError(readable, timeout=timeout) from exc
     finally:
         conn.close()
 

@@ -191,3 +191,48 @@ async def test_persistent_empty_result_is_reported_as_empty_not_error(db_session
 
     result = await query_accounting_db(db_session, question="x", generator=Gen())
     assert "۰ ردیف" in result and "نگو «داده‌ای وجود ندارد»" in result
+
+
+def test_clean_pymssql_error():
+    from app.features.db_connector.executor import _clean_pymssql_error
+
+    class MockErr:
+        def __init__(self, *args):
+            self.args = args
+
+        def __str__(self):
+            return str(self.args)
+
+    # 1. Timeout 20047
+    msg, is_timeout = _clean_pymssql_error(MockErr(20047, b"DB-Library: Query timed out\n"))
+    assert is_timeout is True
+    assert "Query timed out" in msg
+    assert "optimize the query" in msg
+
+    # 2. SQL Server column error 207
+    msg, is_timeout = _clean_pymssql_error(MockErr(207, b"DB-Lib error message 207, severity 16:\nInvalid column name 'xyz'.\n"))
+    assert is_timeout is False
+    assert msg == "Invalid column name 'xyz'."
+
+    # 3. SQL Server object error 208
+    msg, is_timeout = _clean_pymssql_error(MockErr(208, b"DB-Lib error message 208, severity 16:\nInvalid object name 'ai.fake'.\n"))
+    assert is_timeout is False
+    assert msg == "Invalid object name 'ai.fake'."
+
+
+@pytest.mark.asyncio
+async def test_timeout_shows_user_friendly_persian_reason(db_session, monkeypatch):
+    from app.features.db_connector.executor import DbExecutionError
+
+    async def mock_execute(sql: str, max_rows=None):
+        raise DbExecutionError("Query timed out (>30s)", timeout=True)
+
+    monkeypatch.setattr("app.features.db_connector.service.execute_query", mock_execute)
+
+    class Gen:
+        async def generate(self, question, hint_blocks, previous):
+            return "SELECT * FROM ai.payroll_monthly"
+
+    result = await query_accounting_db(db_session, question="حقوق", generator=Gen())
+    assert "سقف مجاز (۳۰ ثانیه)" in result
+    assert "20047, b'" not in result

@@ -241,7 +241,10 @@ async def run_accounting_query(
         return AccountingAnswer(text=text, artifact=artifact, query_id=str(log.id), status=status)
 
     # On failure after max attempts:
-    reason = last_error or "عدم موفقیت در تولید و اجرای کوئری معتبر"
+    if last_error and ("timed out" in last_error.lower() or "timeout" in last_error.lower()):
+        reason = "زمان اجرای این استعلام به دلیل حجم بالای داده یا پیچیدگی محاسبات بیش از سقف مجاز (۳۰ ثانیه) طول کشید؛ لطفاً بازه زمانی مشخص‌تری تعیین کنید."
+    else:
+        reason = last_error or "عدم موفقیت در تولید و اجرای کوئری معتبر"
     return AccountingAnswer(
         text=(
             f"⚠️ **خطا در دریافت اطلاعات از پایگاه داده راهکاران**\n\n"

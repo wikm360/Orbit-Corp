@@ -64,7 +64,7 @@ run_accounting_query(db, question, user_id, conversation_id)
 - در thread (`asyncio.to_thread`) چون pymssql sync است. هر query اتصال جدید باز و می‌بندد (بدون pool).
 - `SET ROWCOUNT (max_rows+1)` سپس `<sql>\nOPTION (USE HINT('DISABLE_OPTIMIZER_ROWGOAL'))` (جلوگیری از planهای فاجعه‌بار nested-loop برای `TOP n … ORDER BY`؛ trace flag 4138 هم در `apply.py` سراسری فعال می‌شود ولی با restart سرور از بین می‌رود). `max_rows` = `RAHKARAN_DB_MAX_ROWS`=۵۰۰؛ ردیف اضافه برای تشخیص `truncated`.
 - مقادیر JSON-safe: Decimal→int/float، تاریخ→ISO، bytes→`<N bytes>`، UUID→str.
-- خطاها → `DbExecutionError(message, timeout)` (متن خوانا از pymssql).
+- خطاها → `DbExecutionError(message, timeout)` (پیام خطای خوانا از pymssql، تفکیک صریح خطای تایم‌اوت ۲0047 همراه با راهنمای بهینه‌سازی برای مدل در تلاش‌های مجدد، و پیام فارسی کاربرپسند در صورت شکست نهایی).
 - `data_freshness()`: `SELECT item,value FROM ai.data_freshness` با cache ۶۰۰ث؛ هرگز استثنا نمی‌دهد.
 هیچ semaphore/محدودیت هم‌زمانی روی اجرای SQL نیست.
 
