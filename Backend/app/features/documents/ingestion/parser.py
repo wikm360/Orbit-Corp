@@ -15,8 +15,14 @@ from app.features.documents.ingestion.text_layer import TEXT_OK, TEXT_VISUAL_PER
 logger = logging.getLogger(__name__)
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
-DOCUMENT_EXTENSIONS = {".pdf", ".docx", ".pptx", ".xlsx", ".txt"}
+# Legacy/odd office formats are converted to their OOXML twin with LibreOffice first (see converter.py).
+LEGACY_OFFICE_EXTENSIONS = {".xls", ".xlsm", ".ods", ".doc", ".rtf", ".odt", ".ppt", ".odp"}
+DOCUMENT_EXTENSIONS = {".pdf", ".docx", ".pptx", ".xlsx", ".csv", ".txt"} | LEGACY_OFFICE_EXTENSIONS
 SUPPORTED_EXTENSIONS = DOCUMENT_EXTENSIONS | IMAGE_EXTENSIONS
+
+# A sheet is split into pages of this many rows (header row repeated on each) so a retrieved chunk is self-describing.
+XLSX_ROWS_PER_PAGE = 60
+XLSX_MAX_ROWS_PER_SHEET = 20000
 
 
 @dataclass
@@ -61,6 +67,13 @@ def parse_document_pages(file_path: str) -> list[DocumentPage]:
         return _parse_xlsx_pages(file_path)
     if suffix == ".txt":
         return _parse_txt_pages(file_path)
+    if suffix == ".csv":
+        return _parse_csv_pages(file_path)
+    if suffix in LEGACY_OFFICE_EXTENSIONS:
+        from app.features.documents.ingestion.converter import converted_copy
+
+        with converted_copy(file_path) as modern:
+            return parse_document_pages(modern)
     if suffix in IMAGE_EXTENSIONS:
         return _parse_image_pages(file_path)
 
@@ -330,21 +343,47 @@ def render_pdf_page(file_path: str, page_number: int) -> ExtractedImage | None:
     return _try_render_pdf_page_with_pdftoppm(file_path, page_number)
 
 
+def _docx_cell_text(cell) -> str:
+    return " ".join(p.text.strip() for p in cell.paragraphs if p.text.strip())
+
+
+def _docx_table_text(table) -> str:
+    rows = []
+    for row in table.rows:
+        cells, seen = [], set()
+        for cell in row.cells:
+            if id(cell._tc) in seen:  # a merged cell is returned once per grid column it spans
+                continue
+            seen.add(id(cell._tc))
+            cells.append(_docx_cell_text(cell))
+        if any(cells):
+            rows.append(" | ".join(cells))
+    return "\n".join(rows)
+
+
 def _parse_docx_pages(file_path: str) -> list[DocumentPage]:
     import docx
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
 
     document = docx.Document(file_path)
-    paragraphs = [p.text.strip() for p in document.paragraphs if p.text.strip()]
-
-    # Extract tables
-    for table in document.tables:
-        table_rows = []
-        for row in table.rows:
-            cells = [c.text.strip() for c in row.cells]
-            if any(cells):
-                table_rows.append(" | ".join(cells))
-        if table_rows:
-            paragraphs.append("\n".join(table_rows))
+    # Body order (paragraphs and tables interleaved) with headings kept as markdown, so a table stays next to the
+    # sentence that introduces it instead of being appended at the end.
+    paragraphs: list[str] = []
+    for child in document.element.body.iterchildren():
+        if child.tag.endswith("}p"):
+            paragraph = Paragraph(child, document)
+            text = paragraph.text.strip()
+            if not text:
+                continue
+            style = (paragraph.style.name if paragraph.style is not None else "") or ""
+            if style.lower().startswith("heading ") and style[8:].strip().isdigit():
+                text = f"{'#' * min(int(style[8:]), 6)} {text}"
+            paragraphs.append(text)
+        elif child.tag.endswith("}tbl"):
+            table_text = _docx_table_text(Table(child, document))
+            if table_text:
+                paragraphs.append(table_text)
 
     text = "\n\n".join(paragraphs)
 
@@ -432,24 +471,85 @@ def _parse_pptx_pages(file_path: str) -> list[DocumentPage]:
     return pages
 
 
+def _xlsx_cell(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    if hasattr(value, "isoformat"):
+        iso = value.isoformat()
+        return iso[:-9] if iso.endswith("T00:00:00") else iso.replace("T", " ")
+    return str(value).replace("\n", " ").strip()
+
+
+def _sheet_pages(title: str, rows: list[list[str]], first_page: int) -> list[DocumentPage]:
+    """Splits a sheet's rows into pages of `XLSX_ROWS_PER_PAGE`, repeating the first row (header) on each."""
+    header = rows[0]
+    pages: list[DocumentPage] = []
+    for lo in range(0, len(rows), XLSX_ROWS_PER_PAGE):
+        body = rows[lo : lo + XLSX_ROWS_PER_PAGE]
+        lines = [f"=== Sheet: {title} (rows {lo + 1}-{lo + len(body)} of {len(rows)}) ==="]
+        if lo > 0:
+            lines.append(" | ".join(header))
+        lines.extend(" | ".join(row) for row in body)
+        pages.append(
+            DocumentPage(
+                page_number=first_page + len(pages),
+                text="\n".join(lines),
+                metadata={"page": first_page + len(pages), "sheet_name": title, "rows": f"{lo + 1}-{lo + len(body)}"},
+            )
+        )
+    return pages
+
+
 def _parse_xlsx_pages(file_path: str) -> list[DocumentPage]:
+    """One or more pages per non-empty sheet. Empty cells are kept as empty strings so columns stay aligned."""
     from openpyxl import load_workbook
 
     workbook = load_workbook(file_path, data_only=True, read_only=True)
     pages: list[DocumentPage] = []
-
-    for idx, sheet in enumerate(workbook.worksheets, start=1):
-        lines: list[str] = [f"=== Sheet: {sheet.title} ==="]
-        for row in sheet.iter_rows(values_only=True):
-            cells = [str(cell) for cell in row if cell is not None]
-            if cells:
-                lines.append(" | ".join(cells))
-        pages.append(
-            DocumentPage(
-                page_number=idx,
-                text="\n".join(lines),
-                metadata={"page": idx, "sheet_name": sheet.title},
-            )
-        )
-
+    try:
+        for sheet in workbook.worksheets:
+            if getattr(sheet, "reset_dimensions", None):
+                sheet.reset_dimensions()  # a wrong <dimension> in the file would otherwise truncate/pad the read
+            rows: list[list[str]] = []
+            for values in sheet.iter_rows(values_only=True):
+                cells = [_xlsx_cell(v) for v in values]
+                while cells and not cells[-1]:
+                    cells.pop()
+                if any(cells):
+                    rows.append(cells)
+                if len(rows) >= XLSX_MAX_ROWS_PER_SHEET:
+                    logger.warning("Sheet %r of %s truncated at %d rows", sheet.title, file_path, XLSX_MAX_ROWS_PER_SHEET)
+                    break
+            if rows:
+                pages.extend(_sheet_pages(sheet.title, rows, len(pages) + 1))
+    finally:
+        workbook.close()
+    if not pages:
+        pages.append(DocumentPage(page_number=1, text="", metadata={"page": 1}))
     return pages
+
+
+def _parse_csv_pages(file_path: str) -> list[DocumentPage]:
+    import csv
+
+    text = _parse_txt(file_path)
+    try:
+        dialect = csv.Sniffer().sniff(text[:4096], delimiters=",;\t|")
+    except csv.Error:
+        dialect = csv.excel
+    rows = []
+    for values in csv.reader(io.StringIO(text), dialect):
+        cells = [_xlsx_cell(v) for v in values]
+        while cells and not cells[-1]:
+            cells.pop()
+        if any(cells):
+            rows.append(cells)
+        if len(rows) >= XLSX_MAX_ROWS_PER_SHEET:
+            break
+    if not rows:
+        return [DocumentPage(page_number=1, text="", metadata={"page": 1})]
+    return _sheet_pages(Path(file_path).stem, rows, 1)

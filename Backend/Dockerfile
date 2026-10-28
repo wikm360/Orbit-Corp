@@ -10,6 +10,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     poppler-utils \
     p7zip-full \
+    libreoffice-core \
+    libreoffice-writer \
+    libreoffice-calc \
+    libreoffice-impress \
+    fonts-dejavu-core \
+    fonts-noto-core \
     tesseract-ocr \
     tesseract-ocr-osd \
     && rm -rf /var/lib/apt/lists/*

@@ -1,6 +1,6 @@
 # راهنما: پشتیبانی از فرمت فایل جدید
 
-فرمت‌های فعلی: `.pdf .docx .pptx .xlsx .txt` + تصاویر `.png .jpg .jpeg .webp .bmp .tif .tiff`. جریان کامل: [../flows/document-ingestion.md](../flows/document-ingestion.md).
+فرمت‌های فعلی: `.pdf .docx .pptx .xlsx .csv .txt` + قدیمی/OpenDocument با LibreOffice (`.xls .xlsm .ods .doc .rtf .odt .ppt .odp`) + تصاویر `.png .jpg .jpeg .webp .bmp .tif .tiff`. جریان کامل: [../flows/document-ingestion.md](../flows/document-ingestion.md).
 
 ## قدم‌ها
 1. `app/features/documents/ingestion/parser.py`:
@@ -9,7 +9,7 @@
    - تصاویر را با فیلتر ابعاد `OCR_MIN_IMAGE_DIMENSION` جمع کنید (الگو: PDF/PPTX).
 2. اگر به کتابخانه نیاز دارد: `requirements.txt` (نسخه‌ی pin) و در صورت نیاز بسته‌ی سیستمی در `Dockerfile`.
 3. تست: `tests/features/documents/test_parser.py` (فایل نمونه کوچک در حافظه/tmp).
-4. Content-type/پسوند `.doc/.xls/.ppt` قدیمی: تبدیل با LibreOffice یا کتابخانه‌ی جدا لازم است (فعلاً پشتیبانی نمی‌شود).
+4. فرمت قدیمی/OpenDocument که معادل OOXML دارد: فقط به `LEGACY_OFFICE_EXTENSIONS` (parser.py) و `CONVERTIBLE_EXTENSIONS` (ingestion/converter.py) اضافه کنید.
 5. در پایان [../flows/document-ingestion.md](../flows/document-ingestion.md) و [../reference/api-endpoints.md](../reference/api-endpoints.md) (پیام خطای فرمت) را به‌روز کنید.
 
 ## نکات

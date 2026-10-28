@@ -2,8 +2,8 @@ import { friendlyErrorMessage } from "@/shared/lib/errorMessages";
 import type { BatchUploadItem, BatchUploadResponse } from "../types";
 
 /** Must match the backend `SUPPORTED_EXTENSIONS` (documents + images, which the backend reads with OCR). */
-export const DOCUMENT_ACCEPT = ".pdf,.docx,.pptx,.xlsx,.txt,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff";
-export const UNSUPPORTED_FORMAT_MESSAGE = "فرمت فایل مجاز نیست (PDF، DOCX، PPTX، XLSX، TXT یا تصویر PNG، JPG، WEBP، BMP، TIFF).";
+export const DOCUMENT_ACCEPT = ".pdf,.docx,.doc,.pptx,.ppt,.xlsx,.xls,.xlsm,.csv,.rtf,.odt,.ods,.odp,.txt,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff";
+export const UNSUPPORTED_FORMAT_MESSAGE = "فرمت فایل مجاز نیست (PDF، Word، PowerPoint، Excel، CSV، TXT یا تصویر PNG، JPG، WEBP، BMP، TIFF).";
 export const BATCH_SIZE = 20;
 export const UPLOAD_CONCURRENCY = 2;
 /** Matches the backend `MAX_UPLOAD_SIZE_MB` (per file). */

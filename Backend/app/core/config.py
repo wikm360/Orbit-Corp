@@ -144,6 +144,8 @@ class Settings(BaseSettings):
     ocr_deskew: bool = False
     ocr_crop_margins: bool = False
     ocr_min_image_dimension: int = 60
+    # LibreOffice conversion of .xls/.doc/.ppt/... to their OOXML twin (one headless soffice per file).
+    office_convert_timeout_seconds: int = 180
     # PDF pages whose text layer is unusable (visual-order Persian presentation forms, or symbol garbage) are rendered and
     # OCR'd instead of trusting the layer; capped per document because it is one vision call per page.
     ocr_replace_bad_text_layer: bool = True

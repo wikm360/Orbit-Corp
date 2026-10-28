@@ -366,8 +366,12 @@ async def cancel_document(db: AsyncSession, document: Document) -> Document:
 async def delete_document(db: AsyncSession, document_id: uuid.UUID) -> None:
     document = await get_document(db, document_id)
     file_path = document.file_path
+    was_processing = document.status == DocumentStatus.PROCESSING
     await db.delete(document)
     await db.commit()
+    if was_processing:
+        # A job already running stops before its next paid OCR call (the pipeline also notices the missing row).
+        await request_cancel(document_id)
 
     # Other documents may point at the same physical file (dedup); only
     # remove it from disk once nothing references it anymore.

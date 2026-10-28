@@ -85,6 +85,21 @@ async def test_a_document_cancelled_while_queued_is_not_processed(db_session, tm
     assert await _state(document.id) == (DocumentStatus.CANCELLED, 0)
 
 
+async def test_a_document_deleted_while_queued_is_not_processed(db_session, tmp_path, monkeypatch):
+    document = await _seed_document(db_session, tmp_path)
+    document_id, file_path = document.id, document.file_path
+    await db_session.delete(document)
+    await db_session.commit()
+
+    def explode(_path):
+        raise AssertionError("a deleted document must not even be parsed")
+
+    monkeypatch.setattr(pipeline, "parse_document_pages", explode)
+    await pipeline.run_ingestion_pipeline(document_id, file_path)  # no exception, no work
+
+    assert await _state(document_id) == (None, 0)
+
+
 async def test_cancel_between_steps_stops_the_pipeline_and_keeps_the_cancelled_status(db_session, tmp_path, monkeypatch):
     document = await _seed_document(db_session, tmp_path)
     ran: list[str] = []

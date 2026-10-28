@@ -59,7 +59,7 @@ class ParseStep(IngestionStep):
     """Extracts structured pages, text, and embedded/scanned images."""
 
     async def run(self, context: IngestionContext) -> None:
-        context.pages = parse_document_pages(context.file_path)
+        context.pages = await asyncio.to_thread(parse_document_pages, context.file_path)
         # Strip any NUL byte from initial text
         for page in context.pages:
             page.text = page.text.replace("\x00", "")
@@ -362,11 +362,15 @@ async def run_ingestion_pipeline(document_id: uuid.UUID, file_path: str) -> None
     """Entry point called by the RQ worker for a single uploaded document."""
     async with async_session_factory() as db:
         document = await db.get(Document, document_id)
-        if document is not None and document.status != DocumentStatus.PROCESSING:
+        if document is None:
+            # Deleted while still waiting in the queue: nothing to process, and no paid OCR/embedding calls.
+            logger.info("Ingestion %s skipped: document no longer exists", document_id)
+            return
+        if document.status != DocumentStatus.PROCESSING:
             # Cancelled while still waiting in the queue (or already finished by an earlier job).
             logger.info("Ingestion %s skipped: document is %s", document_id, document.status.value)
             return
-        filename = document.filename if document is not None else ""
+        filename = document.filename
         context = IngestionContext(
             document_id=document_id, file_path=file_path, db=db, filename=filename
         )

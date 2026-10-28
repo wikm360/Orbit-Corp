@@ -23,11 +23,11 @@ worker: Parse ─► OCR ─► Reconstruct ─► Chunk ─► Embed ─► Per
 (حذف سند گفتگو از طریق API وجود ندارد؛ با حذف گفتگو cascade می‌شود.)
 
 ## اعتبارسنجی
-- **scope گفتگو:** پسوند باید در `SUPPORTED_EXTENSIONS` باشد: **`.pdf .docx .pptx .xlsx .txt` + تصاویر `.png .jpg .jpeg .webp .bmp .tif .tiff`**. در غیر این‌صورت 400.
+- **scope گفتگو:** پسوند باید در `SUPPORTED_EXTENSIONS` باشد: **`.pdf .docx .pptx .xlsx .csv .txt` + `.xls .xlsm .ods .doc .rtf .odt .ppt .odp` (تبدیل با LibreOffice، `ingestion/converter.py`) + تصاویر `.png .jpg .jpeg .webp .bmp .tif .tiff`**. در غیر این‌صورت 400.
 - حجم ≤ `MAX_UPLOAD_SIZE_MB` (۲۰۰). در endpoint تک‌فایل کل فایل در حافظه خوانده می‌شود (`await file.read()`)؛ در batch فایل‌ها یکی‌یکی.
 - batch: حداکثر `MAX_BATCH_UPLOAD_FILES` (۲۰) فایل در هر درخواست، وگرنه 400؛ فایل خالی / نام >۵۰۰ نویسه / حجم زیاد به‌صورت `rejected` گزارش می‌شود.
 - Caddy: بدنه‌ی مسیرهای آپلود سند ۶۰۰MB، بقیه‌ی `/api/*` ۶۰MB. `main.py` مقدار `tempfile.tempdir` را روی `UPLOAD_DIR/tmp` می‌گذارد تا spool فایل‌های بزرگ multipart در RAM (tmpfs) نیفتد.
-- **scope پروژه (فایل‌منیجر):** پسوند ناشناخته رد نمی‌شود؛ فایل ذخیره می‌شود با `status=UNSUPPORTED` و `error_message="File type '.x' is not supported yet"` (بدون job). `.doc/.xls/.ppt` قدیمی، `.dwg`, `.mpp`, `.kmz` فعلاً همین‌طورند؛ بعد از افزودن parser، retry آن‌ها را پردازش می‌کند.
+- **scope پروژه (فایل‌منیجر):** پسوند ناشناخته رد نمی‌شود؛ فایل ذخیره می‌شود با `status=UNSUPPORTED` و `error_message="File type '.x' is not supported yet"` (بدون job). `.dwg`, `.mpp`, `.xer`, `.kmz` فعلاً همین‌طورند؛ بعد از افزودن parser، retry آن‌ها را پردازش می‌کند.
 
 ## فایل‌منیجر پروژه (`folder_service.py`, `file_ops.py`)
 - `Document.folder_id` + جدول `document_folders` (درخت، یکتایی نام بدون حساسیت به حروف). نام فایل در `filename` است (بدون مسیر)؛ نام نسبی آپلود (`a/b/c.pdf`) در `_create_document` پوشه می‌سازد (`ensure_folder_path`, get-or-create) و نام تکراری `unique_name` می‌شود (`x (1).pdf`).
