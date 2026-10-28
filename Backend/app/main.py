@@ -1,7 +1,9 @@
 import asyncio
 import logging
 import sys
+import tempfile
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -33,6 +35,15 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+# Starlette spools every multipart upload bigger than 1MB to a temp file. In production /tmp is a tmpfs (RAM, counted in
+# the container's memory limit), so a 150MB drawing or a folder upload would eat memory: spool on the uploads volume instead.
+_upload_tmp = Path(settings.upload_dir) / "tmp"
+try:
+    _upload_tmp.mkdir(parents=True, exist_ok=True)
+    tempfile.tempdir = str(_upload_tmp)
+except OSError as exc:  # read-only or missing volume: keep the system default
+    logger.warning("Cannot use %s for upload spooling (%s); using the default temp dir.", _upload_tmp, exc)
 
 
 async def _auto_sync_schema_hints() -> None:

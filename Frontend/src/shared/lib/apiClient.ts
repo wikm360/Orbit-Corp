@@ -136,4 +136,41 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   return (await response.json()) as T;
 }
 
+/** One XHR attempt; `fetch` cannot report upload progress. `onProgress` gets the fraction of the request body sent. */
+function xhrPost(path: string, formData: FormData, token: string | null, onProgress?: (fraction: number) => void, signal?: AbortSignal): Promise<{ status: number; statusText: string; text: string }> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_BASE_URL}${path}`);
+    if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    xhr.upload.onprogress = (event) => { if (event.lengthComputable && event.total > 0) onProgress?.(event.loaded / event.total); };
+    xhr.onload = () => resolve({ status: xhr.status, statusText: xhr.statusText, text: xhr.responseText });
+    xhr.onerror = () => reject(new TypeError("Network request failed"));
+    xhr.onabort = () => reject(new DOMException("Upload aborted", "AbortError"));
+    signal?.addEventListener("abort", () => xhr.abort(), { once: true });
+    xhr.send(formData);
+  });
+}
+
+/** multipart POST with upload progress; refreshes an expired session once, like `apiRequest`. */
+export async function uploadRequest<T>(path: string, formData: FormData, onProgress?: (fraction: number) => void, signal?: AbortSignal): Promise<T> {
+  const initialToken = storedToken("auth_token");
+  let response = await xhrPost(path, formData, initialToken, onProgress, signal);
+  if (response.status === 401) {
+    const currentToken = storedToken("auth_token");
+    const token = currentToken && currentToken !== initialToken ? currentToken : (await refreshSession())?.access_token ?? null;
+    if (token) response = await xhrPost(path, formData, token, onProgress, signal);
+    if (response.status === 401) notifyUnauthorized();
+  }
+  if (response.status < 200 || response.status >= 300) {
+    let message = response.statusText;
+    try {
+      const body = JSON.parse(response.text);
+      if (typeof body.detail === "string") message = body.detail;
+      else if (Array.isArray(body.detail)) message = body.detail.map((item: { msg?: string }) => item.msg ?? "").filter(Boolean).join("؛ ");
+    } catch { /* no JSON error body */ }
+    throw new ApiError(response.status, message);
+  }
+  return (response.status === 204 || !response.text ? undefined : JSON.parse(response.text)) as T;
+}
+
 export { API_BASE_URL };

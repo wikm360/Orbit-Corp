@@ -61,15 +61,17 @@ async def test_upload_document_forbidden_for_non_manager(client):
     assert response.status_code == 403
 
 
-async def test_upload_rejects_unsupported_extension(client):
+async def test_upload_keeps_unsupported_extension_as_unsupported(client):
+    """The file manager stores a file it cannot parse (it stays visible and can be processed once supported)."""
     leader_headers, project_id, _ = await _setup_leader_with_project(client, "ext")
 
     response = await client.post(
         f"/api/v1/projects/{project_id}/documents",
-        files={"file": ("archive.zip", b"binarydata", "application/zip")},
+        files={"file": ("drawing.dwg", b"binarydata", "application/octet-stream")},
         headers=leader_headers,
     )
-    assert response.status_code == 400
+    assert response.status_code == 200
+    assert response.json()["document"]["status"] == "unsupported"
 
 
 async def test_list_documents_empty_for_new_project(client):

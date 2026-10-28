@@ -9,7 +9,7 @@ export function BatchUploadSummary({ report, documents, isUploading, onRetryFail
   retrying?: boolean;
 }) {
   if (!report) return null;
-  const accepted = report.items.flatMap((item) => item.status === "accepted" ? [item.document] : []);
+  const accepted = report.items.flatMap((item) => item.status === "accepted" && item.document ? [item.document] : []);
   const current = [...new Map(accepted.map((document) => [document.id, documents.find((item) => item.id === document.id) ?? document])).values()];
   const ready = current.filter((document) => document.status === "ready").length;
   const failed = current.filter((document) => document.status === "failed");

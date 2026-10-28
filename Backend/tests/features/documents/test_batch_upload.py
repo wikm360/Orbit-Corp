@@ -30,10 +30,11 @@ async def test_batch_upload_accepts_valid_files_and_reports_rejected_ones_indivi
     response = await client.post(
         f"/api/v1/projects/{project_id}/documents/batch",
         files=[
-            # A folder upload sends the relative path as the file name.
+            # A folder upload sends the relative path as the file name: it becomes folders.
             ("files", ("policies/hr/leave.txt", b"leave policy", "text/plain")),
             ("files", ("policies/finance/travel.txt", b"travel policy", "text/plain")),
-            ("files", ("archive.zip", b"PK\x03\x04", "application/zip")),
+            # A type with no parser is kept (visible, retryable later), not rejected.
+            ("files", ("plan.dwg", b"AC1027", "application/octet-stream")),
             ("files", ("empty.txt", b"", "text/plain")),
         ],
         headers=admin,
@@ -41,27 +42,31 @@ async def test_batch_upload_accepts_valid_files_and_reports_rejected_ones_indivi
 
     assert response.status_code == 200
     body = response.json()
-    assert (body["accepted"], body["rejected"]) == (2, 2)
+    assert (body["accepted"], body["rejected"]) == (3, 1)
 
     by_name = {item["filename"]: item for item in body["items"]}
-    assert by_name["policies/hr/leave.txt"]["status"] == "accepted"
-    assert by_name["policies/hr/leave.txt"]["document"]["status"] == "processing"
-    assert by_name["policies/hr/leave.txt"]["document"]["project_id"] == project_id
+    leave = by_name["policies/hr/leave.txt"]
+    assert leave["status"] == "accepted"
+    assert leave["document"]["filename"] == "leave.txt"
+    assert leave["document"]["status"] == "processing"
+    assert leave["document"]["project_id"] == project_id
+    assert leave["document"]["folder_id"] is not None
     assert by_name["policies/finance/travel.txt"]["status"] == "accepted"
-    assert by_name["archive.zip"]["status"] == "rejected"
-    assert "Unsupported file type" in by_name["archive.zip"]["error"]
+    assert by_name["plan.dwg"]["status"] == "accepted"
+    assert by_name["plan.dwg"]["document"]["status"] == "unsupported"
+    assert "not supported" in by_name["plan.dwg"]["document"]["error_message"]
     assert by_name["empty.txt"] == {
         "filename": "empty.txt",
         "status": "rejected",
         "document": None,
+        "archive": None,
         "error": "File is empty",
     }
 
-    listing = await client.get(f"/api/v1/projects/{project_id}/documents", headers=admin)
-    assert {d["filename"] for d in listing.json()} == {
-        "policies/hr/leave.txt",
-        "policies/finance/travel.txt",
-    }
+    root = (await client.get(f"/api/v1/projects/{project_id}/files", headers=admin)).json()
+    assert [f["folder"]["name"] for f in root["folders"]] == ["policies"]
+    assert [d["filename"] for d in root["documents"]] == ["plan.dwg"]
+    assert root["folders"][0]["status_counts"] == {"processing": 2}
 
 
 async def test_batch_upload_rejects_more_files_than_the_per_request_limit(client):

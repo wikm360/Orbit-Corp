@@ -9,11 +9,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import NamedTuple
 
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.database import async_session_factory
 from app.features.chat.ws import publish_event
+from app.features.documents.cancellation import IngestionCancelled, is_cancel_requested
 from app.features.documents.ingestion.chunker import PageChunk, chunk_document_pages, chunk_text
 from app.features.documents.ingestion.embedder import embed_chunks
 from app.features.documents.ingestion.ocr import extract_text_from_image, ocr_client_session
@@ -117,6 +119,10 @@ class _OcrReader:
                 return OcrRead(*cached)
         report: dict = {}
         async with self._api_slots:
+            # Callers log-and-skip a failed read, so a cancelled document drains its remaining pages without paying
+            # for them; `run_ingestion_pipeline` then notices the cancellation at the next step boundary.
+            if debug_info and await is_cancel_requested(uuid.UUID(debug_info["document_id"])):
+                raise IngestionCancelled()
             self.api_calls += 1
             kw = {"report": report}
             if debug_info and _supports_kwarg(extract_text_from_image, "debug_info"):
@@ -345,10 +351,21 @@ DEFAULT_PIPELINE: list[IngestionStep] = [
 ]
 
 
+async def _assert_still_processing(db: AsyncSession, document_id: uuid.UUID) -> None:
+    """Stops the pipeline if the document was cancelled or deleted meanwhile (the status is read fresh from the DB)."""
+    status = (await db.execute(select(Document.status).where(Document.id == document_id))).scalar_one_or_none()
+    if status != DocumentStatus.PROCESSING:
+        raise IngestionCancelled()
+
+
 async def run_ingestion_pipeline(document_id: uuid.UUID, file_path: str) -> None:
     """Entry point called by the RQ worker for a single uploaded document."""
     async with async_session_factory() as db:
         document = await db.get(Document, document_id)
+        if document is not None and document.status != DocumentStatus.PROCESSING:
+            # Cancelled while still waiting in the queue (or already finished by an earlier job).
+            logger.info("Ingestion %s skipped: document is %s", document_id, document.status.value)
+            return
         filename = document.filename if document is not None else ""
         context = IngestionContext(
             document_id=document_id, file_path=file_path, db=db, filename=filename
@@ -363,17 +380,33 @@ async def run_ingestion_pipeline(document_id: uuid.UUID, file_path: str) -> None
                     type(step).__name__,
                     time.monotonic() - started,
                 )
+                await _assert_still_processing(db, document_id)
+            # Conditional: a cancel that lands after the last check must not be overwritten with READY.
+            finished = await db.execute(
+                update(Document)
+                .where(Document.id == document_id, Document.status == DocumentStatus.PROCESSING)
+                .values(status=DocumentStatus.READY, embedding_model=get_settings().embedding_model)
+                .returning(Document.id)
+            )
+            if finished.scalar_one_or_none() is None:
+                raise IngestionCancelled()
+            await db.commit()
             document = await db.get(Document, document_id)
             if document is not None:
-                document.status = DocumentStatus.READY
-                document.embedding_model = get_settings().embedding_model
-                await db.commit()
+                await db.refresh(document)
                 await _notify_conversation(document)
+        except IngestionCancelled:
+            await db.rollback()
+            # Chunks persisted by a run that was cancelled right at the end must not stay behind (a deleted document's
+            # chunks are already gone through the FK cascade).
+            await db.execute(delete(DocumentChunk).where(DocumentChunk.document_id == document_id))
+            await db.commit()
+            logger.info("Ingestion %s stopped: document was cancelled or deleted", document_id)
         except Exception as exc:  # noqa: BLE001
             await db.rollback()
             logger.exception("Ingestion failed for document %s", document_id)
             document = await db.get(Document, document_id)
-            if document is not None:
+            if document is not None and document.status == DocumentStatus.PROCESSING:
                 document.status = DocumentStatus.FAILED
                 document.error_message = str(exc)[:2000]
                 await db.commit()

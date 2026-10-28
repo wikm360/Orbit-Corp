@@ -57,10 +57,16 @@ erDiagram
 ⚠️ پیام‌های `tool` و `tool_calls` (دورهای میانی agent) **ذخیره نمی‌شوند**؛ فقط متن نهایی + sources + artifacts.
 
 ### `documents` (`documents/models.py`)
-`id` · `filename` (≤500) · `file_path` (مسیر روی دیسک؛ ممکن است بین چند سند هم‌محتوا مشترک باشد) · `content_type` · `status` enum `document_status` (`processing|ready|failed`) · `error_message` · `content_hash` (SHA-256 بایت‌ها، index) · `embedding_model` (مدلی که chunkها با آن ساخته شدند؛ null تا READY) · `project_id` FK CASCADE · `conversation_id` FK CASCADE · `uploaded_by` FK SET NULL · `created_at`.
+`id` · `filename` (≤500) · `file_path` (مسیر روی دیسک؛ ممکن است بین چند سند هم‌محتوا مشترک باشد) · `content_type` · `status` enum `document_status` (`processing|ready|failed|cancelled|unsupported`) · `error_message` · `content_hash` (SHA-256 بایت‌ها، index) · `embedding_model` (مدلی که chunkها با آن ساخته شدند؛ null تا READY) · `project_id` FK CASCADE · `conversation_id` FK CASCADE · `folder_id` FK→`document_folders` CASCADE (null = ریشه‌ی پروژه؛ برای سند گفتگو همیشه null) · `uploaded_by` FK SET NULL · `created_at`.
 **CHECK** `ck_document_single_scope`: دقیقاً یکی از `project_id` / `conversation_id` پر باشد.
 ایندکس‌ها: `project_id`, `conversation_id`, `content_hash`, و `ix_documents_project_conversation` (در 0004).
 رابطه: `chunks` cascade delete-orphan.
+
+### `document_folders` (`documents/models.py`)
+درخت پوشه‌های فایل‌منیجر یک پروژه: `id` · `project_id` FK CASCADE · `parent_id` FK خودش CASCADE (null = ریشه) · `name` (≤255) · `created_by` FK SET NULL · `created_at`. فقط سازمان‌دهی است؛ دسترسی را پروژه تعیین می‌کند. یکتایی نام پوشه: ایندکس یکتای `uq_document_folders_name (project_id, coalesce(parent_id, nil-uuid), lower(name))`. یکتایی نام **فایل** در یک پوشه فقط در سرویس چک می‌شود (نه constraint).
+
+### `archive_imports` (`documents/models.py`)
+یک `.zip/.rar/.7z` آپلودشده که worker باز می‌کند: `id` · `project_id` FK CASCADE · `folder_id` FK CASCADE (مقصد؛ null = ریشه) · `filename` · `file_path` (فایل موقت؛ پس از پایان null و از دیسک پاک می‌شود) · `status` enum `archive_import_status` (`extracting|done|failed`) · `error_message` · `total_files` / `imported_files` / `skipped_files` · `failed_files` JSONB `[{path,error}]` (سقف ۲۰۰) · `uploaded_by` · `created_at` · `finished_at`. اعضای آرشیو سندهای عادی با وضعیت خودشان‌اند.
 
 ### `document_chunks`
 `id` · `document_id` FK CASCADE · `content` · `chunk_index` (ترتیب سراسری در سند، نه در صفحه) · `embedding` **`Vector(EMBEDDING_DIMENSIONS)`** · `chunk_metadata` JSONB (`page`, `total_pages`, `chunk_in_page`, `total_chunks_in_page` + metadata صفحه مثل `sheet_name`) · `search_text` Text (نرمال‌شده‌ی `content`) · `search_tsv` tsvector (ستون generated stored از `search_text`).
@@ -100,5 +106,6 @@ erDiagram
 | `0008_chunk_lexical_search` | افزونه‌ی `pg_trgm`؛ `document_chunks.search_text` (backfill دسته‌ای با همان `normalize` پایتون) و `search_tsv` generated + ایندکس‌های GIN. افزودن ستون generated جدول را یک‌بار بازنویسی می‌کند |
 | `0009_ocr_cache` | جدول `ocr_cache` (نتیجه‌ی OCR بر اساس هش تصویر + مدل/prompt) |
 | `0010_ocr_cache_rotation` | ستون `ocr_cache.rotation` (چرخش پیداشده برای تصویر) |
+| `0011_file_manager` | جدول‌های `document_folders` و `archive_imports`، ستون `documents.folder_id`، مقدارهای `cancelled`/`unsupported` برای `document_status` (در downgrade حذف نمی‌شوند: Postgres حذف مقدار enum را ندارد) |
 
 قواعد: ← [guides/add-migration.md](guides/add-migration.md). تست `tests/test_migrations.py` تضمین می‌کند `upgrade head` دقیقاً همان جدول/ستون‌های `Base.metadata` را می‌سازد (فقط نام ستون‌ها مقایسه می‌شود، نه نوع/ایندکس).

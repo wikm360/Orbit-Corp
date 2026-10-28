@@ -13,8 +13,15 @@
 	}
 
 	# Backend (REST + SSE chat stream). No compression and no buffering so SSE events flush immediately.
+	# Document uploads (project file manager + chat attachments) get a far larger body limit than the rest of the API:
+	# one request carries a file of up to MAX_UPLOAD_SIZE_MB (or an archive of up to MAX_ARCHIVE_SIZE_MB).
 	handle /api/* {
-		request_body {
+		@uploads path_regexp ^/api/v1/(projects/[^/]+/documents|chat/conversations/[^/]+/documents)(/batch)?$
+		@other not path_regexp ^/api/v1/(projects/[^/]+/documents|chat/conversations/[^/]+/documents)(/batch)?$
+		request_body @uploads {
+			max_size 600MB
+		}
+		request_body @other {
 			max_size 60MB
 		}
 		reverse_proxy backend:8000 {

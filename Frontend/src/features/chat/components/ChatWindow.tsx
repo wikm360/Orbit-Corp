@@ -13,7 +13,6 @@ import { AgentActivityBanner } from "./AgentActivityBanner";
 export interface AvailableDoc {
   id: string;
   filename: string;
-  isPersonal?: boolean;
 }
 
 interface ChatWindowProps {
@@ -120,8 +119,8 @@ export function ChatWindow({
         mentionItems.push({
           id: doc.id,
           label: `@${doc.filename}`,
-          type: doc.isPersonal ? "personal_doc" : "project_doc",
-          subtitle: doc.isPersonal ? "سند شخصی شما" : "سند سازمانی پروژه",
+          type: "project_doc",
+          subtitle: "سند سازمانی پروژه",
         });
       }
     });

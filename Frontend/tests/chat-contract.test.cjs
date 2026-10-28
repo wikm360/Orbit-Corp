@@ -206,8 +206,8 @@ test('batch validation filters unsupported, temporary, empty, oversized and long
   const file = (name, size = 1, webkitRelativePath = '') => ({ name, size, webkitRelativePath });
   const result = filterUploadFiles([
     file('leave.PDF', 1, 'policies/hr/leave.PDF'), file('archive.zip'), file('.DS_Store'),
-    file('~$draft.docx'), file('empty.txt', 0), file('large.xlsx', 50 * 1024 * 1024 + 1),
-    file('note.txt', 1, `${'a'.repeat(501)}/note.txt`), file('limit.txt', 50 * 1024 * 1024),
+    file('~$draft.docx'), file('empty.txt', 0), file('large.xlsx', 200 * 1024 * 1024 + 1),
+    file('note.txt', 1, `${'a'.repeat(501)}/note.txt`), file('limit.txt', 200 * 1024 * 1024),
   ]);
   assert.equal(result.eligible.length, 2);
   assert.equal(result.skipped.length, 6);

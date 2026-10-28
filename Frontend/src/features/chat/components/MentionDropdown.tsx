@@ -5,7 +5,7 @@ import { useEffect, useRef } from "react";
 export interface MentionItem {
   id: string;
   label: string;
-  type: "bot" | "personal_doc" | "project_doc";
+  type: "bot" | "project_doc";
   subtitle?: string;
 }
 
@@ -63,13 +63,6 @@ export function MentionDropdown({
               <div className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-brand-50 text-brand-700">
                 <svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4">
                   <path d="M12 2.75 14.1 9.9 21.25 12l-7.15 2.1L12 21.25 9.9 14.1 2.75 12 9.9 9.9 12 2.75Z" />
-                </svg>
-              </div>
-            ) : item.type === "personal_doc" ? (
-              <div className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-emerald-50 text-emerald-700">
-                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4">
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                  <path d="M14 2v6h6M8 13h8M8 17h6" />
                 </svg>
               </div>
             ) : (

@@ -25,7 +25,8 @@ Engine: `pool_pre_ping=True`, `pool_recycle=1800`, `echo=settings.debug`.
 `JWT_SECRET_KEY` (پیش‌فرض ناامن، **باید عوض شود**) · `JWT_ALGORITHM`=HS256 · `ACCESS_TOKEN_EXPIRE_MINUTES`=30 · `REFRESH_TOKEN_EXPIRE_DAYS`=30.
 
 ## ذخیره‌سازی و آپلود
-`UPLOAD_DIR`=`./data/uploads` (در Docker `/app/data/uploads`، volume `uploads_data`، owner uid 10001) · `MAX_UPLOAD_SIZE_MB`=50 · `MAX_BATCH_UPLOAD_FILES`=20.
+`UPLOAD_DIR`=`./data/uploads` (در Docker `/app/data/uploads`، volume `uploads_data`، owner uid 10001) · `MAX_UPLOAD_SIZE_MB`=200 (برای هر فایل؛ بزرگ‌ترین فایل‌های پروژه‌ی واقعی ~۱۳۰MB بودند) · `MAX_BATCH_UPLOAD_FILES`=20.
+**آرشیو** (`.zip/.rar/.7z`، باز شدن در worker): `MAX_ARCHIVE_SIZE_MB`=500 (سقف فایل آپلودی؛ جدا از ۵۰ مگابایتِ هر فایل) · `ARCHIVE_MAX_FILES`=5000 · `ARCHIVE_MAX_TOTAL_SIZE_MB`=4096 (مجموع حجم بعد از باز شدن؛ ضد zip-bomb) · `ARCHIVE_MAX_DEPTH`=2 (آرشیو داخل آرشیو) · `ARCHIVE_JOB_TIMEOUT_SECONDS`=3600. Caddy (`infra/caddy/app.caddy`): مسیرهای آپلود سند (`/projects/*/documents[/batch]` و `/chat/conversations/*/documents[/batch]`) سقف بدنه ۶۰۰MB دارند و بقیه‌ی `/api/*` ۶۰MB؛ این سقف باید بالاتر از `MAX_ARCHIVE_SIZE_MB` و `MAX_UPLOAD_SIZE_MB` بماند (فرانت هر درخواست را حداکثر ~۸۰MB فایل می‌بندد، مگر یک فایل بزرگ‌تر که تنها می‌رود). بدنه‌ی multipart در API روی `UPLOAD_DIR/tmp` (دیسک) spool می‌شود نه `/tmp` (tmpfs=RAM)، و آرشیو هم همان‌جا باز می‌شود.
 
 ## Embedding
 | env | پیش‌فرض | |

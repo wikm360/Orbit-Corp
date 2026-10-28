@@ -23,11 +23,24 @@ worker: Parse ─► OCR ─► Reconstruct ─► Chunk ─► Embed ─► Per
 (حذف سند گفتگو از طریق API وجود ندارد؛ با حذف گفتگو cascade می‌شود.)
 
 ## اعتبارسنجی
-- پسوند باید در `SUPPORTED_EXTENSIONS` باشد: **`.pdf .docx .pptx .xlsx .txt` + تصاویر `.png .jpg .jpeg .webp .bmp .tif .tiff`**. در غیر این‌صورت 400.
-- حجم ≤ `MAX_UPLOAD_SIZE_MB` (۵۰). در endpoint تک‌فایل کل فایل در حافظه خوانده می‌شود (`await file.read()`)؛ در batch فایل‌ها یکی‌یکی.
+- **scope گفتگو:** پسوند باید در `SUPPORTED_EXTENSIONS` باشد: **`.pdf .docx .pptx .xlsx .txt` + تصاویر `.png .jpg .jpeg .webp .bmp .tif .tiff`**. در غیر این‌صورت 400.
+- حجم ≤ `MAX_UPLOAD_SIZE_MB` (۲۰۰). در endpoint تک‌فایل کل فایل در حافظه خوانده می‌شود (`await file.read()`)؛ در batch فایل‌ها یکی‌یکی.
 - batch: حداکثر `MAX_BATCH_UPLOAD_FILES` (۲۰) فایل در هر درخواست، وگرنه 400؛ فایل خالی / نام >۵۰۰ نویسه / حجم زیاد به‌صورت `rejected` گزارش می‌شود.
-- Caddy `request_body max_size 60MB` روی `/api/*`.
-- `.doc/.xls/.ppt` قدیمی پشتیبانی نمی‌شود.
+- Caddy: بدنه‌ی مسیرهای آپلود سند ۶۰۰MB، بقیه‌ی `/api/*` ۶۰MB. `main.py` مقدار `tempfile.tempdir` را روی `UPLOAD_DIR/tmp` می‌گذارد تا spool فایل‌های بزرگ multipart در RAM (tmpfs) نیفتد.
+- **scope پروژه (فایل‌منیجر):** پسوند ناشناخته رد نمی‌شود؛ فایل ذخیره می‌شود با `status=UNSUPPORTED` و `error_message="File type '.x' is not supported yet"` (بدون job). `.doc/.xls/.ppt` قدیمی، `.dwg`, `.mpp`, `.kmz` فعلاً همین‌طورند؛ بعد از افزودن parser، retry آن‌ها را پردازش می‌کند.
+
+## فایل‌منیجر پروژه (`folder_service.py`, `file_ops.py`)
+- `Document.folder_id` + جدول `document_folders` (درخت، یکتایی نام بدون حساسیت به حروف). نام فایل در `filename` است (بدون مسیر)؛ نام نسبی آپلود (`a/b/c.pdf`) در `_create_document` پوشه می‌سازد (`ensure_folder_path`, get-or-create) و نام تکراری `unique_name` می‌شود (`x (1).pdf`).
+- **move** فقط `folder_id`/`filename` را عوض می‌کند (بدون job). **copy** سند جدید با همان `file_path`/`content_hash`: READY با embedding فعلی ← chunkها کپی؛ PROCESSING یا READY با مدل دیگر ← خودش دوباره پردازش؛ FAILED/CANCELLED/UNSUPPORTED ← همان وضعیت. حذف فیزیکی فایل همچنان با شمارش ارجاع `file_path`.
+- انتخاب (`document_ids` + `folder_ids`) در `resolve_selection` به لایه‌ی بالا تقلیل می‌یابد (سند داخل پوشه‌ی انتخاب‌شده دوباره شمرده نمی‌شود)؛ move با `on_conflict=fail` قبل از هر تغییر کل عملیات را 409 می‌کند.
+- لیست پوشه (`list_folder`): درخت پروژه یک‌بار در حافظه بار می‌شود؛ `status_counts` هر زیرپوشه بازگشتی است (برای نوار پیشرفتِ «۳۷ از ۴۸»).
+
+## آرشیو (`archive_service.py`)
+`.zip/.rar/.7z` در آپلود پروژه سند نمی‌شود: **stream** روی دیسک (`UPLOAD_DIR/archives/`، سقف `MAX_ARCHIVE_SIZE_MB`)، ردیف `ArchiveImport(extracting)`، job `run_archive_import_sync` در همان صف RQ. worker: استخراج به پوشه‌ی موقت ← هر عضو یک `_create_document` (پس همان dedup/صف ingestion) داخل پوشه‌ی مقصد با ساختار پوشه‌ی خود آرشیو؛ آرشیو تو در تو در زیرپوشه‌ای به نام خودش تا `ARCHIVE_MAX_DEPTH`.
+- **محافظ‌ها:** مسیر مطلق/`..`/درایو ← عضو رد می‌شود (`failed_files`)؛ symlink نادیده؛ سقف تعداد فایل و مجموع حجم **بر اساس بایت‌های واقعی تولیدشده** (نه فقط هدر)؛ رمزدار ← کل آرشیو FAILED؛ آرشیو خراب ← FAILED با پیام.
+- **زباله** شمرده و وارد نمی‌شود (`skipped_files`): `.shx .lsp .bak .log .tmp .dwl .dwl2`, `Thumbs.db`, `desktop.ini`, `__MACOSX`, `._*`, `~$*`. فایل واقعیِ بدون parser (مثل `.dwg`) **نگه داشته می‌شود** (UNSUPPORTED).
+- نام فارسی zip بدون پرچم UTF-8: بایت خام یک‌بار به‌عنوان UTF-8 و در غیر این‌صورت cp1256 خوانده می‌شود (zipfile پیش‌فرض cp437 است).
+- عضو خراب/خالی/بزرگ‌تر از `MAX_UPLOAD_SIZE_MB` فقط در `failed_files` ثبت می‌شود و بقیه ادامه می‌دهند. `.rar/.7z`: لیست‌گیری و اعتبارسنجی با `7z l -slt`، استخراج (`.rar` ← `unrar` اگر نصب باشد، وگرنه `7z`)، سپس بازبینی فایل‌های روی دیسک؛ اگر اندازه‌ی فایل استخراج‌شده با لیست نخواند (۰ بایت) کل آرشیو FAILED می‌شود. ⚠️ `7z` دبیان (`7zip`) بدون codec RAR ساخته شده و برای RAR فایل **۰ بایتی** می‌نویسد؛ روی نمونه‌ی واقعی eval فقط `unrar` (non-free) درست باز کرد. image فعلاً فقط `p7zip-full` دارد ← **RAR در production تا نصب `unrar` در Dockerfile کار نمی‌کند** (zip و 7z کار می‌کنند).
 
 ## dedup بر اساس محتوا (`documents/service._create_document`)
 1. `content_hash = sha256(bytes)`.
@@ -88,13 +101,15 @@ worker: Parse ─► OCR ─► Reconstruct ─► Chunk ─► Embed ─► Per
 5. **EmbedStep** — `embed_chunks` دسته‌های ۶۴تایی را هم‌زمان (حداکثر `EMBEDDING_CONCURRENCY`=۴ دسته، با `asyncio.gather` + semaphore؛ ترتیب خروجی حفظ می‌شود) به `EmbeddingProvider.embed` می‌فرستد (retry داخل provider). همه‌ی دسته‌های یک سند از یک `httpx.AsyncClient` مشترک (connection pool/keep-alive) استفاده می‌کنند: `BGEM3EmbeddingProvider.session()` آن را در یک `ContextVar` می‌گذارد؛ خارج از `session()` هر `embed()` مثل قبل client موقت می‌سازد. provider singleton است ولی هر job event loop خودش را دارد، به همین دلیل client روی نمونه نگه داشته نمی‌شود.
 6. **PersistStep** — برای هر chunk یک `DocumentChunk(chunk_index=ترتیب سراسری)` و commit یکجا. اگر chunk یا embedding نیست (هیچ متنی استخراج نشده: فایل خالی، اسکن ناخوانا، OCR خاموش/ناموفق) `ValueError` می‌دهد ← سند `FAILED` با `error_message` می‌شود، نه READY.
 - پایان موفق: `status=READY`, `embedding_model=settings.embedding_model` ← `_notify_conversation`.
-- خطا: rollback، `status=FAILED`, `error_message=str(exc)[:2000]`، اعلان، و `raise` (job در RQ failed می‌شود).
+- خطا: rollback، `status=FAILED`, `error_message=str(exc)[:2000]`، اعلان، و `raise` (job در RQ failed می‌شود) — فقط اگر سند هنوز PROCESSING باشد.
+- **لغو/حذف حین پردازش** (`cancellation.py`): `cancel_document` وضعیت را فوراً `CANCELLED` می‌کند، chunkها را پاک می‌کند و کلید Redis `ingestion:cancel:<id>` (TTL ۲۴ ساعت) می‌گذارد. worker: (۱) job‌ای که سند را غیر-PROCESSING ببیند بدون کار برمی‌گردد؛ (۲) بعد از هر step وضعیت تازه از DB خوانده می‌شود (`_assert_still_processing`)؛ سند CANCELLED/حذف‌شده ← `IngestionCancelled` ← بی‌صدا پایان، بدون FAILED و بدون `raise`؛ (۳) قبل از هر فراخوانی **پولی** OCR کلید Redis چک می‌شود (فراخوانی‌های بعدی skip می‌شوند)؛ (۴) READY با `UPDATE … WHERE status='processing'` شرطی نوشته می‌شود تا لغوِ دیررسیده بازنویسی نشود و chunk‌های جامانده پاک شوند. لغو لحظه‌ای نیست: فراخوانی در جریان تمام می‌شود.
+- ⚠️ لغو و بلافاصله retry همان سند، وقتی job قبلی هنوز در حال اجراست، می‌تواند دو pipeline هم‌زمان روی یک سند بسازد (chunk تکراری)؛ محافظی ندارد.
 
 ## اعلان وضعیت
-فقط برای اسناد **گفتگو**: `publish_event(conversation_id, {event:"document_status", document_id, status, filename})` روی کانال Redis `conversation:<id>`. برای اسناد پروژه هیچ event‌ای نیست (کلاینت باید poll کند: `GET …/documents`).
+فقط برای اسناد **گفتگو**: `publish_event(conversation_id, {event:"document_status", document_id, status, filename})` روی کانال Redis `conversation:<id>`. برای اسناد پروژه هیچ event‌ای نیست (کلاینت باید poll کند: `GET …/files?folder_id=` برای پوشه‌ی جاری؛ `status_counts` و `archives[].imported_files` پیشرفت را می‌دهند).
 
 ## retry و حذف
-- `retry_failed_document`: فقط برای FAILED؛ chunkهای احتمالی پاک، وضعیت→PROCESSING، `error_message=None`، دوباره enqueue.
+- `retry_failed_document`: FAILED، CANCELLED، یا UNSUPPORTED که پسوندش حالا در `SUPPORTED_EXTENSIONS` است (وگرنه 400)؛ کلید لغو Redis پاک می‌شود؛ chunkهای احتمالی پاک، وضعیت→PROCESSING، `error_message=None`، دوباره enqueue.
 - `delete_document`: ردیف و (cascade) chunkها حذف؛ فایل و `.reconstructed.*` فقط اگر هیچ سند دیگری به همان `file_path` اشاره نکند.
 - ⚠️ سند PROCESSING که worker کشته شود (OOM/timeout ۶۰۰ثانیه) خودکار FAILED نمی‌شود؛ مسیر بازیابی خودکار وجود ندارد (نیاز به تأیید رفتار RQ failed registry و ابزار دستی).
 

@@ -31,12 +31,30 @@
 ## Documents
 | endpoint | دسترسی |
 |---|---|
-| `GET /projects/{id}/documents` | عضو پروژه |
-| `POST /projects/{id}/documents` (multipart `file`) | manager |
-| `POST /projects/{id}/documents/batch` (multipart `files[]`، ≤۲۰) | manager |
-| `POST /projects/{id}/documents/{doc}/retry` | manager |
+| `GET /projects/{id}/documents` | عضو پروژه (لیست تخت همه‌ی اسناد) |
+| `POST /projects/{id}/documents` (multipart `file` + اختیاری `folder_id`) | manager |
+| `POST /projects/{id}/documents/batch` (multipart `files[]` ≤۲۰ + اختیاری `folder_id`) | manager |
+| `POST /projects/{id}/documents/{doc}/retry` | manager (`failed`/`cancelled`/`unsupported` که حالا پشتیبانی می‌شود) |
+| `POST /projects/{id}/documents/{doc}/cancel` | manager (فقط `processing`) |
+| `PATCH /projects/{id}/documents/{doc}` `{filename}` (تغییر نام؛ 409 اگر نام در همان پوشه هست) | manager |
 | `DELETE /projects/{id}/documents/{doc}` | manager (204) |
-`DocumentRead{id,filename,content_type,status:processing|ready|failed,error_message,project_id,conversation_id,uploaded_by,created_at}`.
+`DocumentRead{id,filename,content_type,status:processing|ready|failed|cancelled|unsupported,error_message,project_id,conversation_id,folder_id,uploaded_by,created_at}`.
+آپلود پروژه: فایل با نوع بدون parser رد نمی‌شود، با `status=unsupported` نگه داشته می‌شود؛ نام نسبی (`a/b/c.pdf`، آپلود پوشه‌ی مرورگر) پوشه می‌سازد؛ نام تکراری در همان پوشه `name (1).ext` می‌شود؛ `.zip/.rar/.7z` به‌جای `document` یک `archive` (`ArchiveImportRead`) برمی‌گرداند که worker داخل `folder_id` باز می‌کند. پاسخ تک‌فایل: `{document|null, archive|null, message}`؛ آیتم batch: `{filename,status,document,archive,error}`.
+
+### File manager (فقط scope پروژه؛ دسترسی همان دسترسی پروژه است، پوشه دسترسی را محدود نمی‌کند)
+| endpoint | دسترسی |
+|---|---|
+| `GET /projects/{id}/files?folder_id=` (بدون `folder_id` = ریشه) | عضو پروژه |
+| `GET /projects/{id}/files/search?q=` (نام فایل، با مسیر پوشه) | عضو پروژه |
+| `POST /projects/{id}/folders` `{name,parent_id?}` (201؛ 409 نام تکراری) | manager |
+| `PATCH /projects/{id}/folders/{folder}` `{name}` | manager |
+| `POST /projects/{id}/files/move` `{document_ids,folder_ids,target_folder_id,on_conflict}` | manager |
+| `POST /projects/{id}/files/copy` (همان بدنه؛ پوشه‌ها بازگشتی) | manager |
+| `POST /projects/{id}/files/delete` `{document_ids,folder_ids}` | manager |
+| `POST /projects/{id}/files/retry` · `/files/cancel` `{document_ids,folder_ids}` | manager |
+| `DELETE /projects/{id}/archives/{archive}` (حذف رکورد آرشیو تمام‌شده/ناموفق؛ 400 اگر هنوز در حال باز شدن) | manager (204) |
+`FolderListing{folder_id,breadcrumb[FolderRead],folders[{folder,status_counts{status:n} (بازگشتی روی زیرشاخه‌ها)}],documents[DocumentRead],archives[ArchiveImportRead]}`؛ `ArchiveImportRead{id,folder_id,filename,status:extracting|done|failed,error_message,total_files,imported_files,skipped_files,failed_files[{path,error}],created_at,finished_at}`. `BulkResult{count,skipped}`.
+`on_conflict`: `fail` (پیش‌فرض) ← 409 بدون هیچ تغییری؛ `rename` ← `name (n)`. مقصد `null` = ریشه. انتقال پوشه به داخل خودش/زیرشاخه‌اش 400. آیتم پروژه‌ی دیگر 404. move فقط `folder_id`/`filename` را عوض می‌کند (بدون پردازش مجدد)؛ copy سند READY را با کپی chunk بدون OCR/embedding می‌سازد.
 
 ## Memory (manager)
 `GET|POST /projects/{id}/memories` · `PATCH|DELETE /projects/{id}/memories/{mid}`. `ProjectMemoryRead{id,project_id,created_by_user_id,fact_text,category,confidence_score,is_verified,created_at,updated_at}`.

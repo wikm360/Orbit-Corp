@@ -35,7 +35,10 @@
 ### documents
 | فایل | کار |
 |---|---|
-| `models.py` | Document, DocumentChunk, DocumentStatus |
+| `models.py` | Document, DocumentChunk, DocumentStatus, DocumentFolder, ArchiveImport(+Status), OcrCache |
+| `folder_service.py` · `file_ops.py` | فایل‌منیجر: درخت پوشه، نام‌گذاری، لیست/جست‌وجو؛ آپلود پروژه، move/copy/delete/retry/cancel دسته‌ای |
+| `archive_service.py` | آپلود و استخراج `.zip/.rar/.7z` در worker (محافظ‌های zip-slip/bomb، فیلتر زباله) |
+| `cancellation.py` | لغو هم‌کارانه‌ی ingestion (کلید Redis + `IngestionCancelled`) |
 | `schemas.py` | DocumentRead, DocumentUploadResponse, BatchUpload* |
 | `router.py` | endpointهای پروژه‌ای (list/upload/batch/retry/delete) |
 | `service.py` (531 خط) | آپلود و dedup، enqueue، batch، retry، delete؛ و خواندن ساخت‌یافته برای agent (info/page-range/full) |

@@ -2,10 +2,12 @@ import { Badge } from "@/shared/components/ui/Badge";
 
 import { DocumentStatus } from "../types";
 
-const STATUS_CONFIG: Record<DocumentStatus, { label: string; tone: "gray" | "green" | "red" }> = {
-  processing: { label: "در حال پردازش", tone: "gray" },
+const STATUS_CONFIG: Record<DocumentStatus, { label: string; tone: "gray" | "green" | "red" | "yellow" }> = {
+  processing: { label: "در حال پردازش", tone: "yellow" },
   ready: { label: "آماده", tone: "green" },
   failed: { label: "ناموفق", tone: "red" },
+  cancelled: { label: "لغوشده", tone: "gray" },
+  unsupported: { label: "پشتیبانی‌نشده", tone: "gray" },
 };
 
 export function StatusBadge({ status }: { status: DocumentStatus }) {

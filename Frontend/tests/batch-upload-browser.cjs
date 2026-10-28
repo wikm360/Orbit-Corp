@@ -1,4 +1,4 @@
-// Exercise real file/folder selectors, multipart requests, polling and retries against mocked APIs.
+// Exercise the chat attachment batching (real file/folder selectors, multipart requests, socket progress) against mocked APIs.
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -86,52 +86,7 @@ projectDocuments.push(document('old-ready.txt', 'p1', 'ready'));
     });
     await page.routeWebSocket(/\/chat\/conversations\/.*\/ws/, (socket) => sockets.set(new URL(socket.url()).pathname.split('/')[5], socket));
     const base = process.env.APP_URL || 'http://127.0.0.1:3000';
-    await page.goto(`${base}/documents`);
-    await page.getByLabel('فایل‌های اسناد پروژه').waitFor({ state: 'attached' });
-    const files = Array.from({ length: 43 }, (_, index) => payload(`file-${index}.txt`));
-    files.push(payload('cached.txt'), payload('reject.txt'), payload('logo.png'), payload('~$draft.docx'), { ...payload('empty.txt'), buffer: Buffer.alloc(0) });
-    await page.getByLabel('فایل‌های اسناد پروژه').setInputFiles(files);
-    await page.getByText('45 فایل آمادهٔ ارسال · 3 فایل فیلترشده', { exact: true }).waitFor();
-    await page.getByRole('button', { name: 'آپلود فایل‌ها', exact: true }).click();
-    await page.getByText('پایان ارسال: 44 پذیرفته، 1 ردشده', { exact: true }).waitFor();
-    assert.equal(peak, 2);
-    assert.deepEqual(requests.filter((item) => item.endpoint === '/projects/p1/documents/batch').map((item) => item.filenames.length), [20, 20, 5]);
-    const progress = page.getByRole('progressbar', { name: 'پیشرفت پردازش فایل‌ها' });
-    assert.equal(await progress.getAttribute('max'), '44');
-    assert.equal(await progress.getAttribute('value'), '1', 'old project documents must not count toward this upload');
-    await page.getByText('جزئیات فایل‌های ارسال‌نشده', { exact: true }).click();
-    await page.getByText('reject.txt: File rejected by server', { exact: true }).waitFor();
-    const uploaded = projectDocuments.filter((doc) => doc.filename !== 'old-ready.txt');
-    uploaded.forEach((doc, index) => { doc.status = index < 3 ? 'failed' : 'ready'; doc.error_message = index < 3 ? 'Embedding failed' : null; });
-    await page.getByText('41 از 44 سند آماده · 0 در حال پردازش · 3 ناموفق', { exact: true }).waitFor();
-    await page.getByRole('button', { name: `تلاش مجدد برای ${uploaded[0].filename}`, exact: true }).click();
-    await page.getByText('41 از 44 سند آماده · 1 در حال پردازش · 2 ناموفق', { exact: true }).waitFor();
-    uploaded[0].status = 'ready';
-    await page.getByText('42 از 44 سند آماده · 0 در حال پردازش · 2 ناموفق', { exact: true }).waitFor();
-    await page.getByRole('button', { name: 'تلاش مجدد برای همه‌ی ناموفق‌ها', exact: true }).click();
-    await page.getByText('42 از 44 سند آماده · 2 در حال پردازش · 0 ناموفق', { exact: true }).waitFor();
-    uploaded.forEach((doc) => { doc.status = 'ready'; });
-    await page.getByText('44 از 44 سند آماده · 0 در حال پردازش · 0 ناموفق', { exact: true }).waitFor();
-    assert.equal(requests.filter((item) => item.endpoint.endsWith('/retry')).length, 3);
-    console.log('PASS: project batching, per-file rejections, upload-specific progress, polling and individual/bulk retry');
-
-    uploaded[0].status = 'failed'; uploaded[1].status = 'failed';
-    uploaded[0].error_message = 'Embedding failed'; uploaded[1].error_message = 'Embedding failed';
-    retryRejectId = uploaded[0].id;
-    await page.getByRole('button', { name: 'به‌روزرسانی', exact: true }).click();
-    await page.getByText('42 از 44 سند آماده · 0 در حال پردازش · 2 ناموفق', { exact: true }).waitFor();
-    await page.getByRole('button', { name: 'تلاش مجدد برای همه‌ی ناموفق‌ها', exact: true }).click();
-    await page.getByText('42 از 44 سند آماده · 1 در حال پردازش · 1 ناموفق', { exact: true }).waitFor();
-    await page.getByRole('alert').filter({ hasText: 'برای انجام این کار دسترسی کافی ندارید.' }).waitFor();
-    console.log('PASS: a failed bulk retry remains visible when another retry succeeds');
-
-    membership = 'member'; projectDocuments[1].status = 'failed'; projectDocuments[1].error_message = 'Embedding failed';
-    await page.reload();
-    await page.getByText('Embedding failed', { exact: true }).first().waitFor();
-    assert.equal(await page.getByRole('button', { name: 'انتخاب پوشه', exact: true }).count(), 0);
-    assert.equal(await page.getByRole('button', { name: /تلاش مجدد/ }).count(), 0);
-    console.log('PASS: ordinary project members have no upload/retry controls');
-
+    // Project file-manager uploads are covered by tests/file-manager-browser.cjs.
     await page.goto(`${base}/chat`);
     // Wait for hydration and workspace loading before firing a native file-change event.
     await page.getByRole('combobox', { name: 'محدودهٔ دانش', exact: true }).click();

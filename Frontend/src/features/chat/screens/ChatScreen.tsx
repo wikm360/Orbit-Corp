@@ -77,17 +77,7 @@ export function ChatScreen() {
     return () => { cancelled = true; };
   }, [user]);
 
-  const [personalDocs, setPersonalDocs] = useState<Document[]>([]);
   const [projectDocs, setProjectDocs] = useState<Document[]>([]);
-
-  // Load personal documents
-  useEffect(() => {
-    let cancelled = false;
-    documentsApi.listPersonal().then((items) => {
-      if (!cancelled) setPersonalDocs(items);
-    }).catch(() => {});
-    return () => { cancelled = true; };
-  }, []);
 
   // Load active project documents
   const activeProjectId = conversationId ? conversation?.project_id || conversation?.linked_project_id : newLinkedProjectId;
@@ -161,7 +151,7 @@ export function ChatScreen() {
           ? summarizeBatch([{ filename: firstFile.name, status: "accepted", document: (await chatApi.uploadDocument(id, firstFile)).document, error: null }])
           : await chatApi.uploadBatch(id, batch);
         checkActive();
-        for (const item of response.items) if (item.status === "accepted") registerDocument(item.document);
+        for (const item of response.items) if (item.status === "accepted" && item.document) registerDocument(item.document);
         return response;
       }, onBatch, active);
     } finally {
@@ -169,9 +159,8 @@ export function ChatScreen() {
     }
   };
   const availableDocs = [
-    ...conversationDocuments.filter((d) => d.status === "ready").map((d) => ({ id: d.id, filename: d.filename, isPersonal: false })),
-    ...personalDocs.map((d) => ({ id: d.id, filename: d.filename, isPersonal: true })),
-    ...(activeProjectId === loadedDocsProjectId ? projectDocs : []).map((d) => ({ id: d.id, filename: d.filename, isPersonal: false })),
+    ...conversationDocuments.filter((d) => d.status === "ready").map((d) => ({ id: d.id, filename: d.filename })),
+    ...(activeProjectId === loadedDocsProjectId ? projectDocs : []).map((d) => ({ id: d.id, filename: d.filename })),
   ];
 
   async function saveTitle() {

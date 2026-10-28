@@ -54,7 +54,8 @@
 | لیست پروژه‌های تیم | عضو تیم: فقط پروژه‌های خودش | | همه‌ی پروژه‌های تیم | همه | همه |
 | افزودن/حذف عضو پروژه (فقط از اعضای همان تیم) | ✗ | ✗ | ✓ | ✓ | ✓ |
 | دیدن پروژه / اعضا / اسناد / چت گروهی | ✗ | ✓ | ✓ | ✓ | ✓ |
-| آپلود/retry/حذف سند **پروژه** | ✗ | ✗ | ✓ | ✓ | ✓ |
+| آپلود/retry/cancel/حذف/تغییر نام سند **پروژه** و همه‌ی عملیات فایل‌منیجر (پوشه، move/copy، آپلود آرشیو) | ✗ | ✗ | ✓ | ✓ | ✓ |
+| دیدن درخت پوشه‌ها و جست‌وجوی نام فایل | ✗ | ✓ | ✓ | ✓ | ✓ |
 | لیست/ساخت/ویرایش/حذف **حافظه‌ی پروژه** از REST | ✗ | ✗ | ✓ | ✓ | ✓ |
 | آپلود سند داخل **گفتگو** | صاحب گفتگو | هر شرکت‌کننده‌ی گروه | ✓ | ✓ | ✓ |
 | دیدن چت شخصی دیگران | ✗ | ✗ | ✗ | ✓ | ✓ |
@@ -105,7 +106,7 @@ Document.status == READY  AND  ( Document.conversation_id == :conversation_id
 | `chat/service.create_conversation` / `update_conversation` | عضویت پروژه برای group/link |
 | `chat/service.get_or_create_personal_conversation` | `conversation.created_by == context.id` (وگرنه **بی‌صدا گفتگوی جدید می‌سازد**) |
 | `chat/router.conversation_websocket` | احراز و دسترسی WS |
-| `documents/router.py` | `require_project_access` / `require_project_manager`؛ بررسی `document.project_id == project.id` در retry/delete |
+| `documents/router.py` | `require_project_access` / `require_project_manager`؛ بررسی `document.project_id == project.id` در retry/delete/cancel. فایل‌منیجر: `folder_service.get_folder` و `file_ops.resolve_selection` هر پوشه/سند را با `project_id` تطبیق می‌دهند (آیتم پروژه‌ی دیگر = 404). پوشه هرگز مرز دسترسی نیست؛ `accessible_documents_filter` دست‌نخورده است |
 | `memory/router.py` | `require_project_manager` + `memory.project_id == project.id` |
 | `db_connector/router._get_owned_log` | صاحب log یا admin (برای feedback/export) |
 | `agent/tools/*` | `resolve_retrieval_scope` + فیلتر اسناد |

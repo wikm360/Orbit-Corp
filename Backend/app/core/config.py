@@ -72,9 +72,18 @@ class Settings(BaseSettings):
 
     # File storage
     upload_dir: str = "./data/uploads"
-    max_upload_size_mb: int = 50
+    # Per file. Big scans/drawings from real projects reach ~130MB; the proxy limit (infra/caddy/app.caddy) must stay above this.
+    max_upload_size_mb: int = 200
     # Cap on files per batch-upload request (clients send bigger sets in several requests).
     max_batch_upload_files: int = 20
+    # Archive (.zip/.rar/.7z) uploads are unpacked by the worker into the folder they were uploaded to. The caps below
+    # bound what one archive may expand to (zip bombs) and how long extraction may run.
+    max_archive_size_mb: int = 500
+    archive_max_files: int = 5000
+    archive_max_total_size_mb: int = 4096
+    # Archives found inside an archive are unpacked into a sub-folder up to this depth (the uploaded archive is depth 0).
+    archive_max_depth: int = 2
+    archive_job_timeout_seconds: int = 3600
 
     # Embedding provider (BGE-M3 via OpenAI-compatible /v1/embeddings endpoint)
     embedding_api_base_url: str = "https://api.example.com/v1"

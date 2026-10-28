@@ -19,6 +19,14 @@ from app.features.documents.ingestion.reconstructor import (
     get_reconstructed_txt_path,
     load_reconstructed_document,
 )
+from app.features.documents.cancellation import clear_cancel, request_cancel
+from app.features.documents.folder_service import (
+    MAX_DOCUMENT_NAME_LENGTH,
+    ensure_folder_path,
+    sibling_names,
+    split_relative_path,
+    unique_name,
+)
 from app.features.documents.models import Document, DocumentChunk, DocumentStatus
 from app.features.retrieval.access_filter import accessible_documents_filter
 
@@ -137,6 +145,13 @@ async def _copy_chunks(db: AsyncSession, source: Document, target: Document) -> 
     await db.commit()
 
 
+def _storable_suffix(filename: str) -> str:
+    """Suffix for the on-disk copy of a file whose type is not supported: lower-cased, and `.bin` when it is not a
+    plain short extension (the stored name is `<uuid><suffix>`, so it must be filesystem-safe)."""
+    suffix = Path(filename).suffix.lower()
+    return suffix if 1 < len(suffix) <= 16 and suffix[1:].isalnum() else ".bin"
+
+
 async def _create_document(
     db: AsyncSession,
     *,
@@ -146,28 +161,55 @@ async def _create_document(
     uploaded_by: uuid.UUID,
     project_id: uuid.UUID | None,
     conversation_id: uuid.UUID | None,
+    folder_id: uuid.UUID | None = None,
+    keep_unsupported: bool = False,
+    folder_cache: dict | None = None,
 ) -> Document:
-    suffix = _validate_extension(filename)
+    """Stores `file_bytes` as a new document and queues its ingestion.
+
+    Project documents live in the file manager: a relative path in `filename` (`a/b/c.pdf`, sent by a browser folder
+    upload) is turned into folders below `folder_id`, and a name already taken in the target folder gets ` (n)`.
+    With `keep_unsupported` a file of an unsupported type is stored as UNSUPPORTED (not rejected) so it stays visible
+    in the file manager and can be processed once support exists."""
+    suffix = Path(filename).suffix.lower()
+    supported = suffix in SUPPORTED_EXTENSIONS
+    if not supported and not keep_unsupported:
+        _validate_extension(filename)  # raises with the list of supported types
+
+    if project_id is not None:
+        parts = split_relative_path(filename)
+        if not parts:
+            raise BadRequestError("File name is empty")
+        if len(parts) > 1:
+            folder_id = await ensure_folder_path(db, project_id, folder_id, parts[:-1], uploaded_by, folder_cache)
+        _, taken = await sibling_names(db, project_id, folder_id)
+        filename = unique_name(parts[-1][:MAX_DOCUMENT_NAME_LENGTH], taken)
+
     content_hash = _hash_bytes(file_bytes)
-    reusable = await _find_reusable_document(db, content_hash)
+    reusable = await _find_reusable_document(db, content_hash) if supported else None
 
     # Identical bytes already on disk somewhere: point at that file instead
     # of writing (and permanently storing) a duplicate copy.
-    file_path = reusable.file_path if reusable is not None else _store_file(suffix, file_bytes)
+    file_path = reusable.file_path if reusable is not None else _store_file(suffix if supported else _storable_suffix(filename), file_bytes)
 
     document = Document(
         filename=filename,
         file_path=file_path,
         content_type=content_type,
-        status=DocumentStatus.PROCESSING,
+        status=DocumentStatus.PROCESSING if supported else DocumentStatus.UNSUPPORTED,
+        error_message=None if supported else f"File type '{suffix or 'unknown'}' is not supported yet",
         content_hash=content_hash,
         project_id=project_id,
         conversation_id=conversation_id,
+        folder_id=folder_id,
         uploaded_by=uploaded_by,
     )
     db.add(document)
     await db.commit()
     await db.refresh(document)
+
+    if not supported:
+        return document
 
     if reusable is not None and reusable.embedding_model == settings.embedding_model:
         # Same content, already embedded with the model we currently use:
@@ -288,10 +330,13 @@ async def upload_documents_batch(
 
 
 async def retry_failed_document(db: AsyncSession, document: Document) -> Document:
-    """Re-queues a document whose ingestion failed (e.g. an embedding API
-    rate limit during a big batch) without re-uploading it."""
-    if document.status != DocumentStatus.FAILED:
-        raise BadRequestError("Only a failed document can be retried")
+    """Re-queues a document that is FAILED (e.g. an embedding API rate limit during a big batch), CANCELLED, or
+    UNSUPPORTED but of a type the parser handles now - without re-uploading it."""
+    if document.status == DocumentStatus.UNSUPPORTED:
+        if Path(document.file_path).suffix.lower() not in SUPPORTED_EXTENSIONS:
+            raise BadRequestError("This file type is still not supported")
+    elif document.status not in (DocumentStatus.FAILED, DocumentStatus.CANCELLED):
+        raise BadRequestError("Only a failed, cancelled or newly supported document can be retried")
 
     # A failure after chunks were persisted would otherwise leave duplicates.
     await db.execute(delete(DocumentChunk).where(DocumentChunk.document_id == document.id))
@@ -299,7 +344,22 @@ async def retry_failed_document(db: AsyncSession, document: Document) -> Documen
     document.error_message = None
     await db.commit()
     await db.refresh(document)
+    await clear_cancel(document.id)
     _enqueue_ingestion(document)
+    return document
+
+
+async def cancel_document(db: AsyncSession, document: Document) -> Document:
+    """Stops a PROCESSING document: the status flips at once (what the UI shows) and the worker, which checks the
+    status between steps and a Redis flag before each OCR call, abandons it. Chunks written so far are removed."""
+    if document.status != DocumentStatus.PROCESSING:
+        raise BadRequestError("Only a document that is being processed can be cancelled")
+    await request_cancel(document.id)
+    document.status = DocumentStatus.CANCELLED
+    document.error_message = None
+    await db.execute(delete(DocumentChunk).where(DocumentChunk.document_id == document.id))
+    await db.commit()
+    await db.refresh(document)
     return document
 
 

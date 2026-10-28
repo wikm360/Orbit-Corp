@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import CheckConstraint, Computed, DateTime, Enum, ForeignKey, Index, Integer, SmallInteger, String, Text, event, func
+from sqlalchemy import CheckConstraint, Computed, DateTime, Enum, ForeignKey, Index, Integer, SmallInteger, String, Text, event, func, text
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -18,6 +18,86 @@ class DocumentStatus(str, enum.Enum):
     PROCESSING = "processing"
     READY = "ready"
     FAILED = "failed"
+    # Stopped by a manager while processing; retryable. Never searchable (retrieval only sees READY).
+    CANCELLED = "cancelled"
+    # Stored in the file manager but no parser exists for its type (yet); retryable once support is added.
+    UNSUPPORTED = "unsupported"
+
+
+class ArchiveImportStatus(str, enum.Enum):
+    EXTRACTING = "extracting"
+    DONE = "done"
+    FAILED = "failed"
+
+
+# Stand-in for a NULL parent in the folder-name unique index (NULLs never collide in a plain unique index).
+_NIL_UUID = "00000000-0000-0000-0000-000000000000"
+
+
+class DocumentFolder(Base):
+    """A folder in a project's file manager. Purely organisational: access is decided by the project alone, and
+    moving a document between folders never touches its chunks or embeddings."""
+
+    __tablename__ = "document_folders"
+    __table_args__ = (
+        Index(
+            "uq_document_folders_name",
+            "project_id",
+            text(f"coalesce(parent_id, '{_NIL_UUID}'::uuid)"),
+            text("lower(name)"),
+            unique=True,
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("document_folders.id", ondelete="CASCADE"), nullable=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ArchiveImport(Base):
+    """One uploaded .zip/.rar/.7z being unpacked by the worker into `folder_id` (None = project root). The archive
+    file itself is deleted once extraction ends; each member becomes an ordinary Document with its own status."""
+
+    __tablename__ = "archive_imports"
+
+    id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    folder_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("document_folders.id", ondelete="CASCADE"), nullable=True
+    )
+    filename: Mapped[str] = mapped_column(String(500), nullable=False)
+    file_path: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    status: Mapped[ArchiveImportStatus] = mapped_column(
+        Enum(
+            ArchiveImportStatus,
+            name="archive_import_status",
+            values_callable=lambda enum_cls: [e.value for e in enum_cls],
+        ),
+        default=ArchiveImportStatus.EXTRACTING,
+        nullable=False,
+    )
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Members seen / turned into documents / skipped as junk; `failed_files` = [{"path", "error"}] (capped).
+    total_files: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    imported_files: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    skipped_files: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    failed_files: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    uploaded_by: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Document(Base):
@@ -70,6 +150,10 @@ class Document(Base):
     )
     conversation_id: Mapped[uuid.UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=True
+    )
+    # File-manager location inside the project (None = project root). Always None for conversation documents.
+    folder_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("document_folders.id", ondelete="CASCADE"), nullable=True, index=True
     )
     uploaded_by: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
