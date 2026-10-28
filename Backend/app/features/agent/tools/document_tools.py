@@ -20,12 +20,31 @@ logger = logging.getLogger(__name__)
 
 def _parse_document_id(value: Any) -> uuid.UUID:
     try:
-        return uuid.UUID(str(value))
+        return uuid.UUID(str(value).strip())
     except (ValueError, AttributeError, TypeError):
         raise BadRequestError("'document_id' must be a valid UUID")
 
 
-_DOCUMENT_ID_PROPERTY = {"document_id": {"type": "string", "description": "The document's UUID"}}
+async def _resolve_document_id(
+    db,
+    identifier: str,
+    *,
+    project_id: uuid.UUID | None,
+    conversation_id: uuid.UUID,
+) -> uuid.UUID:
+    """If identifier is a valid UUID, returns it directly.
+    Otherwise looks up the document by filename in the accessible scope."""
+    raw = str(identifier).strip().lstrip("@")
+    try:
+        return uuid.UUID(raw)
+    except (ValueError, AttributeError):
+        doc = await documents_service.get_accessible_document_by_name(
+            db, raw, project_id=project_id, conversation_id=conversation_id
+        )
+        return doc.id
+
+
+_DOCUMENT_ID_PROPERTY = {"document_id": {"type": "string", "description": "The document's UUID or filename"}}
 
 
 class GetDocumentInfoTool(BaseTool):
@@ -33,20 +52,39 @@ class GetDocumentInfoTool(BaseTool):
     description = (
         "Get a document's basic facts without reading it: file name, type, page count "
         "(slides / sheets for pptx / xlsx), estimated size in tokens, whether it is short enough for "
-        "read_entire_document, and upload time. Use it to learn a document's size or to pick page numbers - "
+        "read_entire_document, and upload time. Accepts either document_id (UUID) or filename (e.g. 'ضابطه773.pdf'). "
+        "Use it to learn a document's size or to pick page numbers - "
         "NOT as a step before every question: to find content, use search_knowledge_base."
     )
     parameters = {
         "type": "object",
-        "properties": _DOCUMENT_ID_PROPERTY,
-        "required": ["document_id"],
+        "properties": {
+            "document_id": {"type": "string", "description": "The document's UUID or filename"},
+            "filename": {"type": "string", "description": "The document's filename if UUID is not known"},
+        },
     }
 
-    async def execute(self, *, db, context, conversation, document_id: str, **_: Any) -> ToolExecutionResult:
+    async def execute(
+        self,
+        *,
+        db,
+        context,
+        conversation,
+        document_id: str | None = None,
+        filename: str | None = None,
+        **_: Any,
+    ) -> ToolExecutionResult:
+        identifier = document_id or filename
+        if not identifier:
+            raise BadRequestError("Either 'document_id' or 'filename' must be provided")
+        project_id = resolve_retrieval_scope(context, conversation)
+        resolved_id = await _resolve_document_id(
+            db, identifier, project_id=project_id, conversation_id=conversation.id
+        )
         info = await documents_service.get_document_info(
             db,
-            _parse_document_id(document_id),
-            project_id=resolve_retrieval_scope(context, conversation),
+            resolved_id,
+            project_id=project_id,
             conversation_id=conversation.id,
         )
         return ToolExecutionResult(text=json.dumps(info, ensure_ascii=False))
@@ -56,6 +94,7 @@ class ReadDocumentPagesTool(BaseTool):
     name = "read_document_pages"
     description = (
         "Read the extracted text/OCR for a specific page range of a document (1-indexed, inclusive). "
+        "Accepts either document_id (UUID) or filename. "
         "Use it to read specific pages that the user asked for or that search_knowledge_base pointed you to."
     )
     parameters = {
@@ -79,17 +118,19 @@ class ReadDocumentPagesTool(BaseTool):
         end_page: int,
         **_: Any,
     ) -> ToolExecutionResult:
-        parsed_id = _parse_document_id(document_id)
         project_id = resolve_retrieval_scope(context, conversation)
+        resolved_id = await _resolve_document_id(
+            db, document_id, project_id=project_id, conversation_id=conversation.id
+        )
         document = await documents_service.get_accessible_document(
             db,
-            parsed_id,
+            resolved_id,
             project_id=project_id,
             conversation_id=conversation.id,
         )
         text = await documents_service.get_document_page_range(
             db,
-            parsed_id,
+            resolved_id,
             int(start_page),
             int(end_page),
             project_id=project_id,
@@ -112,6 +153,7 @@ class ReadEntireDocumentTool(BaseTool):
     name = "read_entire_document"
     description = (
         "Read the full extracted text of a document (including clean OCR text for uploaded images/scans). "
+        "Accepts either document_id (UUID) or filename. "
         "Use this whenever the user asks for the full text, transcription, content, or summary of an uploaded file or image. "
         "Guarded by a size limit - if the document is too large, this returns a DOCUMENT_TOO_LARGE error; then use "
         "read_document_pages."
@@ -123,17 +165,19 @@ class ReadEntireDocumentTool(BaseTool):
     }
 
     async def execute(self, *, db, context, conversation, document_id: str, **_: Any) -> ToolExecutionResult:
-        parsed_id = _parse_document_id(document_id)
         project_id = resolve_retrieval_scope(context, conversation)
+        resolved_id = await _resolve_document_id(
+            db, document_id, project_id=project_id, conversation_id=conversation.id
+        )
         document = await documents_service.get_accessible_document(
             db,
-            parsed_id,
+            resolved_id,
             project_id=project_id,
             conversation_id=conversation.id,
         )
         result = await documents_service.get_full_document_content(
             db,
-            parsed_id,
+            resolved_id,
             project_id=project_id,
             conversation_id=conversation.id,
         )
@@ -303,11 +347,15 @@ class ViewDocumentPageTool(BaseTool):
     async def execute(
         self, *, db, context, conversation, document_id: str, page_number: int, **_: Any
     ) -> ToolExecutionResult:
+        project_id = resolve_retrieval_scope(context, conversation)
+        resolved_id = await _resolve_document_id(
+            db, document_id, project_id=project_id, conversation_id=conversation.id
+        )
         document, image, rotation = await documents_service.get_document_page_image(
             db,
-            _parse_document_id(document_id),
+            resolved_id,
             int(page_number),
-            project_id=resolve_retrieval_scope(context, conversation),
+            project_id=project_id,
             conversation_id=conversation.id,
         )
         label = f"{document.filename} (صفحه {page_number})"

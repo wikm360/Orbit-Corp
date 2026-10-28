@@ -98,12 +98,103 @@ OCR_INSPECTOR_HTML = """<!DOCTYPE html>
   </header>
 
   <div class="tabs">
-    <button class="tab-btn active" onclick="switchTab('ocr-tab')">🖼️ بازرسی دیداری OCR و برش‌ها</button>
+    <button class="tab-btn active" onclick="switchTab('docs-tab')">📄 بازرسی متنی اسناد و صفحات</button>
+    <button class="tab-btn" onclick="switchTab('ocr-tab')">🖼️ بازرسی دیداری OCR و برش‌ها</button>
     <button class="tab-btn" onclick="switchTab('agent-tab')">🤖 راهنمای لاگ‌های زنده Agent و RAG</button>
   </div>
 
+  <!-- TAB 0: DOCUMENTS & PAGES INSPECTOR -->
+  <div id="docs-tab">
+    <div class="controls-bar">
+      <div style="flex: 1; min-width: 250px;">
+        <label style="font-size: 0.85rem; color: var(--text-muted); margin-left: 0.5rem;">انتخاب سند:</label>
+        <select id="doc-inspect-select" onchange="onInspectDocSelected()" style="width: 100%;">
+          <option value="">در حال دریافت لیست اسناد پایگاه دانش...</option>
+        </select>
+      </div>
+
+      <div>
+        <label style="font-size: 0.85rem; color: var(--text-muted); margin-left: 0.5rem;">صفحه:</label>
+        <div style="display: inline-flex; align-items: center; gap: 0.25rem;">
+          <button onclick="prevInspectPage()" style="padding: 0.4rem 0.7rem; cursor: pointer;">◀ قبلی</button>
+          <select id="doc-inspect-page-select" onchange="onInspectPageSelected()" disabled style="min-width: 90px;">
+            <option value="1">صفحه ۱</option>
+          </select>
+          <button onclick="nextInspectPage()" style="padding: 0.4rem 0.7rem; cursor: pointer;">بعدی ▶</button>
+        </div>
+      </div>
+
+      <button class="refresh-btn" onclick="loadInspectDocsList()">بروزرسانی اسناد 🔄</button>
+      <button onclick="reprocessCurrentDoc()" style="background: #e11d48; border-color: #be123c; color: #fff; cursor: pointer; font-weight: bold;">پردازش مجدد با OCR اجباری ⚡</button>
+    </div>
+
+    <div id="docs-loading-state" style="display: none; padding: 2rem; text-align: center; color: var(--text-muted);">
+      در حال فراخوانی محتوای صفحات سند...
+    </div>
+
+    <div id="docs-empty-state" style="display: none; padding: 3rem; text-align: center; background: var(--card-bg); border-radius: 0.5rem; border: 1px solid var(--border);">
+      <h3 style="color: #fff; margin-bottom: 0.5rem;">هیچ سندی در سیستم یافت نشد</h3>
+      <p style="color: var(--text-muted); font-size: 0.9rem;">
+        برای بررسی، ابتدا از طریق محیط چت یا مدیریت فایل‌ها سندی را آپلود کنید.
+      </p>
+    </div>
+
+    <div id="docs-content-view" style="display: none;">
+      <!-- KPIs -->
+      <div class="kpi-row">
+        <div class="kpi-card">
+          <div class="kpi-title">پروژه / حوزه سند</div>
+          <div class="kpi-val" id="docs-kpi-project" style="font-size: 1.05rem;">-</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-title">وضعیت سند و چانک‌ها</div>
+          <div class="kpi-val" id="docs-kpi-status">-</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-title">تعداد کل صفحات</div>
+          <div class="kpi-val" id="docs-kpi-pages">-</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-title">وضعیت لایه متنی این صفحه</div>
+          <div class="kpi-val" id="docs-kpi-layer" style="font-size: 1.05rem; color: #22c55e;">-</div>
+        </div>
+      </div>
+
+      <!-- MAIN SPLIT: Image Left, Extracted Text Right -->
+      <div class="main-grid">
+        <!-- LEFT: Rendered Page Image -->
+        <div class="card">
+          <div class="card-title">
+            <span>تصویر رندرشده صفحه <span id="doc-img-page-num" class="badge">صفحه ۱</span></span>
+            <span style="font-size: 0.8rem; color: var(--text-muted);">رندر مستقیم از فایل</span>
+          </div>
+
+          <div class="image-viewer" style="min-height: 450px; display: flex; align-items: center; justify-content: center;">
+            <img id="docs-page-img" src="" alt="تصویر صفحه" style="max-height: 750px; display: none;" onload="this.style.display='block'; document.getElementById('docs-img-placeholder').style.display='none';" onerror="this.style.display='none'; document.getElementById('docs-img-placeholder').style.display='block';">
+            <div id="docs-img-placeholder" style="color: var(--text-muted); font-size: 0.9rem;">در حال بارگذاری یا عدم وجود تصویر برای این صفحه...</div>
+          </div>
+        </div>
+
+        <!-- RIGHT: Extracted Text for this page -->
+        <div class="card">
+          <div class="card-title">
+            <span>متن استخراج‌شده صفحه (ذخیره‌شده در RAG)</span>
+            <div style="display: flex; gap: 0.5rem; align-items: center;">
+              <span id="doc-text-length" class="badge" style="background: rgba(34, 197, 94, 0.2); color: #22c55e;">۰ کاراکتر</span>
+              <button onclick="copyCurrentPageText()" style="font-size: 0.8rem; cursor: pointer;">کپی متن 📋</button>
+            </div>
+          </div>
+
+          <div class="code-box" id="docs-page-text" style="height: 750px; max-height: 750px; line-height: 1.8; font-size: 0.9rem; direction: rtl; text-align: right;">
+            در حال بارگذاری...
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- TAB 1: OCR INSPECTOR -->
-  <div id="ocr-tab">
+  <div id="ocr-tab" style="display: none;">
     <div class="controls-bar">
       <div>
         <label style="font-size: 0.85rem; color: var(--text-muted); margin-left: 0.5rem;">انتخاب سند:</label>
@@ -245,14 +336,190 @@ OCR_INSPECTOR_HTML = """<!DOCTYPE html>
 <script>
   let currentDocTrace = null;
   const API_BASE = '/api/v1/admin/ocr-debug';
+  const DOCS_API_BASE = '/api/v1/admin/documents-inspect';
+
+  let currentInspectDoc = null;
+  let currentInspectPageIndex = 0;
+  let inspectDocsLoaded = false;
 
   function switchTab(tabId) {
+    document.getElementById('docs-tab').style.display = tabId === 'docs-tab' ? 'block' : 'none';
     document.getElementById('ocr-tab').style.display = tabId === 'ocr-tab' ? 'block' : 'none';
     document.getElementById('agent-tab').style.display = tabId === 'agent-tab' ? 'block' : 'none';
     const btns = document.querySelectorAll('.tab-btn');
-    btns[0].classList.toggle('active', tabId === 'ocr-tab');
-    btns[1].classList.toggle('active', tabId === 'agent-tab');
+    btns[0].classList.toggle('active', tabId === 'docs-tab');
+    btns[1].classList.toggle('active', tabId === 'ocr-tab');
+    btns[2].classList.toggle('active', tabId === 'agent-tab');
+
+    if (tabId === 'ocr-tab' && !currentDocTrace) {
+      loadDocumentsList();
+    }
   }
+
+  // --- Document Inspector Methods ---
+  async function loadInspectDocsList() {
+    const loading = document.getElementById('docs-loading-state');
+    loading.style.display = 'block';
+    try {
+      const resp = await fetch(`${DOCS_API_BASE}/list`);
+      if (!resp.ok) throw new Error('خطا در فراخوانی لیست اسناد پایگاه دانش');
+      const docs = await resp.json();
+      const select = document.getElementById('doc-inspect-select');
+      select.innerHTML = '';
+
+      if (!docs || docs.length === 0) {
+        document.getElementById('docs-empty-state').style.display = 'block';
+        document.getElementById('docs-content-view').style.display = 'none';
+        select.innerHTML = '<option value="">هیچ سندی در پایگاه دانش نیست</option>';
+        return;
+      }
+
+      document.getElementById('docs-empty-state').style.display = 'none';
+      docs.forEach((doc) => {
+        const opt = document.createElement('option');
+        opt.value = doc.id;
+        opt.textContent = `${doc.filename} (${doc.project_name || 'بدون پروژه'} - ${doc.status})`;
+        select.appendChild(opt);
+      });
+
+      inspectDocsLoaded = true;
+      await onInspectDocSelected();
+    } catch (err) {
+      console.error(err);
+      alert('خطا در بارگذاری لیست اسناد: ' + err.message);
+    } finally {
+      loading.style.display = 'none';
+    }
+  }
+
+  async function onInspectDocSelected() {
+    const select = document.getElementById('doc-inspect-select');
+    const docId = select.value;
+    if (!docId) return;
+
+    const loading = document.getElementById('docs-loading-state');
+    const view = document.getElementById('docs-content-view');
+    loading.style.display = 'block';
+    view.style.display = 'none';
+
+    try {
+      const resp = await fetch(`${DOCS_API_BASE}/${docId}`);
+      if (!resp.ok) throw new Error('خطا در دریافت جزئیات و صفحات سند');
+      currentInspectDoc = await resp.json();
+
+      document.getElementById('docs-kpi-project').textContent = currentInspectDoc.project_name || 'عمومی';
+      document.getElementById('docs-kpi-status').textContent = `${currentInspectDoc.status} (${currentInspectDoc.chunk_count} چانک)`;
+      document.getElementById('docs-kpi-pages').textContent = `${currentInspectDoc.total_pages} صفحه`;
+
+      const pageSelect = document.getElementById('doc-inspect-page-select');
+      pageSelect.innerHTML = '';
+
+      if (!currentInspectDoc.pages || currentInspectDoc.pages.length === 0) {
+        pageSelect.disabled = true;
+        pageSelect.innerHTML = '<option value="1">بدون صفحه</option>';
+        document.getElementById('docs-page-text').textContent = '(هیچ متنی برای این سند ذخیره نشده است)';
+        document.getElementById('doc-text-length').textContent = '۰ کاراکتر';
+        document.getElementById('docs-kpi-layer').textContent = 'بدون لایه متنی';
+        document.getElementById('docs-page-img').style.display = 'none';
+        document.getElementById('docs-img-placeholder').style.display = 'block';
+        view.style.display = 'block';
+        return;
+      }
+
+      pageSelect.disabled = false;
+      currentInspectDoc.pages.forEach((p, idx) => {
+        const opt = document.createElement('option');
+        opt.value = idx;
+        opt.textContent = `صفحه ${p.page} (${p.text_len || 0} حرف)`;
+        pageSelect.appendChild(opt);
+      });
+
+      currentInspectPageIndex = 0;
+      pageSelect.value = 0;
+      renderInspectPage(0);
+      view.style.display = 'block';
+    } catch (err) {
+      console.error(err);
+      alert('خطا در بارگذاری سند: ' + err.message);
+    } finally {
+      loading.style.display = 'none';
+    }
+  }
+
+  function onInspectPageSelected() {
+    const pageSelect = document.getElementById('doc-inspect-page-select');
+    const idx = parseInt(pageSelect.value, 10);
+    renderInspectPage(idx);
+  }
+
+  function prevInspectPage() {
+    if (!currentInspectDoc || !currentInspectDoc.pages) return;
+    if (currentInspectPageIndex > 0) {
+      currentInspectPageIndex -= 1;
+      document.getElementById('doc-inspect-page-select').value = currentInspectPageIndex;
+      renderInspectPage(currentInspectPageIndex);
+    }
+  }
+
+  function nextInspectPage() {
+    if (!currentInspectDoc || !currentInspectDoc.pages) return;
+    if (currentInspectPageIndex < currentInspectDoc.pages.length - 1) {
+      currentInspectPageIndex += 1;
+      document.getElementById('doc-inspect-page-select').value = currentInspectPageIndex;
+      renderInspectPage(currentInspectPageIndex);
+    }
+  }
+
+  function renderInspectPage(idx) {
+    if (!currentInspectDoc || !currentInspectDoc.pages || !currentInspectDoc.pages[idx]) return;
+    currentInspectPageIndex = idx;
+    const pageData = currentInspectDoc.pages[idx];
+
+    document.getElementById('doc-img-page-num').textContent = `صفحه ${pageData.page}`;
+    const imgEl = document.getElementById('docs-page-img');
+    const placeholder = document.getElementById('docs-img-placeholder');
+    imgEl.style.display = 'none';
+    placeholder.style.display = 'block';
+    placeholder.textContent = 'در حال فراخوانی تصویر صفحه...';
+    imgEl.src = `${DOCS_API_BASE}/${currentInspectDoc.id}/page-image/${pageData.page}`;
+
+    const textEl = document.getElementById('docs-page-text');
+    textEl.textContent = pageData.text || '(این صفحه بدون متن است)';
+    document.getElementById('doc-text-length').textContent = `${(pageData.text || '').length} کاراکتر`;
+
+    const layerMeta = (pageData.metadata && pageData.metadata.text_layer) || 'استاندارد (OK)';
+    const layerEl = document.getElementById('docs-kpi-layer');
+    layerEl.textContent = layerMeta;
+    if (layerMeta === 'ocr') {
+      layerEl.style.color = '#38bdf8';
+    } else if (layerMeta === 'garbled' || layerMeta === 'visual_persian') {
+      layerEl.style.color = '#ef4444';
+    } else {
+      layerEl.style.color = '#22c55e';
+    }
+  }
+
+  function copyCurrentPageText() {
+    const text = document.getElementById('docs-page-text').textContent;
+    navigator.clipboard.writeText(text);
+    alert('متن صفحه با موفقیت کپی شد!');
+  }
+
+  async function reprocessCurrentDoc() {
+    if (!currentInspectDoc || !currentInspectDoc.id) return;
+    if (!confirm(`آیا از ارسال مجدد سند «${currentInspectDoc.filename}» به پایپ‌لاین Ingestion و OCR اطمینان دارید؟`)) return;
+
+    try {
+      const resp = await fetch(`${DOCS_API_BASE}/${currentInspectDoc.id}/reprocess`, { method: 'POST' });
+      if (!resp.ok) throw new Error('خطا در درخواست پردازش مجدد');
+      alert('سند با موفقیت در صف پردازش مجدد قرار گرفت! لطفاً لاگ کانتینر worker را بررسی کنید.');
+      await loadInspectDocsList();
+    } catch (err) {
+      alert('خطا: ' + err.message);
+    }
+  }
+
+  // --- OCR Debugger Methods ---
 
   async function loadDocumentsList() {
     try {
@@ -402,7 +669,7 @@ OCR_INSPECTOR_HTML = """<!DOCTYPE html>
   }
 
   // Initial load
-  loadDocumentsList();
+  loadInspectDocsList();
 </script>
 
 </body>

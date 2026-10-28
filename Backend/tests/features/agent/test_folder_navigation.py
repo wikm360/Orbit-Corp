@@ -85,7 +85,7 @@ async def test_tree_summary_lists_top_level_folders_with_recursive_counts_and_no
     tree = await project_tree_summary(db_session, project_id)
 
     assert "- امور تعدیل/ (2 files, 1 not ready (failed 1))" in tree
-    assert "- loose.pdf (file, ready)" in tree
+    assert "- loose.pdf (file, document_id:" in tree and "ready)" in tree
     assert "تعدیل ۲" not in tree  # only the first level
 
 

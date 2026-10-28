@@ -106,6 +106,10 @@
 
 ## Admin (`require_admin`)
 `GET /admin/users` · `POST /admin/users` · `PATCH /admin/users/{id}/role` `{role}` (super_admin) · `GET /admin/documents` (همه‌ی اسناد).
+داشبورد بازرس دیداری و متنی: `/db-admin/ocr-inspector` و `/admin/ocr-inspector` شامل:
+- بازرسی دیداری OCR و برش‌ها (`/api/v1/admin/ocr-debug/*`)
+- بازرسی متنی اسناد و صفحات، تصویر رندرشده صفحه و پردازش مجدد با OCR (`/api/v1/admin/documents-inspect/list`، `GET /documents-inspect/{id}`، `GET /documents-inspect/{id}/page-image/{page}`، `POST /documents-inspect/{id}/reprocess`)
+- راهنمای لاگ‌های زنده Agent و RAG
 
 ## پنل مدیریت دیتابیس (SQLAdmin)
 مسیر `/db-admin`: پنل تعاملی وب برای مشاهده و مدیریت کامل جداول دیتابیس (مشابه Django Admin برای Users, Teams, Projects, Documents, Chunks, Messages, Conversations, QueryLogs, SchemaHints).

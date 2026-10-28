@@ -23,7 +23,9 @@ TEXT_GARBLED = "garbled"
 _ARABIC_LETTER = re.compile(r"[؀-ۿݐ-ݿﭐ-﷿ﹰ-﻿]")
 _PRESENTATION_FORM = re.compile(r"[ﭐ-﷿ﹰ-﻿]")
 _LTR_RUN = re.compile(r"[A-Za-z0-9][A-Za-z0-9\-\./:_,%+()=]*")
-_NOISE = frozenset("~·•`'^|\\_=;\"<>*#@$&?{}[]!:")
+_NOISE = frozenset("~·•`'^|\\_=;\"<>*#@$&?{}[]!:/")
+_GLYPH_TOKEN = re.compile(r"^/[a-zA-Z]?\d+$")
+_CONTROL_CHAR = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 
 _MIN_ARABIC_LETTERS = 20
 _VISUAL_RATIO = 0.15
@@ -40,8 +42,20 @@ def assess_text_layer(text: str) -> str:
     if arabic >= _MIN_ARABIC_LETTERS and len(_PRESENTATION_FORM.findall(compact)) / arabic >= _VISUAL_RATIO:
         return TEXT_VISUAL_PERSIAN
 
+    tokens = text.split()
+
+    # 1. Unmapped font glyph index tokens (e.g. /i255, /0, /1 typical of Windows Distiller PDFs without ToUnicode CMap)
+    glyph_tokens = sum(1 for tok in tokens if _GLYPH_TOKEN.match(tok))
+    if (len(tokens) >= 5 and glyph_tokens / len(tokens) >= 0.20) or (len(tokens) < 5 and glyph_tokens >= 1):
+        return TEXT_GARBLED
+
+    # 2. Control characters or unmapped raw bytes
+    ctrl_count = len(_CONTROL_CHAR.findall(text))
+    if ctrl_count >= 10 or (len(compact) >= 40 and ctrl_count / len(compact) >= 0.05):
+        return TEXT_GARBLED
+
+    # 3. High noise / low wordlike ratio (residual OCR garbage, symbols)
     if len(compact) >= _MIN_GARBLED_CHARS:
-        tokens = text.split()
         wordlike = sum(1 for t in tokens if sum(c.isalpha() for c in t) >= 3) / max(1, len(tokens))
         noise = sum(c in _NOISE for c in compact) / len(compact)
         if wordlike < 0.15 and noise >= 0.10:

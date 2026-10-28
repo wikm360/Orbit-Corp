@@ -104,13 +104,18 @@ def _store_file(suffix: str, file_bytes: bytes) -> str:
     return str(file_path)
 
 
-def _enqueue_ingestion(document: Document) -> None:
-    _queue.enqueue(
-        "app.features.documents.ingestion.pipeline.run_ingestion_pipeline_sync",
-        document.id,
-        document.file_path,
-        job_timeout=settings.ingestion_job_timeout_seconds,
-    )
+async def reprocess_document(db: AsyncSession, document_id: uuid.UUID) -> Document:
+    """Marks a document for re-ingestion and puts it back in the processing queue."""
+    document = await db.get(Document, document_id)
+    if document is None:
+        raise NotFoundError("Document not found")
+    document.status = DocumentStatus.PROCESSING
+    document.error_message = None
+    await db.commit()
+    await db.refresh(document)
+    _enqueue_ingestion(document)
+    logger.info("Re-enqueued document %s (%s) for processing", document.id, document.filename)
+    return document
 
 
 async def _find_reusable_document(db: AsyncSession, content_hash: str) -> Document | None:
@@ -468,6 +473,30 @@ async def _get_accessible_document(
 
 
 get_accessible_document = _get_accessible_document
+
+
+async def get_accessible_document_by_name(
+    db: AsyncSession,
+    filename: str,
+    *,
+    project_id: uuid.UUID | None,
+    conversation_id: uuid.UUID,
+) -> Document:
+    """Look up an accessible document by its exact or case-insensitive filename (ignoring leading '@')."""
+    clean_name = filename.strip().lstrip("@")
+    stmt = (
+        select(Document)
+        .where(
+            func.lower(Document.filename) == clean_name.lower(),
+            accessible_documents_filter(project_id, conversation_id),
+        )
+        .order_by(Document.created_at.desc())
+    )
+    result = await db.execute(stmt)
+    document = result.scalars().first()
+    if document is None:
+        raise NotFoundError(f"Document '{clean_name}' not found or not accessible")
+    return document
 
 
 async def get_document_info(

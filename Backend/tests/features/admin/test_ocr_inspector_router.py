@@ -32,3 +32,18 @@ async def test_ocr_debug_nonexistent_doc():
         resp = await client.get("/api/v1/admin/ocr-debug/nonexistent-id-999")
         assert resp.status_code == 404
 
+
+@pytest.mark.asyncio
+async def test_documents_inspect_endpoints():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/api/v1/admin/ocr-inspector")
+        assert resp.status_code == 200
+        assert "بازرسی متنی اسناد و صفحات" in resp.text
+
+        list_resp = await client.get("/api/v1/admin/documents-inspect/list")
+        assert list_resp.status_code == 200
+        assert isinstance(list_resp.json(), list)
+
+        detail_resp = await client.get("/api/v1/admin/documents-inspect/00000000-0000-0000-0000-000000000000")
+        assert detail_resp.status_code == 404
+

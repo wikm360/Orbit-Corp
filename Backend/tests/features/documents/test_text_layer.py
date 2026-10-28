@@ -39,6 +39,18 @@ def test_symbol_noise_is_detected_as_garbled():
     assert assess_text_layer(_GARBAGE) == TEXT_GARBLED
 
 
+def test_unmapped_pdf_glyph_tokens_detected_as_garbled():
+    glyph_stream = "/0 /1 /2 /3 /4 /5 /6 /7 /8 /9 /10 /11 /12 /13 /14 /15 /i255"
+    assert assess_text_layer(glyph_stream) == TEXT_GARBLED
+    single_glyph = "/i255"
+    assert assess_text_layer(single_glyph) == TEXT_GARBLED
+
+
+def test_control_character_stream_detected_as_garbled():
+    ctrl_stream = "ÊÀ§\x03\xad\x7fY|»\x03sÔ\x8fY\x03\x18Ê»Y\x80³\x03Ã|À¿YÂy\x03ÊËY\x80mY"
+    assert assess_text_layer(ctrl_stream) == TEXT_GARBLED
+
+
 def test_fix_visual_persian_restores_readable_words():
     fixed = fix_visual_persian(_VISUAL_HEADING)
     assert any("بخش" in token for token in fixed.split())

@@ -43,7 +43,7 @@ async def project_tree_summary(db: AsyncSession, project_id: uuid.UUID) -> str:
         lines.append(f"- ... {len(listing['folders']) - _MAX_TREE_FOLDERS} more folders (browse_folder with an empty path lists them)")
     documents = listing["documents"]
     for document in documents[:_MAX_TREE_ROOT_FILES]:
-        lines.append(f"- {document.filename} (file, {_status_text(document)})")
+        lines.append(f"- {document.filename} (file, document_id: {document.id}, {_status_text(document)})")
     if len(documents) > _MAX_TREE_ROOT_FILES:
         lines.append(f"- ... {len(documents) - _MAX_TREE_ROOT_FILES} more files at the top level")
     return "\n".join(lines)

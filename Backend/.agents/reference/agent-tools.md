@@ -19,7 +19,7 @@
 | `ask_accounting_db` | accounting_tools | `question` | پرسش مالی (← flows/accounting-query) | فقط با `RAHKARAN_DB_ENABLED` |
 
 نکات:
-- `document_id` باید UUID معتبر باشد (`BadRequestError("'document_id' must be a valid UUID")` وگرنه).
+- ورودی `document_id` در ابزارهای سندی می‌تواند UUID معتبر یا نام فایل سند (با یا بدون `@`) باشد؛ در صورت ارسال نام فایل، سیستم سند را از میان اسناد در دسترس با همان نام پیدا می‌کند. همچنین `get_document_info` پارامتر اختیاری `filename` نیز می‌پذیرد.
 - ابزارهای سند و حافظه `resolve_retrieval_scope` را صدا می‌زنند؛ اگر گفتگو به پروژه‌ای وصل نیست، فقط اسناد خود گفتگو در دسترس است و ابزارهای memory/`list_project_documents` پیام «isn't linked to any project» می‌دهند.
 - در `search_knowledge_base` شناسه‌ها/شماره‌بندها/نام‌های دقیق را باید در `query` نگه داشت (جست‌وجوی واژگانی آن‌ها را عیناً می‌یابد؛ توضیح ابزار به مدل همین را می‌گوید).
 - ابزارهای `search_knowledge_base`، `read_entire_document`، `read_document_pages` و `view_document_page` همگی `citations` تولید می‌کنند (که در `message.sources` و `done.sources` می‌آیند)؛ `snippet` = ۳۰۰ نویسه‌ی اول متن/چانک.
