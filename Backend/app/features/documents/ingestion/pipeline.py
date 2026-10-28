@@ -21,6 +21,7 @@ from app.features.documents.ingestion.embedder import embed_chunks
 from app.features.documents.ingestion.ocr import extract_text_from_image, ocr_client_session
 from app.features.documents.ingestion.ocr_cache import get_cached_ocr, ocr_cache_key, put_cached_ocr, vision_model_name
 from app.features.documents.ingestion.page_kind import mark_drawing_page
+from app.features.documents.chunk_paths import PATH_KEY, chunk_search_text, path_for_new_chunks
 from app.features.documents.ingestion.parser import IMAGE_EXTENSIONS, DocumentPage, parse_document_pages, render_pdf_page
 from app.features.documents.ingestion.reconstructor import save_reconstructed_document
 from app.features.documents.models import Document, DocumentChunk, DocumentStatus
@@ -325,6 +326,7 @@ class PersistStep(IngestionStep):
                 "(empty file, unreadable scan, or OCR disabled/failed)."
             )
 
+        path = await path_for_new_chunks(context.db, context.document_id)
         for index, (chunk_obj, embedding) in enumerate(
             zip(context.page_chunks, context.embeddings, strict=True)
         ):
@@ -334,7 +336,8 @@ class PersistStep(IngestionStep):
                     content=chunk_obj.content,
                     chunk_index=index,
                     embedding=embedding,
-                    chunk_metadata=chunk_obj.metadata,
+                    chunk_metadata={**chunk_obj.metadata, PATH_KEY: path} if path else chunk_obj.metadata,
+                    search_text=chunk_search_text(path, chunk_obj.content),
                 )
             )
         await context.db.commit()

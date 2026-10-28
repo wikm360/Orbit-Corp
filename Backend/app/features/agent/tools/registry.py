@@ -16,10 +16,10 @@ from app.features.agent.tools.document_tools import (
     SearchKnowledgeBaseTool,
     ViewDocumentPageTool,
 )
+from app.features.agent.tools.folder_tools import BrowseFolderTool
 from app.features.agent.tools.memory_tools import RecallProjectInsightsTool, RememberProjectInsightTool
 from app.features.agent.tools.project_tools import (
     GetCurrentChatAttachmentsTool,
-    ListProjectDocumentsTool,
     ListUserProjectsTool,
 )
 from app.features.chat.models import Conversation
@@ -98,7 +98,7 @@ def build_default_registry() -> ToolRegistry:
         SearchKnowledgeBaseTool(),
         *([ViewDocumentPageTool()] if get_settings().agent_page_vision_enabled else []),
         ListUserProjectsTool(),
-        ListProjectDocumentsTool(),
+        BrowseFolderTool(),
         GetCurrentChatAttachmentsTool(),
         RecallProjectInsightsTool(),
         RememberProjectInsightTool(),

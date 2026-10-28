@@ -402,3 +402,85 @@ async def test_upload_into_a_foreign_or_unknown_folder_is_not_found(client):
         headers=leader,
     )
     assert batch.status_code == 404
+
+
+# --- folder path stamped on chunks (searchable file/folder names) ------------------------------------------------------
+
+
+async def _ready_with_chunk(db_session, document_id: str, content: str, path: str | None = None) -> None:
+    settings = get_settings()
+    doc = await db_session.get(Document, uuid.UUID(document_id))
+    doc.status = DocumentStatus.READY
+    doc.embedding_model = settings.embedding_model
+    meta = {"page": 1, **({"path": path} if path else {})}
+    db_session.add(
+        DocumentChunk(document_id=doc.id, content=content, chunk_index=0, embedding=[0.0] * settings.embedding_dimensions, chunk_metadata=meta)
+    )
+    await db_session.commit()
+
+
+async def _chunk_of(db_session, document_id: str) -> DocumentChunk:
+    db_session.expire_all()
+    return (await db_session.execute(select(DocumentChunk).where(DocumentChunk.document_id == uuid.UUID(document_id)))).scalars().one()
+
+
+async def test_move_rewrites_the_path_and_search_text_of_the_moved_documents_chunks(client, db_session):
+    leader, pid, _, _ = await _leader_with_project(client, "pathmove")
+    src = await _folder(client, leader, pid, "Src")
+    dest = await _folder(client, leader, pid, "امور تعدیل")
+    doc = await _upload(client, leader, pid, "approval.txt", b"x", folder_id=src["id"])
+    await _ready_with_chunk(db_session, doc["id"], "متن سند", path="Src/approval.txt")
+
+    await client.post(f"/api/v1/projects/{pid}/files/move", json={"document_ids": [doc["id"]], "target_folder_id": dest["id"]}, headers=leader)
+
+    chunk = await _chunk_of(db_session, doc["id"])
+    assert chunk.chunk_metadata["path"] == "امور تعدیل/approval.txt"
+    assert chunk.search_text.startswith("امور تعدیل approval txt ")
+    assert "متن سند" in chunk.search_text and chunk.chunk_metadata["page"] == 1
+
+
+async def test_renaming_a_folder_updates_every_document_below_it(client, db_session):
+    leader, pid, _, _ = await _leader_with_project(client, "pathrename")
+    top = await _folder(client, leader, pid, "Old")
+    sub = await _folder(client, leader, pid, "Sub", top["id"])
+    deep = await _upload(client, leader, pid, "deep.txt", b"x", folder_id=sub["id"])
+    other = await _upload(client, leader, pid, "other.txt", b"x")
+    await _ready_with_chunk(db_session, deep["id"], "a", path="Old/Sub/deep.txt")
+    await _ready_with_chunk(db_session, other["id"], "b", path="other.txt")
+
+    response = await client.patch(f"/api/v1/projects/{pid}/folders/{top['id']}", json={"name": "New"}, headers=leader)
+    assert response.status_code == 200, response.text
+
+    assert (await _chunk_of(db_session, deep["id"])).chunk_metadata["path"] == "New/Sub/deep.txt"
+    assert (await _chunk_of(db_session, other["id"])).chunk_metadata["path"] == "other.txt"  # untouched
+
+
+async def test_renaming_a_document_updates_its_chunks_and_a_copy_gets_its_own_path(client, db_session):
+    leader, pid, _, _ = await _leader_with_project(client, "pathcopy")
+    folder = await _folder(client, leader, pid, "F")
+    doc = await _upload(client, leader, pid, "a.txt", b"x", folder_id=folder["id"])
+    await _ready_with_chunk(db_session, doc["id"], "c", path="F/a.txt")
+
+    await client.patch(f"/api/v1/projects/{pid}/documents/{doc['id']}", json={"filename": "b.txt"}, headers=leader)
+    assert (await _chunk_of(db_session, doc["id"])).chunk_metadata["path"] == "F/b.txt"
+
+    target = await _folder(client, leader, pid, "Target")
+    await client.post(
+        f"/api/v1/projects/{pid}/files/copy", json={"document_ids": [doc["id"]], "target_folder_id": target["id"]}, headers=leader
+    )
+    listing = await _listing(client, leader, pid, target["id"])
+    copy_id = listing["documents"][0]["id"]
+    assert (await _chunk_of(db_session, copy_id)).chunk_metadata["path"] == "Target/b.txt"
+
+
+async def test_refresh_chunk_paths_backfills_chunks_indexed_before_paths_existed(client, db_session):
+    from app.features.documents.chunk_paths import refresh_chunk_paths
+
+    leader, pid, _, _ = await _leader_with_project(client, "backfill")
+    folder = await _folder(client, leader, pid, "Zarand")
+    doc = await _upload(client, leader, pid, "x.txt", b"x", folder_id=folder["id"])
+    await _ready_with_chunk(db_session, doc["id"], "legacy chunk")  # no path yet
+
+    assert await refresh_chunk_paths(db_session, uuid.UUID(pid)) == 1
+    assert await refresh_chunk_paths(db_session, uuid.UUID(pid)) == 0  # idempotent
+    assert (await _chunk_of(db_session, doc["id"])).chunk_metadata["path"] == "Zarand/x.txt"

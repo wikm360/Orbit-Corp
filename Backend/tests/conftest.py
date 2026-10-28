@@ -81,7 +81,7 @@ class _StubLLMProvider:
     plain content deltas, never a tool call - so a test that doesn't script
     its own provider still gets a deterministic, tool-free answer."""
 
-    async def stream_chat(self, messages, tools=None) -> AsyncIterator[dict]:
+    async def stream_chat(self, messages, tools=None, tool_choice="auto") -> AsyncIterator[dict]:
         for token in ["Hello", ", ", "world!"]:
             yield {"type": "content", "delta": token}
 

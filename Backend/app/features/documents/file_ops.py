@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.features.documents import archive_service, service
+from app.features.documents.chunk_paths import refresh_chunk_paths
 from app.features.documents.folder_service import (
     get_folder,
     load_folders,
@@ -224,6 +225,11 @@ async def _place_names(
     return folder_names, document_names
 
 
+async def _affected_document_ids(db: AsyncSession, project_id: uuid.UUID, selection: "Selection") -> list[uuid.UUID]:
+    """Ids of every selected document and of every document below a selected folder."""
+    return [d.id for d in await _expand(db, project_id, selection)]
+
+
 async def move_items(
     db: AsyncSession,
     project_id: uuid.UUID,
@@ -252,6 +258,7 @@ async def move_items(
             document.folder_id = target_folder_id
             document.filename = document_names[document.id]
     await db.commit()
+    await refresh_chunk_paths(db, project_id, await _affected_document_ids(db, project_id, selection))
     return len(folder_names) + len(document_names)
 
 
@@ -287,6 +294,7 @@ async def _clone_document(
     await db.refresh(clone)
     if reuse_chunks:
         await service._copy_chunks(db, source, clone)
+        await refresh_chunk_paths(db, source.project_id, [clone.id])
     elif status == DocumentStatus.PROCESSING:
         service._enqueue_ingestion(clone)
     return clone

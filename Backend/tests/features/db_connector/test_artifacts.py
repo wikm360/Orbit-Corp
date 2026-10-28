@@ -64,7 +64,7 @@ class _Scripted:
     def __init__(self, steps):
         self._steps, self.calls = steps, 0
 
-    def stream_chat(self, messages, tools=None):
+    def stream_chat(self, messages, tools=None, tool_choice="auto"):
         events = self._steps[self.calls]
         self.calls += 1
         return self._gen(events)
@@ -209,7 +209,7 @@ async def test_export_revalidates_stored_sql_and_freshness_needs_login(client, d
 class _FailsOnSecondCall(_Scripted):
     """First call returns a tool call; the second raises mid-stream (what 'incomplete chunked read' looks like to the engine)."""
 
-    def stream_chat(self, messages, tools=None):
+    def stream_chat(self, messages, tools=None, tool_choice="auto"):
         self.calls += 1
         return self._first() if self.calls == 1 else self._boom()
 
@@ -259,7 +259,7 @@ async def test_provider_retries_a_stream_dropped_before_any_output_but_not_after
     provider = lp.OpenAICompatibleLLMProvider(base_url="http://x/v1", api_key="k", model="m")
     attempts = {"n": 0}
 
-    async def flaky(messages, tools, tool_calls_out):
+    async def flaky(messages, tools, tool_calls_out, tool_choice="auto"):
         attempts["n"] += 1
         if attempts["n"] < 3:
             raise httpx.RemoteProtocolError("incomplete chunked read")
@@ -271,7 +271,7 @@ async def test_provider_retries_a_stream_dropped_before_any_output_but_not_after
 
     attempts["n"] = 0
 
-    async def dies_midway(messages, tools, tool_calls_out):
+    async def dies_midway(messages, tools, tool_calls_out, tool_choice="auto"):
         attempts["n"] += 1
         yield "نیمه"
         raise httpx.RemoteProtocolError("incomplete chunked read")

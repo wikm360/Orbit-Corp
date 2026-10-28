@@ -4,9 +4,10 @@ import logging
 import re
 import uuid
 from abc import ABC, abstractmethod
+from collections.abc import Collection
 from dataclasses import dataclass
 
-from sqlalchemy import func, literal, literal_column, select, text
+from sqlalchemy import func, literal, literal_column, select, text, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -30,6 +31,8 @@ class RetrievedChunk:
     # Cosine similarity to the query embedding (NaN-safe callers should not assume it is sortable).
     score: float
     page_number: int | None = None
+    # "folder/subfolder/file name" as of the last (re)index/move; "" for chunks indexed before paths existed.
+    document_path: str = ""
     # True when full-text / trigram search also found this chunk (so a low `score` does not make it irrelevant).
     lexical_match: bool = False
 
@@ -64,6 +67,7 @@ class Retriever(ABC):
         top_k: int,
         query_text: str | None = None,
         min_similarity: float | None = None,
+        folder_ids: Collection[uuid.UUID] | None = None,
     ) -> list[RetrievedChunk]:
         ...
 
@@ -92,7 +96,13 @@ def _to_retrieved(row) -> RetrievedChunk:
         chunk_index=row.chunk_index,
         score=1 - row.distance,
         page_number=meta.get("page") or meta.get("page_number"),
+        document_path=meta.get("path") or "",
     )
+
+
+def _in_folders(folder_ids: Collection[uuid.UUID] | None):
+    """Extra narrowing on top of the access filter (never instead of it): only documents in these folders."""
+    return true() if folder_ids is None else Document.folder_id.in_(list(folder_ids))
 
 
 def _passes(similarity: float, min_similarity: float | None) -> bool:
@@ -112,12 +122,14 @@ class VectorRetriever(Retriever):
         top_k: int,
         query_text: str | None = None,
         min_similarity: float | None = None,
+        folder_ids: Collection[uuid.UUID] | None = None,
     ) -> list[RetrievedChunk]:
         distance = DocumentChunk.embedding.cosine_distance(query_embedding)
         stmt = (
             select(*_columns(distance))
             .join(Document, Document.id == DocumentChunk.document_id)
             .where(accessible_documents_filter(project_id, conversation_id))
+            .where(_in_folders(folder_ids))
             .order_by(distance)
             .limit(top_k)
         )
@@ -146,12 +158,13 @@ class HybridRetriever(Retriever):
         top_k: int,
         query_text: str | None = None,
         min_similarity: float | None = None,
+        folder_ids: Collection[uuid.UUID] | None = None,
     ) -> list[RetrievedChunk]:
         settings = get_settings()
         terms = query_terms(query_text) if query_text else []
         if not terms:
             return await VectorRetriever().retrieve(
-                db, project_id, conversation_id, query_embedding, top_k, min_similarity=min_similarity
+                db, project_id, conversation_id, query_embedding, top_k, min_similarity=min_similarity, folder_ids=folder_ids
             )
 
         limit = max(top_k, settings.retrieval_candidates)
@@ -163,6 +176,7 @@ class HybridRetriever(Retriever):
                 select(*_columns(distance))
                 .join(Document, Document.id == DocumentChunk.document_id)
                 .where(access)
+                .where(_in_folders(folder_ids))
             )
 
         vector_rows = (await db.execute(base().order_by(distance).limit(limit))).all()
@@ -282,11 +296,13 @@ class RerankingRetriever(Retriever):
         top_k: int,
         query_text: str | None = None,
         min_similarity: float | None = None,
+        folder_ids: Collection[uuid.UUID] | None = None,
     ) -> list[RetrievedChunk]:
         settings = get_settings()
         candidates = await self._inner.retrieve(
             db, project_id, conversation_id, query_embedding,
             max(top_k, settings.retrieval_rerank_candidates), query_text=query_text, min_similarity=min_similarity,
+            **({"folder_ids": folder_ids} if folder_ids is not None else {}),
         )
         if not query_text or len(candidates) <= 1:
             return candidates[:top_k]

@@ -189,6 +189,11 @@ async def rename_folder(db: AsyncSession, project_id: uuid.UUID, folder_id: uuid
         await db.rollback()
         raise ConflictError(f"A folder named '{name.strip()}' already exists here") from None
     await db.refresh(folder)
+    from app.features.documents.chunk_paths import refresh_chunk_paths  # (chunk_paths imports this module)
+
+    subtree = subtree_ids(await load_folders(db, project_id), {folder.id})
+    ids = (await db.execute(select(Document.id).where(Document.project_id == project_id, Document.folder_id.in_(subtree)))).scalars().all()
+    await refresh_chunk_paths(db, project_id, ids)
     return folder
 
 
@@ -204,6 +209,9 @@ async def rename_document(db: AsyncSession, project_id: uuid.UUID, document_id: 
     document.filename = name
     await db.commit()
     await db.refresh(document)
+    from app.features.documents.chunk_paths import refresh_chunk_paths  # (chunk_paths imports this module)
+
+    await refresh_chunk_paths(db, project_id, [document.id])
     return document
 
 
@@ -286,3 +294,17 @@ async def search_documents(db: AsyncSession, project_id: uuid.UUID, query: str, 
     )
     folders = await load_folders(db, project_id)
     return [{"document": d, "path": [f.name for f in path_of(folders, d.folder_id)]} for d in rows]
+
+
+def resolve_path(folders: dict[uuid.UUID, DocumentFolder], path: str | None) -> uuid.UUID | None:
+    """The folder a "a/b/c" path points to (case-insensitive, `/` or backslash separators);
+    None for the project root (empty path). Raises NotFoundError naming the part that does not exist."""
+    parts = split_relative_path(path or "")
+    current: uuid.UUID | None = None
+    for index, part in enumerate(parts):
+        wanted = part.strip().lower()
+        match = next((f for f in folders.values() if f.parent_id == current and f.name.lower() == wanted), None)
+        if match is None:
+            raise NotFoundError(f"Folder '{part}' not found" + (f" inside '{'/'.join(parts[:index])}'" if index else " at the top level"))
+        current = match.id
+    return current

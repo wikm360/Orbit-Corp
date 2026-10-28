@@ -34,7 +34,7 @@ class _ScriptedProvider:
         self.reply, self.error, self.delay = reply, error, delay
         self.prompts: list[str] = []
 
-    async def stream_chat(self, messages, tools=None):
+    async def stream_chat(self, messages, tools=None, tool_choice="auto"):
         self.prompts.append(messages[0]["content"])
         if self.delay:
             await asyncio.sleep(self.delay)

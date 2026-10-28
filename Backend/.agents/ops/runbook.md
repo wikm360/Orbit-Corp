@@ -42,6 +42,8 @@ dc exec -T postgres pg_dump -U postgres org_rag | gzip > pg_$(date +%F).sql.gz  
 ## تغییر مدل embedding (re-embed)
 بردارهای مدل‌های مختلف قابل‌مقایسه نیستند؛ بعد از تغییر `EMBEDDING_MODEL` (یا `EMBEDDING_SEND_DIMENSIONS`) باید همه‌چیز دوباره embed شود:
 ```bash
+# مسیر فایل روی chunkهای قدیمی (فقط metadata/search_text؛ بدون هزینه‌ی OCR/embedding؛ idempotent)
+dc exec backend python -m app.features.documents.backfill_chunk_paths
 dc exec backend python -m app.features.documents.reembed --dry-run      # فقط شمارش
 dc exec backend python -m app.features.documents.reembed                # اسناد READY با embedding_model متفاوت + حافظه‌ی پروژه‌ها
 dc exec backend python -m app.features.db_connector.ingest              # hint های SQL (با تغییر مدل خودکار دوباره embed می‌شوند)
@@ -83,3 +85,7 @@ uvicorn app.main:app --reload            # API
 python -m workers.ingestion_worker       # worker
 ```
 برای OCR PDF اسکن‌شده `pdftoppm` (poppler-utils) نصب باشد.
+
+
+## هزینه‌ی prompt و prefix cache
+لاگ `[LLM:USAGE] model=… prompt=… cached=… completion=…` برای هر فراخوانی چت (استریم با `include_usage`). `cached` بزرگ‌تر از صفر یعنی prefix (ابزارها + system) از کش خوانده شده؛ روی gapgpt اندازه‌گیری شد: فراخوانی دوم به بعد ≈۹۹٪ prefix کش و هزینه‌ی ورودی ≈۱۰ برابر کمتر. ستون «توکن ورودی» پنل gapgpt برای درخواست‌های کش‌خورده `prompt+cached` نشان می‌دهد (دوبار شمرده)؛ معیار درست ستون هزینه است. هر چیز متغیر باید بعد از بخش ثابت prompt بیاید وگرنه کش می‌پرد.

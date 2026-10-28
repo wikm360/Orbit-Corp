@@ -77,7 +77,7 @@ class LLMProvider(ABC):
 
     @abstractmethod
     def stream_chat(
-        self, messages: list[ChatMessage], tools: list[ToolSpec] | None = None
+        self, messages: list[ChatMessage], tools: list[ToolSpec] | None = None, tool_choice: str = "auto"
     ) -> AsyncIterator[StreamEvent]:
         """Streams the model's turn as it arrives.
 
@@ -168,6 +168,18 @@ async def _strip_tag_blocks(
         yield buffer
 
 
+def _log_usage(model: str, usage) -> None:
+    """One line per call: how much of the prompt was served from the provider's prefix cache (cached_tokens)."""
+    details = getattr(usage, "prompt_tokens_details", None)
+    logger.info(
+        "[LLM:USAGE] model=%s prompt=%s cached=%s completion=%s",
+        model,
+        getattr(usage, "prompt_tokens", None),
+        getattr(details, "cached_tokens", None) if details is not None else None,
+        getattr(usage, "completion_tokens", None),
+    )
+
+
 class OpenAICompatibleLLMProvider(LLMProvider):
     """Works with OpenAI itself or any OpenAI-compatible chat completions API."""
 
@@ -192,6 +204,7 @@ class OpenAICompatibleLLMProvider(LLMProvider):
         messages: list[ChatMessage],
         tools: list[ToolSpec] | None,
         tool_calls_out: list[ToolCall],
+        tool_choice: str = "auto",
     ) -> AsyncIterator[str]:
         """Yields content deltas only (for `_strip_tag_blocks` to filter).
 
@@ -208,17 +221,20 @@ class OpenAICompatibleLLMProvider(LLMProvider):
         kwargs: dict = {}
         if tools:
             kwargs["tools"] = tools
-            kwargs["tool_choice"] = "auto"
+            kwargs["tool_choice"] = tool_choice
         stream = await self._client.chat.completions.create(
             model=self._model,
             messages=messages,  # type: ignore[arg-type]
             stream=True,
+            stream_options={"include_usage": True},
             extra_body=extra_body,
             **kwargs,
         )
 
         accumulated: dict[int, dict[str, str]] = {}
         async for chunk in stream:
+            if getattr(chunk, "usage", None) is not None:
+                _log_usage(self._model, chunk.usage)
             if not chunk.choices:
                 continue
             choice = chunk.choices[0]
@@ -247,7 +263,7 @@ class OpenAICompatibleLLMProvider(LLMProvider):
                     )
 
     async def _stream_events(
-        self, messages: list[ChatMessage], tools: list[ToolSpec] | None
+        self, messages: list[ChatMessage], tools: list[ToolSpec] | None, tool_choice: str = "auto"
     ) -> AsyncIterator[StreamEvent]:
         # Gateways sometimes drop a connection ("incomplete chunked read"). If that happens before a single token was delivered
         # to the caller, nothing is lost by asking again; once content has been yielded it cannot be replayed, so the error is raised.
@@ -255,7 +271,7 @@ class OpenAICompatibleLLMProvider(LLMProvider):
             tool_calls: list[ToolCall] = []
             delivered = False
             try:
-                content_stream = self._raw_content_stream(messages, tools, tool_calls)
+                content_stream = self._raw_content_stream(messages, tools, tool_calls, tool_choice)
                 async for stripped in _strip_tag_blocks(content_stream, self._strip_tags):
                     delivered = True
                     yield {"type": "content", "delta": stripped}
@@ -271,9 +287,9 @@ class OpenAICompatibleLLMProvider(LLMProvider):
                 await asyncio.sleep(1.5 * attempt)
 
     def stream_chat(
-        self, messages: list[ChatMessage], tools: list[ToolSpec] | None = None
+        self, messages: list[ChatMessage], tools: list[ToolSpec] | None = None, tool_choice: str = "auto"
     ) -> AsyncIterator[StreamEvent]:
-        return self._stream_events(messages, tools)
+        return self._stream_events(messages, tools, tool_choice)
 
 
 @lru_cache

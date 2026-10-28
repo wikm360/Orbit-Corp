@@ -5,11 +5,11 @@ import uuid
 from typing import Any
 
 from app.core.config import get_settings
-from app.core.exceptions import BadRequestError
+from app.core.exceptions import BadRequestError, NotFoundError
 from app.features.agent.schemas import SourceCitation, ToolExecutionResult
 from app.features.agent.scope import resolve_retrieval_scope
 from app.features.agent.tools.base import BaseTool
-from app.features.documents import service as documents_service
+from app.features.documents import folder_service, service as documents_service
 from app.features.documents.ingestion.ocr import prepare_image_for_ocr
 from app.features.retrieval.service import get_retriever
 from app.providers.embedding_provider import get_embedding_provider
@@ -157,9 +157,10 @@ class SearchKnowledgeBaseTool(BaseTool):
     description = (
         "Search the knowledge base for specific topics, questions, facts, or clauses across all visible documents. "
         "Hybrid search (semantic meaning + exact keywords). It returns the best-matching passages widened to their full page. "
-        "Keep exact terms such as clause numbers, codes and names in the query. "
-        "DO NOT put file names or generic requests (like 'Dropped Image.png' or 'read entire text') as the query - "
-        "to read an uploaded file or image, use read_entire_document or read_document_pages with its document_id."
+        "Keep exact terms such as clause numbers, codes and names in the query. File and folder names are searched too "
+        "(each passage is labelled with its folder path). To search inside one folder only, pass path_prefix. "
+        "DO NOT use it just to open a file you already know (by document_id) - use read_entire_document or "
+        "read_document_pages; to explore folders use browse_folder."
     )
     parameters = {
         "type": "object",
@@ -170,18 +171,34 @@ class SearchKnowledgeBaseTool(BaseTool):
                 "enum": ["page", "chunk"],
                 "description": "'page' (default): return the full page of each hit. 'chunk': only the matching passages.",
             },
+            "path_prefix": {
+                "type": "string",
+                "description": "Only search inside this folder (and its subfolders), e.g. 'امور مربوط به تعدیل/تعدیل شماره2'",
+            },
         },
         "required": ["query"],
     }
 
     async def execute(
-        self, *, db, context, conversation, query: str, expand: str = "page", **_: Any
+        self, *, db, context, conversation, query: str, expand: str = "page", path_prefix: str = "", **_: Any
     ) -> ToolExecutionResult:
         embedding_provider = get_embedding_provider()
         [query_embedding] = await embedding_provider.embed([query])
 
         project_id = resolve_retrieval_scope(context, conversation)
         logger.info("[RAG:SEARCH] Query: %s | Scope: %s", repr(query), project_id or conversation.id)
+
+        folder_ids = None
+        if path_prefix and path_prefix.strip("/ \\"):
+            if project_id is None:
+                return ToolExecutionResult(text="path_prefix needs a project: this conversation isn't linked to one.")
+            folders = await folder_service.load_folders(db, project_id)
+            try:
+                root = folder_service.resolve_path(folders, path_prefix)
+            except NotFoundError as exc:
+                top = sorted(f.name for f in folders.values() if f.parent_id is None)
+                return ToolExecutionResult(text=f"{exc.detail}. Top-level folders: " + (", ".join(top) or "(none)"))
+            folder_ids = folder_service.subtree_ids(folders, {root})
 
         retriever = get_retriever()
         chunks = await retriever.retrieve(
@@ -192,6 +209,7 @@ class SearchKnowledgeBaseTool(BaseTool):
             top_k=settings.retrieval_top_k,
             query_text=query,
             min_similarity=settings.retrieval_score_threshold,
+            **({"folder_ids": folder_ids} if folder_ids is not None else {}),
         )
 
         if not chunks:
@@ -247,7 +265,8 @@ class SearchKnowledgeBaseTool(BaseTool):
         seen_pages: set = set()
         for chunk in chunks:
             page = getattr(chunk, "page_number", None)
-            label = f"{chunk.document_filename} (صفحه {page})" if page else chunk.document_filename
+            name = getattr(chunk, "document_path", "") or chunk.document_filename
+            label = f"{name} (صفحه {page})" if page else name
             key = (uuid.UUID(str(chunk.document_id)), page)
             if page and key in seen_pages:
                 continue  # an earlier (better) hit already returned this whole page

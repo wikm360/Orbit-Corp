@@ -32,7 +32,7 @@ class _ToolCallThenAnswerProvider:
     def __init__(self):
         self.calls = 0
 
-    def stream_chat(self, messages, tools=None):
+    def stream_chat(self, messages, tools=None, tool_choice="auto"):
         self.calls += 1
         if self.calls == 1:
             return self._events(

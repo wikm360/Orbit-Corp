@@ -29,8 +29,8 @@ pytest -k refresh_tokens
 | `features/auth` | ثبت‌نام/لاگین/اولین کاربر، rotation و reuse refresh token | 10 |
 | `features/access_control` | تیم/پروژه/leader/قطع دسترسی | 5 |
 | `features/chat` | چت شخصی SSE، گروه، catch-up، عنوان خودکار، tool-calling، اسناد گفتگو | 16 |
-| `features/agent` | حلقه‌ی engine، سقف گام، dedup | 3 |
-| `features/documents` | آپلود/dedup/batch/retry، فایل‌منیجر (`test_file_manager`: پوشه، move/copy/delete، cancel/retry دسته‌ای، دسترسی 403/404)، آرشیو (`test_archive_import`: zip/7z، zip-slip، سقف‌ها، نام فارسی، تو در تو)، لغو حین پردازش (`test_ingestion_cancellation`)، parser، OCR/صفحه، تشخیص و اصلاح لایه‌ی متنی خراب PDF (`test_text_layer`)، re-embed (`test_reembed`)، خواندن ساخت‌یافته و `get_document_info`، ایزولاسیون scope، اعلان | ~110 |
+| `features/agent` | حلقه‌ی engine، سقف گام (`tool_choice="none"`)، dedup؛ ناوبری پوشه (`test_folder_navigation`: درخت prompt، `browse_folder`، `path_prefix`، جست‌وجوی نام فایل/پوشه، ترتیب prompt) | ~25 |
+| `features/documents` | آپلود/dedup/batch/retry، فایل‌منیجر (`test_file_manager`: پوشه، move/copy/delete، cancel/retry دسته‌ای، دسترسی 403/404)، آرشیو (`test_archive_import`: zip/7z، zip-slip، سقف‌ها، نام فارسی، تو در تو)، لغو حین پردازش (`test_ingestion_cancellation`)، همگام‌سازی path روی chunk (انتهای `test_file_manager`)، parser، OCR/صفحه، تشخیص و اصلاح لایه‌ی متنی خراب PDF (`test_text_layer`)، re-embed (`test_reembed`)، خواندن ساخت‌یافته و `get_document_info`، ایزولاسیون scope، اعلان | ~110 |
 | `features/memory` | سرویس و REST | 6 |
 | `features/retrieval` | hybrid (RRF، normalize، match دقیق/trigram، scope) و re-rank LLM (`test_rerank`: ترتیب، [] ، fallback، timeout) | 18 |
 | `features/db_connector` | validator، generator، hints، lexical، summary، formatter، artifacts، service، tool، router | 41 |

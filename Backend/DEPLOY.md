@@ -196,6 +196,9 @@ docker compose up -d backend worker      # تنظیمات فقط با restart ا
 ```bash
 nano .env                                                    # EMBEDDING_MODEL / DIMENSIONS / SEND_DIMENSIONS
 docker compose up -d backend worker
+# بعد از deploy نسخه‌ی path-aware: مسیر پوشه روی chunkهای قدیمی (بدون هزینه، idempotent)
+docker compose exec backend python -m app.features.documents.backfill_chunk_paths
+
 docker compose exec backend python -m app.features.documents.reembed --dry-run
 docker compose exec backend python -m app.features.documents.reembed     # اسناد READY و حافظهٔ پروژه‌ها
 docker compose exec backend python -m app.features.db_connector.ingest   # hint ها

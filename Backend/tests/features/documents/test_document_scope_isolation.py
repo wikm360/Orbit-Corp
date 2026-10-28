@@ -111,7 +111,7 @@ async def test_the_model_is_given_attachment_metadata_but_not_file_content(db_se
     captured: list[list[dict]] = []
 
     class _CapturingProvider:
-        def stream_chat(self, messages, tools=None):
+        def stream_chat(self, messages, tools=None, tool_choice="auto"):
             captured.append(messages)
             return self._stream()
 

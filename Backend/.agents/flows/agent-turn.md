@@ -14,18 +14,20 @@
   | `artifact` | `{artifact}` | بلافاصله پس از اجرای ابزار (مثلاً نتیجه‌ی SQL) |
 
 ## ساخت prompt (`_build_messages`)
+0. **ترتیب برای prefix cache:** بخش‌های ثابت اول، کم‌تغییر بعد، پرتغییر آخر (provider روی prefix یکسان تخفیف می‌دهد؛ اندازه‌گیری: ورودی ≈۱۰ برابر ارزان‌تر). پس ترتیب واقعی: `SYSTEM_PROMPT` ← group ← accounting ← **درخت سطح اول پروژه** ← پیوست‌های گفتگو ← تاریخچه. ابزارها هم قبل از پیام‌ها در prefix هستند: فهرستشان بین گام‌های یک turn عوض نمی‌شود (گام آخر ابزارها را حذف نمی‌کند، `tool_choice="none"` می‌دهد).
 1. `system` = `SYSTEM_PROMPT` (انگلیسی: دستیار داخلی سازمان؛ از ابزارها استفاده کن؛ فقط دو نوع فایل می‌بینی؛ هرگز ادعای خواندن فایلی که با ابزار باز نکردی نکن) + **روال اسناد و تصاویر**: اسناد و تصاویر آپلودشده قبلاً توسط پایپ‌لاین OCR استخراج متن شده‌اند. برای درخواست کل متن/رونویسی یک فایل یا تصویر، بلافاصله `read_entire_document` (یا `read_document_pages`) با `document_id` از فهرست فایل‌های آپلودشده چت فراخوانی شود (نام فایل در RAG سرچ نشود و از `view_document_page` برای متن استفاده نشود). برای سؤالات موضوعی و جزئی از `search_knowledge_base` استفاده شود. ابزار دیداری `view_document_page` فقط مخصوص نقشه‌های فنی، کروکی و دیاگرام‌های غیرمتنی است.
+1b. اگر گفتگو scope پروژه دارد: بند «Project knowledge base - top level» = پوشه‌های سطح اول با تعداد فایل‌های بازگشتی (و not ready) + فایل‌های سطح اول (حداکثر ۴۰ پوشه/۱۵ فایل، `folder_tools.project_tree_summary`) و قاعده‌ی agentic: اگر پرسش به پوشه/نوع سند/نام فایل اشاره دارد، با `browse_folder` بگرد، با `read_*` باز کن؛ قبل از پیمایش نتیجه نگیر که چیزی نیست؛ فایل غیر ready را «هست ولی هنوز خوانده نشده» گزارش کن.
 2. اگر گفتگو سند دارد: فهرست **متادیتا** (نام، `document_id`، status؛ حداکثر ۵۰) با راهنمایی صریح که متن استخراج‌شده از طریق `read_entire_document` در دسترس است.
 3. اگر `project_group`: توضیح گروه‌بودن + پیشوند `@bot` + اینکه پیام انسان‌ها با نام فرستنده شروع می‌شود.
 4. اگر `RAHKARAN_DB_ENABLED`: بند طولانی درباره‌ی `ask_accounting_db` (یک‌بار صدا بزن؛ پرسش خودبسنده‌ی فارسی؛ UI خودش SQL/جدول را نشان می‌دهد پس کوتاه جواب بده؛ اعداد را عیناً نقل کن؛ واحد ریال/تومان؛ تعداد ردیف را از «total rows» ابزار بگو؛ نتیجه‌ی صفر ردیف ≠ نبودن داده).
 5. تاریخچه: **۳۰ پیام آخر** (`_load_history`)؛ نقش `assistant` برای پاسخ‌های AI، `user` برای بقیه. در گروه، پیام کاربر با `"<نام یا ایمیل>: "` شروع می‌شود (نام‌ها با یک query).
 ⚠️ فقط `content` پیام‌ها بازپخش می‌شود؛ `sources`/`artifacts` و نتایج ابزارهای turnهای قبلی نه. پس مدل در turn بعد جدول SQL قبلی را «نمی‌بیند» جز آنچه در متن پاسخ قبلی‌اش آمده.
 
-## حلقه (`MAX_STEPS = 6`)
+## حلقه (`MAX_STEPS = 8`)
 ```
-for step in 0..5:
-    tools = None if step == 5 else registry.to_openai_tools()     # آخرین گام بدون ابزار → مجبور به پاسخ
-    stream = llm.stream_chat(messages, tools)
+for step in 0..7:
+    tools = registry.to_openai_tools()
+    stream = llm.stream_chat(messages, tools, tool_choice="none" if step == 7 else "auto")   # آخرین گام: همان ابزارها ولی ممنوع → مجبور به پاسخ، بدون خراب‌کردن prefix cache
       - content delta → callback("agent_activity",{generating}) (یک‌بار) + callback("delta")
       - tool_calls    → ذخیره
     اگر tool_calls نبود: full_response = متن گام؛ break
@@ -39,7 +41,7 @@ for step in 0..5:
 return AgentTurnResult(full_response, citations, artifacts)
 ```
 - **dedup داخل turn**: اگر مدل همان ابزار با همان آرگومان را دوباره بزند (موازی یا گام بعد) فقط یک‌بار اجرا می‌شود (برای `ask_accounting_db` مهم است: دو LLM call + دو query صرفه‌جویی).
-- `_DOCUMENT_READ_TOOLS` = info/read pages/read entire/get_current_chat_attachments/list_project_documents → status `reading_documents`.
+- `_DOCUMENT_READ_TOOLS` = info/read pages/read entire/get_current_chat_attachments/browse_folder → status `reading_documents`.
 - متنی که مدل *قبل از* tool call می‌گوید هم stream (delta) می‌شود ولی در `full_response` (و پیام ذخیره‌شده) نمی‌آید؛ فقط متن گام نهایی ذخیره می‌شود. ⚠️ ممکن است کلاینت متنی را در حین stream ببیند که بعد از بارگذاری مجدد گفتگو نیست.
 - اگر LLM وسط turn قطع شود، engine استثنا می‌دهد؛ **فراخواننده** آن را می‌گیرد (`_failed_turn_result`): متن نیمه‌کاره + پیام فارسی «ارتباط با مدل قطع شد» (یا نسخه‌ای که می‌گوید جدول دیتابیس در artifact هست)، با artifactsی که تا آن لحظه ساخته شده.
 
@@ -61,7 +63,7 @@ return AgentTurnResult(full_response, citations, artifacts)
 `SourceCitation{document_id, document_filename, chunk_index, snippet(≤300), score, page?}`.
 
 ## تست
-`tests/features/agent/test_engine.py` با `_ScriptedLLMProvider` (دنباله‌ی ثابت event) و `_AlwaysToolCallLLMProvider` (برای اثبات سقف `MAX_STEPS` گام و حذف ابزارها در گام آخر)؛ `tests/features/chat/test_tool_calling.py`.
+`tests/features/agent/test_engine.py` با `_ScriptedLLMProvider` (دنباله‌ی ثابت event) و `_AlwaysToolCallLLMProvider` (برای اثبات سقف `MAX_STEPS` گام و `tool_choice="none"` در گام آخر)؛ `tests/features/chat/test_tool_calling.py`.
 
 
 ## تصویر صفحه (`view_document_page`)

@@ -10,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.dependencies import UserContext
 from app.features.agent.schemas import AgentTurnResult, SourceCitation, ToolExecutionResult
+from app.features.agent.scope import resolve_retrieval_scope
+from app.features.agent.tools.folder_tools import project_tree_summary
 from app.features.agent.tools.registry import ToolRegistry, build_default_registry
 from app.features.auth.models import User
 from app.features.chat.models import Conversation, ConversationType, Message, SenderType
@@ -19,11 +21,10 @@ from app.providers.llm_provider import ChatMessage, get_llm_provider
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-# Hard cap on tool-call round-trips per turn: on the final step, tools are
-# omitted from the request entirely, so the model is forced to answer with
-# whatever it has learned so far rather than looping forever.
-# search -> (reworded search | read the exact pages) -> answer needs room; the last step has no tools, which caps the cost.
-MAX_STEPS = 6
+# Hard cap on tool-call round-trips per turn: on the final step the model may not call tools (`tool_choice="none"`), so
+# it must answer with whatever it has learned so far rather than looping forever.
+# browse folders -> search -> (reworded search | read the exact pages) -> answer needs room; the last step caps the cost.
+MAX_STEPS = 8
 
 # Caps the attachment metadata injected into the prompt each turn.
 _MAX_LISTED_ATTACHMENTS = 50
@@ -43,8 +44,8 @@ SYSTEM_PROMPT = (
     "How to read and answer questions about documents and images:\n"
     "1. When the user asks for the full text, content, transcription, or summary of an uploaded file, image, or document "
     "(e.g., 'متن این تصویر را بده', 'کل نامه را بنویس', 'فایل را بخوان'): Immediately call 'read_entire_document' with the "
-    "document_id from the chat uploaded files list (or 'read_document_pages' for specific pages). Do NOT search file names in "
-    "search_knowledge_base (file names are not part of document text), and NEVER use view_document_page to read or transcribe "
+    "document_id from the chat uploaded files list (or 'read_document_pages' for specific pages). Do NOT look a file up with "
+    "search_knowledge_base when you already have its document_id, and NEVER use view_document_page to read or transcribe "
     "text from document images or letters - the clean, high-precision OCR text is in read_entire_document.\n"
     "2. For specific topical or factual questions across documents (e.g., specific terms, numbers, clauses, dates): "
     "Use 'search_knowledge_base' with a targeted Persian query describing the fact/topic. Its results already include the "
@@ -52,6 +53,16 @@ SYSTEM_PROMPT = (
     "3. Visual inspection ('view_document_page'): Use ONLY for non-text visual graphics such as architectural/engineering "
     "drawings (beams, dimensions drawn on blueprints), floor plans, maps, or graphical diagrams where visual layout inspection "
     "is strictly necessary. NEVER use view_document_page to read or transcribe textual letters, documents, or forms."
+)
+
+_PROJECT_TREE_INTRO = (
+    "\n\nProject knowledge base - top level (folders show their total file counts):\n"
+    "Explore it like a file manager: when the question names a folder, a topic area, a document type or a file, call "
+    "browse_folder on the matching folder (then its subfolders) to find the file and open it with read_document_pages / "
+    "read_entire_document. search_knowledge_base also matches file and folder names and accepts path_prefix to search "
+    "inside one folder. Do NOT conclude that something is missing from the knowledge base before you have browsed the "
+    "relevant folder; a file whose status is not 'ready' (processing / failed / unsupported / cancelled) exists but cannot "
+    "be read yet - tell the user that instead of saying it does not exist.\n"
 )
 
 # Tools whose `agent_activity` status should read "reading_documents" rather
@@ -62,7 +73,7 @@ _DOCUMENT_READ_TOOLS = {
     "view_document_page",
     "read_entire_document",
     "get_current_chat_attachments",
-    "list_project_documents",
+    "browse_folder",
 }
 
 AgentCallback = Callable[[str, dict], Awaitable[None]]
@@ -93,7 +104,7 @@ class AgentEngine:
         """Assumes the current turn's user message has already been
         persisted to the `messages` table by the caller, so it's picked up
         here as the last row of history rather than passed separately."""
-        messages = await self._build_messages(db, conversation)
+        messages = await self._build_messages(db, conversation, context)
         tools = self._registry.to_openai_tools(context, conversation)
         llm_provider = get_llm_provider()
 
@@ -118,13 +129,16 @@ class AgentEngine:
 
         for step in range(MAX_STEPS):
             is_last_step = step == MAX_STEPS - 1
-            step_tools = None if is_last_step else tools
+            # The last step keeps the same tool list but forbids calling one: dropping `tools` would change the start of
+            # the request and throw away the provider's prefix cache for the whole prompt.
+            extra = {"tool_choice": "none"} if is_last_step and tools else {}
+            step_tools = tools or None
 
             content_buffer = ""
             tool_calls: list = []
             generating_emitted = False
 
-            async for event in llm_provider.stream_chat(messages, tools=step_tools):
+            async for event in llm_provider.stream_chat(messages, tools=step_tools, **extra):
                 if event["type"] == "content":
                     if not generating_emitted:
                         await callback("agent_activity", {"status": "generating"})
@@ -245,24 +259,14 @@ class AgentEngine:
 
         return AgentTurnResult(content=full_response, citations=all_citations, artifacts=all_artifacts)
 
-    async def _build_messages(self, db: AsyncSession, conversation: Conversation) -> list[ChatMessage]:
+    async def _build_messages(
+        self, db: AsyncSession, conversation: Conversation, context: UserContext | None = None
+    ) -> list[ChatMessage]:
         history = await _load_history(db, conversation.id)
 
+        # Order matters for the provider's prefix cache: everything that is identical from turn to turn comes first, then
+        # what changes rarely (the project tree), then what changes often (this chat's uploads).
         system_content = SYSTEM_PROMPT
-
-        # Metadata only - never file content. The model decides which of
-        # these to open, and in what order, using the document tools.
-        attachments = await documents_service.list_conversation_documents(db, conversation.id)
-        if attachments:
-            listing = "\n".join(
-                f"- {doc.filename} (document_id: {doc.id}, status: {doc.status.value})"
-                for doc in attachments[:_MAX_LISTED_ATTACHMENTS]
-            )
-            system_content += (
-                "\n\nFiles uploaded directly to this chat (all text and OCR processing is completed; "
-                "to read the full text/transcription of an uploaded file or image, call read_entire_document with its document_id):\n"
-                + listing
-            )
         group = conversation.type == ConversationType.PROJECT_GROUP
         if group:
             system_content += (
@@ -284,6 +288,25 @@ class AgentEngine:
                 "Never state how many rows the table has yourself: quote only the 'total rows' figure from the tool result. "
                 "If the tool result says zero rows or that no query could be built, say that the query returned nothing / could not be built "
                 "(and which filters were applied) - never claim that the data does not exist, and never invent a reason."
+            )
+
+        project_id = resolve_retrieval_scope(context, conversation) if context is not None else None
+        if project_id is not None:
+            tree = await project_tree_summary(db, project_id)
+            system_content += _PROJECT_TREE_INTRO + (tree or "(the project has no files yet)")
+
+        # Metadata only - never file content. The model decides which of
+        # these to open, and in what order, using the document tools.
+        attachments = await documents_service.list_conversation_documents(db, conversation.id)
+        if attachments:
+            listing = "\n".join(
+                f"- {doc.filename} (document_id: {doc.id}, status: {doc.status.value})"
+                for doc in attachments[:_MAX_LISTED_ATTACHMENTS]
+            )
+            system_content += (
+                "\n\nFiles uploaded directly to this chat (all text and OCR processing is completed; "
+                "to read the full text/transcription of an uploaded file or image, call read_entire_document with its document_id):\n"
+                + listing
             )
 
         sender_names: dict[uuid.UUID, str] = {}

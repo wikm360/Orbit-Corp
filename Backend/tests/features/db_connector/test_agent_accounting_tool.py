@@ -16,7 +16,7 @@ class _ScriptedLLMProvider:
         self._steps = steps
         self.calls: list[list[dict] | None] = []
 
-    def stream_chat(self, messages, tools=None):
+    def stream_chat(self, messages, tools=None, tool_choice="auto"):
         self.calls.append(tools)
         events = self._steps[len(self.calls) - 1]
         return self._stream(events)

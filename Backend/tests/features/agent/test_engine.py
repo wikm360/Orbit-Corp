@@ -18,7 +18,7 @@ class _ScriptedLLMProvider:
         self.calls: list[list[dict] | None] = []
         self.calls_messages: list[list[dict]] = []
 
-    def stream_chat(self, messages, tools=None):
+    def stream_chat(self, messages, tools=None, tool_choice="auto"):
         self.calls.append(tools)
         self.calls_messages.append(messages)
         events = self._steps[len(self.calls) - 1]
@@ -31,19 +31,21 @@ class _ScriptedLLMProvider:
 
 class _AlwaysToolCallLLMProvider:
     """Simulates a model that keeps wanting to call a tool - answers with
-    plain content only when it isn't offered any tools at all, which is
-    exactly what the engine's last step (MAX_STEPS - 1) does to force a
+    plain content only when it is forbidden to call tools (`tool_choice="none"`),
+    which is exactly what the engine's last step (MAX_STEPS - 1) does to force a
     final answer."""
 
     def __init__(self):
         self.calls: list[list[dict] | None] = []
+        self.choices: list[str] = []
 
-    def stream_chat(self, messages, tools=None):
+    def stream_chat(self, messages, tools=None, tool_choice="auto"):
         self.calls.append(tools)
-        return self._stream(tools)
+        self.choices.append(tool_choice)
+        return self._stream(tool_choice)
 
-    async def _stream(self, tools):
-        if tools is None:
+    async def _stream(self, tool_choice):
+        if tool_choice == "none":
             yield {"type": "content", "delta": "final answer"}
         else:
             yield {
@@ -130,10 +132,10 @@ async def test_run_agent_loop_stops_at_max_steps_and_forces_a_final_answer(db_se
     result = await AgentEngine().run_agent_loop(db_session, conversation, context, callback)
 
     assert len(provider.calls) == MAX_STEPS
-    # Every step but the last offered tools; the last step forced an answer
-    # by omitting them entirely.
-    assert all(tools is not None for tools in provider.calls[:-1])
-    assert provider.calls[-1] is None
+    # Every step offers the same tool list (so the provider's prefix cache survives); the last one forbids calling them.
+    assert all(tools is not None for tools in provider.calls)
+    assert provider.choices[:-1] == ["auto"] * (MAX_STEPS - 1)
+    assert provider.choices[-1] == "none"
     assert result.content == "final answer"
 
 
