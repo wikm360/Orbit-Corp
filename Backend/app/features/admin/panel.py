@@ -153,6 +153,16 @@ def setup_admin_panel(app: FastAPI) -> None:
         column_sortable_list = [Document.status, Document.created_at]
         form_excluded_columns = [Document.chunks, Document.created_at]
 
+        async def delete_model(self, request: Request, pk: Any) -> None:
+            from app.features.documents.service import delete_document
+
+            async with async_session_factory() as db:
+                try:
+                    await delete_document(db, uuid.UUID(str(pk)))
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Failed to delete document %s via service: %s", pk, exc)
+                    await super().delete_model(request, pk)
+
         @action(
             name="purge_ocr_cache",
             label="حذف کش OCR اسناد انتخابی",
