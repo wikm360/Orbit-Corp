@@ -102,6 +102,8 @@ OCR و SQL از همان `LLM_API_BASE_URL`/`LLM_API_KEY` استفاده می‌
 | env | پیش‌فرض | |
 |---|---|---|
 | `RAHKARAN_DB_ENABLED` | false | **سوییچ اصلی**: ثبت ابزار `ask_accounting_db` + بند system prompt |
+| `SPREADSHEET_QUERY_MAX_ROWS` | 200 | سقف ردیف برگشتی هر `query_spreadsheet` (پیش‌فرض مدل ۵۰) |
+| `SPREADSHEET_QUERY_TIMEOUT_SECONDS` | 5 | محدودیت زمان اجرای هر query شیت |
 | `RAHKARAN_DB_HOST` / `_PORT` / `_NAME` | mssql / 1433 / MehvarGostar | |
 | `RAHKARAN_DB_USER` / `_PASSWORD` | rahkaran_ai_reader / "" | |
 | `RAHKARAN_DB_QUERY_TIMEOUT_SECONDS` | 60 | |

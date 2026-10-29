@@ -25,7 +25,6 @@ def upgrade() -> None:
         sa.Column(
             "document_id",
             pg.UUID(as_uuid=True),
-            sa.ForeignKey("documents.id", ondelete="CASCADE"),
             nullable=True,
         ),
     )

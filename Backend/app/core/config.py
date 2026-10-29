@@ -192,6 +192,10 @@ class Settings(BaseSettings):
     rahkaran_artifact_max_rows: int = 100
     rahkaran_export_max_rows: int = 5000
 
+    # Spreadsheet query tool (SQLite over a sheet): hard cap of rows returned per query and a per-query time limit.
+    spreadsheet_query_max_rows: int = 200
+    spreadsheet_query_timeout_seconds: float = 5.0
+
     # Chunking
     chunk_size_tokens: int = 500
     chunk_overlap_tokens: int = 50

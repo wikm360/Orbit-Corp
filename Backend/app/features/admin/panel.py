@@ -153,6 +153,28 @@ def setup_admin_panel(app: FastAPI) -> None:
         column_sortable_list = [Document.status, Document.created_at]
         form_excluded_columns = [Document.chunks, Document.created_at]
 
+        @action(
+            name="purge_ocr_cache",
+            label="حذف کش OCR اسناد انتخابی",
+            confirmation_message="آیا از حذف کش OCR اسناد انتخابی مطمئن هستید؟ با این کار در پردازش بعدی تصویر صفحات دوباره با هوش مصنوعی خوانده می‌شود.",
+            add_in_detail=True,
+            add_in_list=True,
+        )
+        async def purge_ocr_cache_action(self, request: Request) -> Response:
+            pks = request.query_params.get("pks", "").split(",")
+            from app.features.documents.ingestion.ocr_cache import purge_document_ocr_cache
+
+            async with async_session_factory() as db:
+                for pk in pks:
+                    if pk:
+                        try:
+                            doc_uuid = uuid.UUID(pk)
+                            await purge_document_ocr_cache(db, doc_uuid)
+                        except Exception as exc:  # noqa: BLE001
+                            logger.warning("Failed to purge OCR cache for %s: %s", pk, exc)
+            referer = request.headers.get("Referer") or "/db-admin/document/list"
+            return RedirectResponse(referer, status_code=302)
+
     class DocumentChunkAdmin(ModelView, model=DocumentChunk):
         name = "Document Chunk"
         name_plural = "Document Chunks"
@@ -210,10 +232,27 @@ def setup_admin_panel(app: FastAPI) -> None:
         name = "OCR Cache"
         name_plural = "OCR Caches"
         icon = "fa-solid fa-memory"
-        column_list = [OcrCache.cache_key, OcrCache.vision_model, OcrCache.rotation, OcrCache.created_at]
-        column_searchable_list = [OcrCache.cache_key, OcrCache.text]
-        column_sortable_list = [OcrCache.created_at, OcrCache.vision_model]
-        column_details_list = [OcrCache.cache_key, OcrCache.text, OcrCache.vision_model, OcrCache.rotation, OcrCache.created_at]
+        column_list = [
+            OcrCache.source_filename,
+            OcrCache.page_number,
+            OcrCache.vision_model,
+            OcrCache.text,
+            OcrCache.rotation,
+            OcrCache.created_at,
+            OcrCache.cache_key,
+        ]
+        column_searchable_list = [OcrCache.source_filename, OcrCache.cache_key, OcrCache.text]
+        column_sortable_list = [OcrCache.created_at, OcrCache.source_filename, OcrCache.page_number, OcrCache.vision_model]
+        column_details_list = [
+            OcrCache.source_filename,
+            OcrCache.page_number,
+            OcrCache.document_id,
+            OcrCache.cache_key,
+            OcrCache.text,
+            OcrCache.vision_model,
+            OcrCache.rotation,
+            OcrCache.created_at,
+        ]
         can_create = False
         can_edit = False
         can_delete = True

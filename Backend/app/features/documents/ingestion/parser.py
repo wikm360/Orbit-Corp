@@ -22,7 +22,6 @@ SUPPORTED_EXTENSIONS = DOCUMENT_EXTENSIONS | IMAGE_EXTENSIONS
 
 # A sheet is split into pages of this many rows (header row repeated on each) so a retrieved chunk is self-describing.
 XLSX_ROWS_PER_PAGE = 60
-XLSX_MAX_ROWS_PER_SHEET = 20000
 
 
 @dataclass
@@ -471,85 +470,34 @@ def _parse_pptx_pages(file_path: str) -> list[DocumentPage]:
     return pages
 
 
-def _xlsx_cell(value) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, bool):
-        return "TRUE" if value else "FALSE"
-    if isinstance(value, float) and value.is_integer():
-        return str(int(value))
-    if hasattr(value, "isoformat"):
-        iso = value.isoformat()
-        return iso[:-9] if iso.endswith("T00:00:00") else iso.replace("T", " ")
-    return str(value).replace("\n", " ").strip()
+def _table_pages(tables, first_page: int = 1) -> list[DocumentPage]:
+    """Pages of `XLSX_ROWS_PER_PAGE` rows per sheet, each row written as `column: value` (see spreadsheet.record_pages)."""
+    from app.features.documents import spreadsheet
 
-
-def _sheet_pages(title: str, rows: list[list[str]], first_page: int) -> list[DocumentPage]:
-    """Splits a sheet's rows into pages of `XLSX_ROWS_PER_PAGE`, repeating the first row (header) on each."""
-    header = rows[0]
     pages: list[DocumentPage] = []
-    for lo in range(0, len(rows), XLSX_ROWS_PER_PAGE):
-        body = rows[lo : lo + XLSX_ROWS_PER_PAGE]
-        lines = [f"=== Sheet: {title} (rows {lo + 1}-{lo + len(body)} of {len(rows)}) ==="]
-        if lo > 0:
-            lines.append(" | ".join(header))
-        lines.extend(" | ".join(row) for row in body)
-        pages.append(
-            DocumentPage(
-                page_number=first_page + len(pages),
-                text="\n".join(lines),
-                metadata={"page": first_page + len(pages), "sheet_name": title, "rows": f"{lo + 1}-{lo + len(body)}"},
+    for table in tables:
+        for text, file_rows in spreadsheet.record_pages(table, XLSX_ROWS_PER_PAGE):
+            number = first_page + len(pages)
+            pages.append(
+                DocumentPage(
+                    page_number=number,
+                    text=text,
+                    metadata={"page": number, "sheet_name": table.name, "rows": file_rows},
+                )
             )
-        )
     return pages
 
 
 def _parse_xlsx_pages(file_path: str) -> list[DocumentPage]:
-    """One or more pages per non-empty sheet. Empty cells are kept as empty strings so columns stay aligned."""
-    from openpyxl import load_workbook
+    """One or more pages per non-empty sheet; columns are named from the header row so values keep their meaning."""
+    from app.features.documents import spreadsheet
 
-    workbook = load_workbook(file_path, data_only=True, read_only=True)
-    pages: list[DocumentPage] = []
-    try:
-        for sheet in workbook.worksheets:
-            if getattr(sheet, "reset_dimensions", None):
-                sheet.reset_dimensions()  # a wrong <dimension> in the file would otherwise truncate/pad the read
-            rows: list[list[str]] = []
-            for values in sheet.iter_rows(values_only=True):
-                cells = [_xlsx_cell(v) for v in values]
-                while cells and not cells[-1]:
-                    cells.pop()
-                if any(cells):
-                    rows.append(cells)
-                if len(rows) >= XLSX_MAX_ROWS_PER_SHEET:
-                    logger.warning("Sheet %r of %s truncated at %d rows", sheet.title, file_path, XLSX_MAX_ROWS_PER_SHEET)
-                    break
-            if rows:
-                pages.extend(_sheet_pages(sheet.title, rows, len(pages) + 1))
-    finally:
-        workbook.close()
-    if not pages:
-        pages.append(DocumentPage(page_number=1, text="", metadata={"page": 1}))
-    return pages
+    pages = _table_pages(spreadsheet.read_xlsx_tables(file_path))
+    return pages or [DocumentPage(page_number=1, text="", metadata={"page": 1})]
 
 
 def _parse_csv_pages(file_path: str) -> list[DocumentPage]:
-    import csv
+    from app.features.documents import spreadsheet
 
-    text = _parse_txt(file_path)
-    try:
-        dialect = csv.Sniffer().sniff(text[:4096], delimiters=",;\t|")
-    except csv.Error:
-        dialect = csv.excel
-    rows = []
-    for values in csv.reader(io.StringIO(text), dialect):
-        cells = [_xlsx_cell(v) for v in values]
-        while cells and not cells[-1]:
-            cells.pop()
-        if any(cells):
-            rows.append(cells)
-        if len(rows) >= XLSX_MAX_ROWS_PER_SHEET:
-            break
-    if not rows:
-        return [DocumentPage(page_number=1, text="", metadata={"page": 1})]
-    return _sheet_pages(Path(file_path).stem, rows, 1)
+    pages = _table_pages(spreadsheet.read_csv_tables(file_path))
+    return pages or [DocumentPage(page_number=1, text="", metadata={"page": 1})]

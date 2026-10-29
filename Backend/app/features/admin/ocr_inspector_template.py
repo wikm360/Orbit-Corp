@@ -125,7 +125,9 @@ OCR_INSPECTOR_HTML = """<!DOCTYPE html>
       </div>
 
       <button class="refresh-btn" onclick="loadInspectDocsList()">بروزرسانی اسناد 🔄</button>
+      <button onclick="purgeDocOcrCache()" style="background: #475569; border-color: #334155; color: #fff; cursor: pointer; font-weight: bold;" title="حذف تمام کش‌های OCR ثبت‌شده برای این سند">🗑️ حذف کش OCR این سند</button>
       <button onclick="reprocessCurrentDoc()" style="background: #e11d48; border-color: #be123c; color: #fff; cursor: pointer; font-weight: bold;">پردازش مجدد با OCR اجباری ⚡</button>
+      <button onclick="reprocessFreshDoc()" style="background: #7c3aed; border-color: #6d28d9; color: #fff; cursor: pointer; font-weight: bold;" title="ابتدا کش OCR این سند را پاک کرده و سپس پردازش تازه انجام می‌دهد">⚡ پردازش مجدد بدون کش (Fresh OCR)</button>
     </div>
 
     <div id="docs-loading-state" style="display: none; padding: 2rem; text-align: center; color: var(--text-muted);">
@@ -153,6 +155,10 @@ OCR_INSPECTOR_HTML = """<!DOCTYPE html>
         <div class="kpi-card">
           <div class="kpi-title">تعداد کل صفحات</div>
           <div class="kpi-val" id="docs-kpi-pages">-</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-title">تعداد کش OCR این سند</div>
+          <div class="kpi-val" id="docs-kpi-cache" style="color: #a855f7;">-</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-title">وضعیت لایه متنی این صفحه</div>
@@ -410,6 +416,7 @@ OCR_INSPECTOR_HTML = """<!DOCTYPE html>
       document.getElementById('docs-kpi-project').textContent = currentInspectDoc.project_name || 'عمومی';
       document.getElementById('docs-kpi-status').textContent = `${currentInspectDoc.status} (${currentInspectDoc.chunk_count} چانک)`;
       document.getElementById('docs-kpi-pages').textContent = `${currentInspectDoc.total_pages} صفحه`;
+      document.getElementById('docs-kpi-cache').textContent = `${currentInspectDoc.ocr_cache_count || 0} صفحه`;
 
       const pageSelect = document.getElementById('doc-inspect-page-select');
       pageSelect.innerHTML = '';
@@ -503,6 +510,35 @@ OCR_INSPECTOR_HTML = """<!DOCTYPE html>
     const text = document.getElementById('docs-page-text').textContent;
     navigator.clipboard.writeText(text);
     alert('متن صفحه با موفقیت کپی شد!');
+  }
+
+  async function purgeDocOcrCache() {
+    if (!currentInspectDoc || !currentInspectDoc.id) return;
+    if (!confirm(`آیا مطمئن هستید که می‌خواهید کش OCR ذخیره‌شده برای فایل «${currentInspectDoc.filename}» را حذف کنید؟\n\nبا این کار، اگر سند دوباره پردازش شود، از کش استفاده نخواهد شد و تصویر صفحات مجدداً توسط هوش مصنوعی خوانده می‌شود.`)) return;
+
+    try {
+      const resp = await fetch(`${DOCS_API_BASE}/${currentInspectDoc.id}/purge-ocr-cache`, { method: 'POST' });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || 'خطا در حذف کش OCR');
+      alert(data.message || 'کش OCR این سند با موفقیت حذف شد.');
+    } catch (err) {
+      alert('خطا: ' + err.message);
+    }
+  }
+
+  async function reprocessFreshDoc() {
+    if (!currentInspectDoc || !currentInspectDoc.id) return;
+    if (!confirm(`آیا از پردازش مجدد «بدون کش» برای سند «${currentInspectDoc.filename}» اطمینان دارید؟\n\nاین عملیات ابتدا تمام کش OCR این سند را پاک می‌کند و سپس فایل را برای پردازش تازه در صف قرار می‌دهد.`)) return;
+
+    try {
+      const resp = await fetch(`${DOCS_API_BASE}/${currentInspectDoc.id}/reprocess-fresh`, { method: 'POST' });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || 'خطا در درخواست پردازش مجدد');
+      alert(data.message || 'کش OCR حذف شد و سند برای پردازش تازه در صف قرار گرفت! لطفاً لاگ ورکر را مشاهده فرمایید.');
+      await loadInspectDocsList();
+    } catch (err) {
+      alert('خطا: ' + err.message);
+    }
   }
 
   async function reprocessCurrentDoc() {

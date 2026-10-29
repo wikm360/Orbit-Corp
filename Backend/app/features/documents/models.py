@@ -227,7 +227,7 @@ class OcrCache(Base):
     # because a cache hit skips the OCR call that finds it, and the page still needs it (see `view_document_page`).
     rotation: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     document_id: Mapped[uuid.UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("documents.id", ondelete="CASCADE"), nullable=True, index=True
+        PG_UUID(as_uuid=True), nullable=True, index=True
     )
     source_filename: Mapped[str | None] = mapped_column(String(500), nullable=True, index=True)
     page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)

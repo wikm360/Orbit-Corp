@@ -52,7 +52,12 @@ SYSTEM_PROMPT = (
     "full text of matching pages.\n"
     "3. Visual inspection ('view_document_page'): Use ONLY for non-text visual graphics such as architectural/engineering "
     "drawings (beams, dimensions drawn on blueprints), floor plans, maps, or graphical diagrams where visual layout inspection "
-    "is strictly necessary. NEVER use view_document_page to read or transcribe textual letters, documents, or forms."
+    "is strictly necessary. NEVER use view_document_page to read or transcribe textual letters, documents, or forms.\n"
+    "4. Spreadsheets (xlsx / xls / csv): for any exact value, lookup of a person or row, filter, count, sum, average or ranking, call "
+    "'describe_spreadsheet' once (to learn the real column names) and then 'query_spreadsheet' with SQL - do NOT read numbers out of "
+    "search or page text, which loses the column alignment. Quote the values exactly as returned, and cite the sheet and the "
+    "`_row` (and file column letter when given) from the result - never invent a sheet, row or column. If the name the user typed "
+    "matches no row, say so plainly and offer the similar names the tool lists; never answer for a different person without asking."
 )
 
 _PROJECT_TREE_INTRO = (
@@ -74,6 +79,8 @@ _DOCUMENT_READ_TOOLS = {
     "read_entire_document",
     "get_current_chat_attachments",
     "browse_folder",
+    "describe_spreadsheet",
+    "query_spreadsheet",
 }
 
 AgentCallback = Callable[[str, dict], Awaitable[None]]

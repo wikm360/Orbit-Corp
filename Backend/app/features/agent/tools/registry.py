@@ -22,6 +22,7 @@ from app.features.agent.tools.project_tools import (
     GetCurrentChatAttachmentsTool,
     ListUserProjectsTool,
 )
+from app.features.agent.tools.spreadsheet_tools import DescribeSpreadsheetTool, QuerySpreadsheetTool
 from app.features.chat.models import Conversation
 
 logger = logging.getLogger(__name__)
@@ -96,6 +97,8 @@ def build_default_registry() -> ToolRegistry:
         ReadDocumentPagesTool(),
         ReadEntireDocumentTool(),
         SearchKnowledgeBaseTool(),
+        DescribeSpreadsheetTool(),
+        QuerySpreadsheetTool(),
         *([ViewDocumentPageTool()] if get_settings().agent_page_vision_enabled else []),
         ListUserProjectsTool(),
         BrowseFolderTool(),

@@ -28,6 +28,7 @@ from app.features.documents.folder_service import (
     unique_name,
 )
 from app.features.documents.models import Document, DocumentChunk, DocumentStatus
+from app.features.documents.spreadsheet import cleanup_tables_cache
 from app.features.retrieval.access_filter import accessible_documents_filter
 
 settings = get_settings()
@@ -405,6 +406,7 @@ async def delete_document(db: AsyncSession, document_id: uuid.UUID) -> None:
         if path.exists():
             path.unlink()
         cleanup_reconstructed_files(file_path)
+        cleanup_tables_cache(file_path)
 
 
 # ---------------------------------------------------------------------------

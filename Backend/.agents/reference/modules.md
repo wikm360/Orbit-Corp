@@ -42,6 +42,7 @@
 | `schemas.py` | DocumentRead, DocumentUploadResponse, BatchUpload* |
 | `router.py` | endpointهای پروژه‌ای (list/upload/batch/retry/delete) |
 | `service.py` (531 خط) | آپلود و dedup، enqueue، batch، retry، delete؛ و خواندن ساخت‌یافته برای agent (info/page-range/full) |
+| `spreadsheet.py` | مدل جدول شیت: `read_xlsx_tables`/`read_csv_tables`، `load_tables` (با cache کنار فایل `<file>.tables.json`، پاک‌شدن با حذف سند)، `normalize_text` (ي→ی، ك→ک، ارقام فارسی/عربی، نیم‌فاصله)، `record_pages` (متن ingestion)، `describe_tables`، `run_query` (sandbox SQLite فقط‌خواندنی) |
 | `chunk_paths.py` | مسیر سند روی chunkها (`path` در metadata + پیشوند `search_text`): `path_for_new_chunks` (PersistStep)، `refresh_chunk_paths` (بعد از move/rename/copy)؛ `backfill_chunk_paths.py` = اسکریپت یک‌باره برای اسناد قدیمی |
 | `ingestion/converter.py` | `converted_copy`: تبدیل فرمت‌های قدیمی با `soffice` headless (profile موقت هر فایل، تایم‌اوت، بررسی magic) |
 | `ingestion/parser.py` | `parse_document_pages` و parserهای هر فرمت، `SUPPORTED_EXTENSIONS`, `DocumentPage`, `ExtractedImage` |

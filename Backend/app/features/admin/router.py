@@ -160,6 +160,10 @@ async def get_document_inspect_detail(document_id: str):
             select(func.count(DocumentChunk.id)).where(DocumentChunk.document_id == doc_uuid)
         )
 
+        ocr_cache_count = await db.scalar(
+            select(func.count(OcrCache.cache_key)).where(OcrCache.document_id == doc_uuid)
+        )
+
         project_name = None
         if doc.project_id:
             project = await db.get(Project, doc.project_id)
@@ -216,6 +220,7 @@ async def get_document_inspect_detail(document_id: str):
         "project_name": project_name or ("گفتگوی شخصی" if doc.conversation_id else "بدون پروژه"),
         "total_pages": len(pages),
         "chunk_count": chunk_count or 0,
+        "ocr_cache_count": ocr_cache_count or 0,
         "pages": pages,
     }
 
@@ -257,3 +262,41 @@ async def reprocess_document_inspect(document_id: str):
     async with async_session_factory() as db:
         doc = await documents_service.reprocess_document(db, doc_uuid)
         return {"status": "ok", "message": f"Document '{doc.filename}' re-queued for processing"}
+
+
+@inspector_router.post("/documents-inspect/{document_id}/purge-ocr-cache")
+async def purge_document_ocr_cache_endpoint(document_id: str):
+    """Purges all cached OCR readings for this document."""
+    from app.features.documents.ingestion.ocr_cache import purge_document_ocr_cache
+
+    doc_uuid = uuid.UUID(document_id)
+    async with async_session_factory() as db:
+        doc = await db.get(Document, doc_uuid)
+        if doc is None:
+            raise NotFoundError("Document not found")
+        count = await purge_document_ocr_cache(db, doc_uuid)
+        return {
+            "status": "ok",
+            "deleted_count": count,
+            "message": f"کش OCR مربوط به {count} صفحه از فایل '{doc.filename}' با موفقیت حذف شد.",
+        }
+
+
+@inspector_router.post("/documents-inspect/{document_id}/reprocess-fresh")
+async def reprocess_fresh_document_inspect(document_id: str):
+    """Purges cached OCR readings first, then re-enqueues document for a fresh OCR run."""
+    from app.features.documents.ingestion.ocr_cache import purge_document_ocr_cache
+
+    doc_uuid = uuid.UUID(document_id)
+    async with async_session_factory() as db:
+        doc = await db.get(Document, doc_uuid)
+        if doc is None:
+            raise NotFoundError("Document not found")
+        deleted_count = await purge_document_ocr_cache(db, doc_uuid)
+        doc = await documents_service.reprocess_document(db, doc_uuid)
+        return {
+            "status": "ok",
+            "deleted_cache_count": deleted_count,
+            "message": f"کش قدیمی ({deleted_count} صفحه) حذف شد و پردازش مجدد بدون کش برای فایل '{doc.filename}' آغاز گردید.",
+        }
+

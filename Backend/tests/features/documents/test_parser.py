@@ -95,14 +95,13 @@ def test_xlsx_keeps_columns_aligned_and_formats_values(tmp_path):
 
     assert len(pages) == 1  # the empty sheet yields nothing
     lines = pages[0].text.splitlines()
-    assert lines[1] == "ردیف | شرح | مبلغ"
-    assert lines[2] == "1 |  | 2500"  # empty cell kept, 2500.0 -> 2500
-    assert lines[3] == "2 | بتن | 1.5"
+    assert lines[2] == "ردیف 2: ردیف: 1 | مبلغ: 2500"  # each value carries its column name; empty cell left out; 2500.0 -> 2500
+    assert lines[3] == "ردیف 3: ردیف: 2 | شرح: بتن | مبلغ: 1.5"
     assert pages[0].metadata["sheet_name"] == "قیمت"
     assert datetime  # (date formatting covered below)
 
 
-def test_xlsx_large_sheet_is_paged_with_header_repeated(tmp_path):
+def test_xlsx_large_sheet_is_paged_with_column_names_on_every_row(tmp_path):
     rows = [["id", "name"]] + [[i, f"item{i}"] for i in range(1, 151)]
     path = _xlsx(tmp_path, {"S": rows})
 
@@ -110,7 +109,7 @@ def test_xlsx_large_sheet_is_paged_with_header_repeated(tmp_path):
 
     assert len(pages) == 3  # 151 rows / 60
     assert [p.page_number for p in pages] == [1, 2, 3]
-    assert pages[1].text.splitlines()[1] == "id | name"  # header repeated
+    assert pages[1].text.splitlines()[2] == "ردیف 62: id: 61 | name: item61"  # no header line needed: names are in the row
     assert "item150" in pages[2].text
     assert pages[2].metadata["sheet_name"] == "S"
 
@@ -130,7 +129,7 @@ def test_csv_is_supported_and_detects_delimiter(tmp_path):
 
     pages = parse_document_pages(str(path))
 
-    assert pages[0].text.splitlines()[1:] == ["نام | مقدار", "الف | 10", "ب | 20"]
+    assert pages[0].text.splitlines()[2:] == ["ردیف 2: نام: الف | مقدار: 10", "ردیف 3: نام: ب | مقدار: 20"]
 
 
 def test_docx_keeps_body_order_headings_and_dedupes_merged_cells(tmp_path):
@@ -166,7 +165,7 @@ def test_xls_is_converted_and_parsed(tmp_path):
 
     pages = parse_document_pages(str(out / "book.xls"))
 
-    assert "خاکبرداری | 120" in pages[0].text
+    assert "شرح: خاکبرداری | مقدار: 120" in pages[0].text
     assert pages[0].metadata["sheet_name"] == "برآورد"
 
 
