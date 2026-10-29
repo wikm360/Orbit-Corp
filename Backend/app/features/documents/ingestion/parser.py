@@ -476,6 +476,8 @@ def _table_pages(tables, first_page: int = 1) -> list[DocumentPage]:
 
     pages: list[DocumentPage] = []
     for table in tables:
+        if table.hidden:
+            continue  # what the user sees in Excel is what gets searched; hidden sheets stay reachable via query_spreadsheet
         for text, file_rows in spreadsheet.record_pages(table, XLSX_ROWS_PER_PAGE):
             number = first_page + len(pages)
             pages.append(

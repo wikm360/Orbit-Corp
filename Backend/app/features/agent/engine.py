@@ -55,7 +55,8 @@ SYSTEM_PROMPT = (
     "is strictly necessary. NEVER use view_document_page to read or transcribe textual letters, documents, or forms.\n"
     "4. Spreadsheets (xlsx / xls / csv): for any exact value, lookup of a person or row, filter, count, sum, average or ranking, call "
     "'describe_spreadsheet' once (to learn the real column names) and then 'query_spreadsheet' with SQL - do NOT read numbers out of "
-    "search or page text, which loses the column alignment. Quote the values exactly as returned, and cite the sheet and the "
+    "search or page text, which loses the column alignment. Never add up or compare numbers yourself - not even numbers already shown "
+    "earlier in the chat: run a new query (SUM/COUNT in SQL) and state which sheet you used. Quote the values exactly as returned, and cite the sheet and the "
     "`_row` (and file column letter when given) from the result - never invent a sheet, row or column. If the name the user typed "
     "matches no row, say so plainly and offer the similar names the tool lists; never answer for a different person without asking."
 )

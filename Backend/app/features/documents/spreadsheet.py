@@ -26,7 +26,7 @@ from app.core.exceptions import BadRequestError
 
 logger = logging.getLogger(__name__)
 
-TABLES_VERSION = 1
+TABLES_VERSION = 2
 MAX_ROWS_PER_SHEET = 20000
 MAX_SQL_LENGTH = 4000
 _HEADER_SCAN_ROWS = 10
@@ -47,6 +47,8 @@ _FA_TRANSLATE = str.maketrans(
     }
 )
 _SPACES = re.compile(r"\s+")
+# Cells that mean "nothing here" in a numeric column (a dash in a Quantity column must not make the whole column text).
+_PLACEHOLDERS = frozenset({"-", "--", "—", "–", "n/a", "na", "#n/a", "null", "none"})
 _NUMERIC_TEXT = re.compile(r"^[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?$|^[+-]?\d+(?:\.\d+)?$")
 
 
@@ -80,6 +82,7 @@ class Table:
     columns: list[Column]
     rows: list[list]  # values aligned with `columns`
     row_numbers: list[int]  # original 1-based row number of each row
+    hidden: bool = False  # hidden / very hidden sheet: invisible in Excel, usually scratch or working data
 
 
 @dataclass
@@ -88,6 +91,7 @@ class QueryResult:
     rows: list[list]
     truncated: bool
     suggestions: list[str] = field(default_factory=list)
+    sheets: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -117,6 +121,10 @@ def _to_number(value):
             return None
         return int(number) if number.is_integer() and "." not in text else number
     return None
+
+
+def _is_placeholder(value) -> bool:
+    return isinstance(value, str) and value.strip().lower() in _PLACEHOLDERS
 
 
 def _clean_cell(value):
@@ -176,12 +184,12 @@ def _build_table(name: str, raw: list[tuple[int, list]]) -> Table | None:
     rows: list[list] = [[None] * width for _ in body]
     for index in range(width):
         values = [cells[index] if index < len(cells) else None for _, cells in body]
-        present = [v for v in values if v is not None]
+        values = [v for v in values]
+        present = [v for v in values if v is not None and not _is_placeholder(v)]
         numbers = [_to_number(v) for v in present]
         if present and all(n is not None for n in numbers):
             kind = "REAL" if any(isinstance(n, float) for n in numbers) else "INTEGER"
-            converted = iter(numbers)
-            values = [next(converted) if v is not None else None for v in values]
+            values = [None if v is None or _is_placeholder(v) else _to_number(v) for v in values]
         else:
             kind = "TEXT"
             values = [v if v is None else str(_clean_cell(v)) for v in values]
@@ -211,6 +219,7 @@ def read_xlsx_tables(file_path: str) -> list[Table]:
                     break
             table = _build_table(sheet.title, raw)
             if table is not None:
+                table.hidden = getattr(sheet, "sheet_state", "visible") != "visible"
                 tables.append(table)
     finally:
         workbook.close()
@@ -288,6 +297,7 @@ def _to_json(tables: list[Table], source_size: int) -> dict:
                 "columns": [vars(c) for c in t.columns],
                 "rows": t.rows,
                 "row_numbers": t.row_numbers,
+                "hidden": t.hidden,
             }
             for t in tables
         ],
@@ -302,6 +312,7 @@ def _from_json(data: dict) -> list[Table]:
             columns=[Column(**c) for c in t["columns"]],
             rows=t["rows"],
             row_numbers=t["row_numbers"],
+            hidden=t.get("hidden", False),
         )
         for t in data["tables"]
     ]
@@ -369,35 +380,94 @@ def markdown_table(headers: list[str], rows: list[list]) -> str:
     return "\n".join(lines)
 
 
-def describe_tables(tables: list[Table], sheet: str | None = None, sample_rows: int = 5) -> str:
-    chosen = [t for t in tables if sheet is None or normalize_text(t.name).lower() == normalize_text(sheet).lower()]
-    if not chosen:
-        names = ", ".join(f'"{t.name}"' for t in tables)
-        raise BadRequestError(f"Sheet not found. Available sheets: {names}")
+_HIDDEN_TAG = " [HIDDEN - not visible in Excel; scratch/working data, do not use unless the user asks for it]"
+_MAX_DETAIL_COLUMNS = 40
+_OVERVIEW_COLUMN_NAMES = 12
+_CELL_PREVIEW = 40
 
-    parts = [
+
+def _find_sheet(tables: list[Table], sheet: str | None) -> list[Table]:
+    if sheet is None:
+        return []
+    wanted = normalize_text(sheet).lower()
+    exact = [t for t in tables if normalize_text(t.name).lower() == wanted]
+    return exact
+
+
+def _filled(table: Table, index: int) -> int:
+    return sum(1 for row in table.rows if row[index] is not None)
+
+
+def _overview(tables: list[Table], note: str = "") -> str:
+    lines = [
+        "This workbook has several sheets. Pick the one whose columns fit the question (the main data sheet usually has "
+        "the most named columns), then call describe_spreadsheet with `sheet` for its columns. The same data can appear in "
+        "more than one sheet - say which sheet you used. Hidden sheets are marked [HIDDEN]; prefer visible ones.",
+    ]
+    if note:
+        lines.insert(0, note)
+    for table in sorted(tables, key=lambda t: t.hidden):  # visible sheets first (sorted() is stable)
+        named = [c for c in table.columns if not c.synthetic]
+        live = [c for c in named if _filled(table, table.columns.index(c))]
+        lines.append(
+            f'- Sheet "{table.name}"{_HIDDEN_TAG if table.hidden else ""}: {len(table.rows)} data rows, {len(table.columns)} columns '
+            f"({len(live)} named with data, {len(table.columns) - len(named)} unnamed). "
+            "Named columns: " + ", ".join(c.name for c in live[:_OVERVIEW_COLUMN_NAMES]) + (" …" if len(live) > _OVERVIEW_COLUMN_NAMES else "")
+        )
+    return "\n".join(lines)
+
+
+def _describe_one(table: Table, sample_rows: int) -> str:
+    # Columns without any value are queryable but would only bloat the description (a 528-column sheet was ~60k tokens).
+    indexes = [i for i in range(len(table.columns)) if _filled(table, i)]
+    shown, hidden = indexes[:_MAX_DETAIL_COLUMNS], indexes[_MAX_DETAIL_COLUMNS:]
+    parts = [f'### Sheet "{table.name}"{_HIDDEN_TAG if table.hidden else ""} — {len(table.rows)} data rows, {len(table.columns)} columns (header at file row {table.header_row})']
+    info_rows = []
+    for index in shown:
+        column = table.columns[index]
+        values = [row[index] for row in table.rows if row[index] is not None]
+        if column.type == "TEXT":
+            distinct = sorted({str(v)[:_CELL_PREVIEW] for v in values})
+            detail = ("values: " + ", ".join(distinct[:10]) + (" …" if len(distinct) > 10 else "")) if 0 < len(distinct) <= 10 else f"{len(distinct)} distinct"
+        else:
+            detail = f"min {min(values)} … max {max(values)}"
+        label = column.name + (" *" if column.synthetic else "")
+        info_rows.append([column.letter, label, column.type, f"{len(values)}/{len(table.rows)}", detail])
+    parts.append(markdown_table(["file column", "name", "type", "filled", "summary"], info_rows))
+    if hidden:
+        names = [table.columns[i].name for i in hidden]
+        parts.append(
+            f"… {len(hidden)} more columns with data not listed ({names[0]} … {names[-1]}); they are still queryable by name."
+        )
+    unnamed = sum(1 for i in indexes if table.columns[i].synthetic)
+    if unnamed:
+        parts.append(
+            f"* {unnamed} of the {len(indexes)} filled columns have no usable header (named ستون_<letter>). A sheet like this may "
+            "hold several tables side by side or a second header row: read the sample rows and do not combine columns from "
+            "different blocks as if they described the same item."
+        )
+    sample = [
+        [n] + [str(table.rows[r][i])[:_CELL_PREVIEW] if table.rows[r][i] is not None else None for i in shown]
+        for r, n in enumerate(table.row_numbers[:sample_rows])
+    ]
+    parts.append("First rows:\n" + markdown_table(["_row"] + [table.columns[i].name for i in shown], sample))
+    return "\n".join(parts)
+
+
+def describe_tables(tables: list[Table], sheet: str | None = None, sample_rows: int = 4) -> str:
+    header = (
         "Every sheet is a SQL table (use the sheet name in double quotes). Each table has a leading `_row` column = the "
         "row number in the original file; columns are named from the header row. Text is normalized (ي→ی, ك→ک, "
         "Persian digits→0-9, half-space→space)."
-    ]
-    for table in chosen:
-        parts.append(f'\n### Sheet "{table.name}" — {len(table.rows)} data rows (header at file row {table.header_row})')
-        info_rows = []
-        for index, column in enumerate(table.columns):
-            values = [row[index] for row in table.rows if row[index] is not None]
-            if column.type == "TEXT":
-                distinct = sorted({str(v) for v in values})
-                detail = ("values: " + ", ".join(distinct[:12]) + (" …" if len(distinct) > 12 else "")) if 0 < len(distinct) <= 12 else f"{len(distinct)} distinct"
-            else:
-                detail = f"min {min(values)} … max {max(values)}" if values else ""
-            label = column.name + (" *" if column.synthetic else "")
-            info_rows.append([column.letter, label, column.type, f"{len(values)}/{len(table.rows)}", detail])
-        parts.append(markdown_table(["file column", "name", "type", "filled", "summary"], info_rows))
-        if any(c.synthetic for c in table.columns):
-            parts.append("* = the header cell was empty or only a number; the name is synthetic, look at the sample rows to see what it holds.")
-        sample = [[n] + row for n, row in zip(table.row_numbers[:sample_rows], table.rows[:sample_rows])]
-        parts.append("First rows:\n" + markdown_table(["_row"] + [c.name for c in table.columns], sample))
-    return "\n".join(parts)
+    )
+    if sheet is not None:
+        chosen = _find_sheet(tables, sheet)
+        if not chosen:
+            return header + "\n" + _overview(tables, note=f'Sheet "{sheet}" does not exist.')
+        return header + "\n" + "\n".join(_describe_one(t, sample_rows) for t in chosen)
+    if len(tables) == 1:
+        return header + "\n" + _describe_one(tables[0], sample_rows)
+    return header + "\n" + _overview(tables)
 
 
 # ---------------------------------------------------------------------------
@@ -427,8 +497,8 @@ def _quote(identifier: str) -> str:
     return '"' + identifier.replace('"', '""') + '"'
 
 
-def _prepare_sql(sql: str) -> tuple[str, list[str]]:
-    """Validates a single SELECT and normalizes its string literals; returns (sql, literals for 'did you mean')."""
+def _prepare_sql(sql: str) -> tuple[str, list[str], list[str]]:
+    """Validates a single SELECT and normalizes its string literals; returns (sql, literals for 'did you mean', sheets used)."""
     sql = sql.strip().rstrip(";").strip()
     if not sql:
         raise BadRequestError("'sql' is empty")
@@ -452,7 +522,8 @@ def _prepare_sql(sql: str) -> tuple[str, list[str]]:
             bare = normalized.strip("%_ ")
             if len(bare) >= 3 and not bare.isdigit():
                 literals.append(bare)
-    return tree.sql(dialect="sqlite"), literals
+    sheets = list(dict.fromkeys(t.name for t in tree.find_all(exp.Table) if t.name))
+    return tree.sql(dialect="sqlite"), literals, sheets
 
 
 def _suggest(tables: list[Table], literals: list[str], limit: int = 5) -> list[str]:
@@ -475,12 +546,22 @@ def _suggest(tables: list[Table], literals: list[str], limit: int = 5) -> list[s
     return found[:limit]
 
 
+def _hint_columns(table: Table, limit: int = 40) -> list[Column]:
+    """Named columns first (a 528-column sheet must not put every name into an error message)."""
+    named = [c for c in table.columns if not c.synthetic]
+    return (named + [c for c in table.columns if c.synthetic])[:limit]
+
+
 def run_query(tables: list[Table], sql: str, *, max_rows: int, timeout_seconds: float) -> QueryResult:
     """Runs one read-only SELECT over the tables (blocking: call from a thread)."""
-    prepared, literals = _prepare_sql(sql)
+    prepared, literals, sheets_used = _prepare_sql(sql)
 
     conn = sqlite3.connect(":memory:")
     try:
+        # SQLite quietly reads a double-quoted name that is not a column as a *string literal*: SUM("no_such_col") returned
+        # 0.0 and the model reported it as the answer. With this off an unknown name is an error that lists the real columns.
+        conn.setconfig(sqlite3.SQLITE_DBCONFIG_DQS_DML, False)
+        conn.setconfig(sqlite3.SQLITE_DBCONFIG_DQS_DDL, False)
         for table in tables:
             column_defs = ", ".join(f"{_quote(c.name)} {c.type}" for c in table.columns)
             conn.execute(f'CREATE TABLE {_quote(table.name)} ("_row" INTEGER, {column_defs})')
@@ -502,7 +583,7 @@ def run_query(tables: list[Table], sql: str, *, max_rows: int, timeout_seconds: 
             if "interrupted" in str(exc).lower():
                 raise BadRequestError(f"Query exceeded the {timeout_seconds:g}s limit; simplify it") from exc
             columns_hint = "; ".join(
-                f'"{t.name}"({", ".join(_quote(c.name) for c in t.columns)})' for t in tables
+                f'"{t.name}"({", ".join(_quote(c.name) for c in _hint_columns(t))})' for t in tables
             )
             raise BadRequestError(f"SQL error: {exc}. Tables and columns: {columns_hint}") from exc
         except sqlite3.DatabaseError as exc:
@@ -512,7 +593,7 @@ def run_query(tables: list[Table], sql: str, *, max_rows: int, timeout_seconds: 
         truncated = len(fetched) > max_rows
         rows = [list(r) for r in fetched[:max_rows]]
         suggestions = _suggest(tables, literals) if not rows and literals else []
-        return QueryResult(columns=names, rows=rows, truncated=truncated, suggestions=suggestions)
+        return QueryResult(columns=names, rows=rows, truncated=truncated, suggestions=suggestions, sheets=sheets_used)
     finally:
         conn.close()
 

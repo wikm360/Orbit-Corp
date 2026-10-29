@@ -113,10 +113,10 @@ def test_csv_and_non_spreadsheet(tmp_path):
 
 def test_describe_marks_synthetic_columns_and_unknown_sheet(tmp_path):
     tables = spreadsheet.load_tables(_workbook(tmp_path / "a.xlsx"))
-    text = spreadsheet.describe_tables(tables)
-    assert "ستون_D (29) *" in text and "Sheet2" in text
-    with pytest.raises(BadRequestError, match="Available sheets"):
-        spreadsheet.describe_tables(tables, "nope")
+    text = spreadsheet.describe_tables(tables, "Sheet1")
+    assert "ستون_D (29) *" in text
+    assert "Sheet2" in spreadsheet.describe_tables(tables)  # several sheets -> overview lists them
+    assert "does not exist" in spreadsheet.describe_tables(tables, "nope")
 
 
 def test_ingestion_text_is_one_named_record_per_row(tmp_path):
@@ -128,3 +128,79 @@ def test_ingestion_text_is_one_named_record_per_row(tmp_path):
     assert "ردیف 2: نام: علیرضا پاریاب | شماره بیمه: 65913003 | دستمزد: 15979160 | ستون_D (29): 1 | محل: معدن" in first
     assert pages[0].metadata["sheet_name"] == "Sheet1"
     assert "ردیف 5" not in first  # the blank row is not a record
+
+
+def test_unknown_double_quoted_name_is_an_error_not_a_string_literal(tmp_path):
+    """SQLite would otherwise read "no_such_col" as the text 'no_such_col', and SUM of it is a silent 0.0."""
+    tables = spreadsheet.load_tables(_workbook(tmp_path / "a.xlsx"))
+    with pytest.raises(BadRequestError, match="no such column"):
+        _query(tables, 'SELECT SUM("subbase") FROM "Sheet1"')
+    assert _query(tables, "SELECT 'x' AS lit").rows == [["x"]]  # real single-quoted literals still work
+
+
+def test_dash_placeholders_do_not_turn_a_numeric_column_into_text(tmp_path):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "PMS"
+    ws.append(["Activity", "Unit", "Volume"])
+    ws.append(["a", "-", "-"])
+    ws.append(["b", "m3", "10"])
+    ws.append(["c", "m3", 5.5])
+    path = tmp_path / "p.xlsx"
+    wb.save(path)
+    tables = spreadsheet.load_tables(str(path))
+    assert [c.type for c in tables[0].columns] == ["TEXT", "TEXT", "REAL"]
+    assert _query(tables, "SELECT SUM(Volume), COUNT(Volume) FROM PMS").rows == [[15.5, 2]]
+
+
+def test_wide_workbook_gets_a_small_overview_and_capped_detail(tmp_path):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "PMS"
+    ws.append(["Activity", "Qty"] + [None] * 300)
+    for i in range(5):
+        ws.append([f"a{i}", i] + [f"w{i}" for _ in range(300)])
+    wb.create_sheet("Other").append(["x", "y"])
+    wb["Other"].append([1, 2])
+    path = tmp_path / "w.xlsx"
+    wb.save(path)
+    tables = spreadsheet.load_tables(str(path))
+
+    overview = spreadsheet.describe_tables(tables)
+    assert len(overview) < 3000 and 'Sheet "PMS"' in overview and 'Sheet "Other"' in overview
+    detail = spreadsheet.describe_tables(tables, "PMS")
+    assert len(detail) < 12000 and "more columns with data not listed" in detail
+    # asking for a sheet that does not exist (the model passed the file name) falls back to the overview instead of failing
+    assert "does not exist" in spreadsheet.describe_tables(tables, "w.xlsx") and 'Sheet "PMS"' in spreadsheet.describe_tables(tables, "w.xlsx")
+    with pytest.raises(BadRequestError) as err:
+        _query(tables, 'SELECT "nope" FROM PMS')
+    assert len(str(err.value)) < 3000
+
+
+def test_result_reports_which_sheet_was_used(tmp_path):
+    tables = spreadsheet.load_tables(_workbook(tmp_path / "a.xlsx"))
+    assert _query(tables, "SELECT a FROM Sheet2").sheets == ["Sheet2"]
+
+
+def test_hidden_sheets_are_marked_and_kept_out_of_ingestion_text(tmp_path):
+    from app.features.documents.ingestion.parser import parse_document_pages
+
+    wb = Workbook()
+    wb.active.title = "Main"
+    wb["Main"].append(["a", "b"])
+    wb["Main"].append(["visible-row", 1])
+    scratch = wb.create_sheet("Scratch")
+    scratch.append(["a", "b"])
+    scratch.append(["hidden-row", 2])
+    scratch.sheet_state = "hidden"
+    path = tmp_path / "h.xlsx"
+    wb.save(path)
+
+    tables = spreadsheet.load_tables(str(path))
+    assert [(t.name, t.hidden) for t in tables] == [("Main", False), ("Scratch", True)]
+    overview = spreadsheet.describe_tables(tables)
+    assert overview.index('"Main"') < overview.index('"Scratch"') and "[HIDDEN" in overview
+    assert _query(tables, "SELECT a FROM Scratch").rows == [["hidden-row"]]  # still queryable when asked for
+
+    text = "\n".join(p.text for p in parse_document_pages(str(path)))
+    assert "visible-row" in text and "hidden-row" not in text

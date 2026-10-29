@@ -60,8 +60,10 @@ class QuerySpreadsheetTool(BaseTool):
         "never read numbers out of search/read text for those. Each sheet is a table named after the sheet (double-quoted); "
         "columns are named by the header row (double-quote them); `_row` is the row number in the original file. "
         "Filter people/names with LIKE '%part%' (text is normalized: ي→ی, ك→ک, Persian digits→0-9). "
-        "Let SQL do the arithmetic (SUM/AVG/COUNT/GROUP BY); do not add numbers yourself. Include `_row` in the SELECT so you "
-        "can cite it. If no row matches, report that nothing was found - the result may list similar values to confirm "
+        "Let SQL do ALL arithmetic (SUM/AVG/COUNT/GROUP BY) - never add, compare or re-derive numbers yourself, not even ones "
+        "already shown earlier in the chat: run a new query. Use only column names listed by describe_spreadsheet (an unknown name "
+        "is an error). Names of one item are often spelled several ways (Sub base / Sub Base layer): match the common stem with "
+        "LIKE and GROUP BY the name column to show what was included. Include `_row` in the SELECT so you can cite it. If no row matches, report that nothing was found - the result may list similar values to confirm "
         "with the user, never silently substitute another name. Accepts document_id (UUID) or filename."
     )
     parameters = {
@@ -100,7 +102,7 @@ class QuerySpreadsheetTool(BaseTool):
             timeout_seconds=settings.spreadsheet_query_timeout_seconds,
         )
 
-        lines = [f"Spreadsheet: {document.filename}"]
+        lines = [f"Spreadsheet: {document.filename} | sheet(s) used: {', '.join(result.sheets) or '-'}"]
         if not result.rows:
             lines.append("Rows returned: 0 (no row matched the query).")
             if result.suggestions:
