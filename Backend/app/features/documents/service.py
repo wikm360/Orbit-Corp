@@ -559,6 +559,8 @@ async def get_document_info(
     estimated_tokens = _count_tokens(text)
 
     has_images = any(p.get("has_images") for p in recon.get("pages", [])) if recon else None
+    # Word-style files without Word's own page markers (converted .doc, LibreOffice/Google Docs exports) are paginated by estimate.
+    approximate = any((m or {}).get("pagination") == "estimated" for _, m in chunk_rows)
 
     return {
         "document_id": str(document.id),
@@ -571,6 +573,7 @@ async def get_document_info(
         "estimated_tokens": estimated_tokens,
         "fits_read_entire_document": estimated_tokens <= FULL_DOCUMENT_MAX_TOKENS,
         "has_images": has_images,
+        **({"page_numbers_approximate": True} if approximate else {}),
         "uploaded_at": document.created_at.isoformat() if document.created_at else None,
     }
 

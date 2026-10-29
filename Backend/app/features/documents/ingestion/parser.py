@@ -72,6 +72,10 @@ def parse_document_pages(file_path: str) -> list[DocumentPage]:
         from app.features.documents.ingestion.converter import converted_copy
 
         with converted_copy(file_path) as modern:
+            if suffix in {".doc", ".rtf", ".odt"}:
+                from app.features.documents.ingestion.docx_pagination import legacy_declared_pages
+
+                return _parse_docx_pages(modern, page_hint=legacy_declared_pages(file_path, suffix))
             return parse_document_pages(modern)
     if suffix in IMAGE_EXTENSIONS:
         return _parse_image_pages(file_path)
@@ -346,7 +350,8 @@ def _docx_cell_text(cell) -> str:
     return " ".join(p.text.strip() for p in cell.paragraphs if p.text.strip())
 
 
-def _docx_table_text(table) -> str:
+def _docx_table_rows(table) -> list[tuple[str, object]]:
+    """(row text, row element) for each non-empty row."""
     rows = []
     for row in table.rows:
         cells, seen = [], set()
@@ -356,65 +361,120 @@ def _docx_table_text(table) -> str:
             seen.add(id(cell._tc))
             cells.append(_docx_cell_text(cell))
         if any(cells):
-            rows.append(" | ".join(cells))
-    return "\n".join(rows)
+            rows.append((" | ".join(cells), row._tr))
+    return rows
 
 
-def _parse_docx_pages(file_path: str) -> list[DocumentPage]:
+def _docx_table_text(table) -> str:
+    return "\n".join(text for text, _ in _docx_table_rows(table))
+
+
+def _parse_docx_pages(file_path: str, page_hint: int | None = None) -> list[DocumentPage]:
+    """Pages follow Word's own page breaks when the file has them (see docx_pagination); `page_hint` is the page count
+    declared by the original file when this is a converted .doc / .rtf / .odt."""
     import docx
     from docx.table import Table
     from docx.text.paragraph import Paragraph
 
+    from app.features.documents.ingestion import docx_pagination as pagination
+
     document = docx.Document(file_path)
     # Body order (paragraphs and tables interleaved) with headings kept as markdown, so a table stays next to the
     # sentence that introduces it instead of being appended at the end.
-    paragraphs: list[str] = []
+    blocks: list[pagination.Block] = []
+    carry: str | None = None  # a break that came with an empty paragraph (e.g. a lone manual page break)
     for child in document.element.body.iterchildren():
         if child.tag.endswith("}p"):
             paragraph = Paragraph(child, document)
             text = paragraph.text.strip()
             if not text:
+                kinds = [k for k in map(pagination.page_marker_kind, child.iter()) if k]
+                for kind in kinds:
+                    carry = pagination._stronger(carry, kind)
+                if child.find(f"{{{pagination._W}}}pPr/{{{pagination._W}}}pageBreakBefore") is not None:
+                    carry = pagination._stronger(carry, "explicit")
+                rids = pagination.image_rids(child)
+                if rids:  # a picture-only paragraph: no text, but the picture belongs to this page
+                    blocks.append(pagination.Block(text="", image_rids=rids))
                 continue
             style = (paragraph.style.name if paragraph.style is not None else "") or ""
             if style.lower().startswith("heading ") and style[8:].strip().isdigit():
                 text = f"{'#' * min(int(style[8:]), 6)} {text}"
-            paragraphs.append(text)
+            parts = pagination.paragraph_blocks(child, text)
+            if carry:
+                parts[0].break_before = pagination._stronger(carry, parts[0].break_before)
+                carry = None
+            blocks.extend(parts)
         elif child.tag.endswith("}tbl"):
-            table_text = _docx_table_text(Table(child, document))
-            if table_text:
-                paragraphs.append(table_text)
+            rows = _docx_table_rows(Table(child, document))
+            for index, (row_text, row_element) in enumerate(rows):
+                kind = None
+                for element in row_element.iter():
+                    kind = pagination._stronger(kind, pagination.page_marker_kind(element))
+                if index == 0 and carry:
+                    kind = pagination._stronger(carry, kind)
+                    carry = None
+                blocks.append(
+                    pagination.Block(
+                        text=row_text,
+                        break_before=kind,
+                        image_rids=pagination.image_rids(row_element),
+                    )
+                )
 
-    text = "\n\n".join(paragraphs)
+    if page_hint is None:
+        page_hint = pagination.docx_declared_pages(file_path)
+    grouped, mode = pagination.paginate(blocks, page_hint)
 
-    # Extract embedded images
-    images: list[ExtractedImage] = []
+    # Embedded images: a picture goes to the page of the paragraph that holds it; the rest (headers, anchors we could
+    # not place) stay with the first page as before.
+    images_by_rid: dict[str, ExtractedImage] = {}
     settings = get_settings()
     min_dim = getattr(settings, "ocr_min_image_dimension", 60)
     try:
         from PIL import Image
 
-        for rel in document.part.rels.values():
+        for rid, rel in document.part.rels.items():
             if "image" in rel.target_ref.lower():
                 img_data = rel.target_part.blob
                 try:
                     with Image.open(io.BytesIO(img_data)) as pil_img:
                         w, h = pil_img.size
                         if w >= min_dim and h >= min_dim:
-                            images.append(
-                                ExtractedImage(
-                                    data=img_data,
-                                    name=rel.target_ref,
-                                    format=(pil_img.format or "png").lower(),
-                                    width=w,
-                                    height=h,
-                                )
+                            images_by_rid[rid] = ExtractedImage(
+                                data=img_data,
+                                name=rel.target_ref,
+                                format=(pil_img.format or "png").lower(),
+                                width=w,
+                                height=h,
                             )
                 except Exception:
                     pass
     except Exception as exc:
         logger.debug("Failed extracting docx images: %s", exc)
 
-    return [DocumentPage(page_number=1, text=text, images=images, metadata={"page": 1})]
+    if not grouped:
+        grouped = [[]]
+    page_images: list[list[ExtractedImage]] = [[] for _ in grouped]
+    placed: set[str] = set()
+    for index, group in enumerate(grouped):
+        for block in group:
+            for rid in block.image_rids:
+                if rid in images_by_rid and rid not in placed:
+                    page_images[index].append(images_by_rid[rid])
+                    placed.add(rid)
+    leftovers = [images_by_rid[r] for r in images_by_rid if r not in placed]
+    page_images[0].extend(leftovers)
+
+    return [
+        DocumentPage(
+            page_number=number,
+            text="\n\n".join(block.text for block in group if block.text),
+            images=page_images[number - 1],
+            metadata={"page": number, "pagination": mode},
+        )
+        for number, group in enumerate(grouped, start=1)
+    ]
 
 
 def _parse_pptx_pages(file_path: str) -> list[DocumentPage]:

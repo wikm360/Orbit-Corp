@@ -53,6 +53,7 @@ class GetDocumentInfoTool(BaseTool):
         "Get a document's basic facts without reading it: file name, type, page count "
         "(slides / sheets for pptx / xlsx), estimated size in tokens, whether it is short enough for "
         "read_entire_document, and upload time. Accepts either document_id (UUID) or filename (e.g. 'ضابطه773.pdf'). "
+        "If it reports page_numbers_approximate, page numbers of that Word file are estimates: say 'around page N', never exact. "
         "Use it to learn a document's size or to pick page numbers - "
         "NOT as a step before every question: to find content, use search_knowledge_base."
     )

@@ -45,6 +45,7 @@
 | `spreadsheet.py` | مدل جدول شیت: `read_xlsx_tables`/`read_csv_tables`، `load_tables` (با cache کنار فایل `<file>.tables.json`، پاک‌شدن با حذف سند)، `normalize_text` (ي→ی، ك→ک، ارقام فارسی/عربی، نیم‌فاصله)، `record_pages` (متن ingestion)، `describe_tables`، `run_query` (sandbox SQLite فقط‌خواندنی) |
 | `chunk_paths.py` | مسیر سند روی chunkها (`path` در metadata + پیشوند `search_text`): `path_for_new_chunks` (PersistStep)، `refresh_chunk_paths` (بعد از move/rename/copy)؛ `backfill_chunk_paths.py` = اسکریپت یک‌باره برای اسناد قدیمی |
 | `ingestion/converter.py` | `converted_copy`: تبدیل فرمت‌های قدیمی با `soffice` headless (profile موقت هر فایل، تایم‌اوت، بررسی magic) |
+| `ingestion/docx_pagination.py` | صفحه‌بندی Word-style: `Block`، `paragraph_blocks`، `paginate` (word/estimated)، `docx_declared_pages`، `legacy_declared_pages` |
 | `ingestion/parser.py` | `parse_document_pages` و parserهای هر فرمت، `SUPPORTED_EXTENSIONS`, `DocumentPage`, `ExtractedImage` |
 | `ingestion/ocr.py` | `extract_text_from_image`, `prepare_image_for_ocr`, `optimize_image_for_ocr`, `preprocess_signature`, `SYSTEM_OCR_PROMPT` |
 | `ingestion/image_preprocess.py` | توابع Pillow/numpy: `is_blank`، `estimate_skew`/`deskew`، `crop_margins`، `enhance_contrast`، `normalize_background`، `split_vertical` (فقط blank در pipeline فعال است؛ بقیه برای ارزیابی/خاموش) |
