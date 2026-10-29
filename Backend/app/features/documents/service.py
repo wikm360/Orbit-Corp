@@ -104,6 +104,15 @@ def _store_file(suffix: str, file_bytes: bytes) -> str:
     return str(file_path)
 
 
+def _enqueue_ingestion(document: Document) -> None:
+    _queue.enqueue(
+        "app.features.documents.ingestion.pipeline.run_ingestion_pipeline_sync",
+        document.id,
+        document.file_path,
+        job_timeout=settings.ingestion_job_timeout_seconds,
+    )
+
+
 async def reprocess_document(db: AsyncSession, document_id: uuid.UUID) -> Document:
     """Marks a document for re-ingestion and puts it back in the processing queue."""
     document = await db.get(Document, document_id)
