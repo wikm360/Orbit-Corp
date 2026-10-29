@@ -1,8 +1,10 @@
 import logging
+import uuid
 from typing import Any
 
 from fastapi import FastAPI
 from starlette.requests import Request
+from starlette.responses import HTMLResponse, RedirectResponse, Response
 from sqlalchemy import select
 
 from app.core.config import get_settings
@@ -15,9 +17,8 @@ logger = logging.getLogger(__name__)
 def setup_admin_panel(app: FastAPI) -> None:
     """Mounts SQLAdmin at /db-admin with session-based authentication."""
     try:
-        from sqladmin import Admin, ModelView, BaseView, expose
+        from sqladmin import Admin, ModelView, BaseView, expose, action
         from sqladmin.authentication import AuthenticationBackend
-        from starlette.responses import HTMLResponse, RedirectResponse
     except ImportError:
         logger.warning("sqladmin not installed, skipping admin panel setup.")
         return

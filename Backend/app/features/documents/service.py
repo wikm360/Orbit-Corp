@@ -381,6 +381,14 @@ async def delete_document(db: AsyncSession, document_id: uuid.UUID) -> None:
     document = await get_document(db, document_id)
     file_path = document.file_path
     was_processing = document.status == DocumentStatus.PROCESSING
+
+    from app.features.documents.ingestion.ocr_cache import purge_document_ocr_cache
+
+    try:
+        await purge_document_ocr_cache(db, document_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not purge OCR cache for document %s: %s", document_id, exc)
+
     await db.delete(document)
     await db.commit()
     if was_processing:

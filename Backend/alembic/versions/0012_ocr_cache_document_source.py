@@ -42,3 +42,4 @@ def downgrade() -> None:
     op.drop_column("ocr_cache", "page_number")
     op.drop_column("ocr_cache", "source_filename")
     op.drop_column("ocr_cache", "document_id")
+

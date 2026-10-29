@@ -132,8 +132,31 @@ class _OcrReader:
             text = (raw_ocr or "").replace("\x00", "").strip()
         rotation = report.get("rotation")
         if text and self._db is not None:
+            doc_uuid = None
+            page_num = None
+            filename = None
+            if debug_info:
+                if "document_id" in debug_info:
+                    try:
+                        doc_uuid = uuid.UUID(str(debug_info["document_id"]))
+                    except Exception:  # noqa: BLE001
+                        pass
+                if "page_number" in debug_info:
+                    try:
+                        page_num = int(debug_info["page_number"])
+                    except Exception:  # noqa: BLE001
+                        pass
+                filename = debug_info.get("filename")
             async with self._db_lock:
-                await put_cached_ocr(self._db, key, text, rotation)
+                await put_cached_ocr(
+                    self._db,
+                    key,
+                    text,
+                    rotation,
+                    document_id=doc_uuid,
+                    source_filename=filename,
+                    page_number=page_num,
+                )
         return OcrRead(text, rotation)
 
 
@@ -225,7 +248,11 @@ class OCRStep(IngestionStep):
                 rendered = await asyncio.to_thread(render_pdf_page, context.file_path, page.page_number)
             if rendered is None:
                 return
-            debug_info = {"document_id": str(context.document_id), "page_number": page.page_number}
+            debug_info = {
+                "document_id": str(context.document_id),
+                "page_number": page.page_number,
+                "filename": Path(context.file_path).name,
+            }
             ocr = await reader.read(rendered.data, rendered.format, debug_info=debug_info)
         except Exception as exc:
             logger.warning("Page OCR failed for page %d of %s: %s", page.page_number, context.document_id, exc)
@@ -242,7 +269,11 @@ class OCRStep(IngestionStep):
     ) -> None:
         for img in images:
             try:
-                debug_info = {"document_id": str(context.document_id), "page_number": page.page_number}
+                debug_info = {
+                    "document_id": str(context.document_id),
+                    "page_number": page.page_number,
+                    "filename": Path(context.file_path).name,
+                }
                 ocr = await reader.read(img.data, img.format, debug_info=debug_info)
             except Exception as exc:
                 logger.warning("OCR extraction failed for image %s on page %d: %s", img.name, page.page_number, exc)
