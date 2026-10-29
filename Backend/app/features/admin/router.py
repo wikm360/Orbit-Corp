@@ -25,7 +25,7 @@ from app.features.documents.ingestion.ocr_debugger import (
     get_debug_image_path,
     list_debug_documents,
 )
-from app.features.documents.models import Document, DocumentChunk
+from app.features.documents.models import Document, DocumentChunk, OcrCache
 from app.features.documents.schemas import DocumentRead
 from app.features.projects.models import Project
 
