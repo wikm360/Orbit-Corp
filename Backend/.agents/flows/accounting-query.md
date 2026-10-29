@@ -94,10 +94,10 @@ run_accounting_query(db, question, user_id, conversation_id)
 
 ## ۸. لاگ و بازخورد
 هر اجرا یک `DbQueryLog` می‌سازد. endpointهای `/accounting-db/*` در [../reference/api-endpoints.md](../reference/api-endpoints.md).
-- `POST /queries/{id}/feedback` `{feedback: -1|0|1, note?}` — فقط صاحب log یا admin (`_get_owned_log`).
+- `POST /queries/{id}/feedback` `{feedback: -1|0|1, note?}` — نیاز به دسترسی مالی و (صاحب log یا admin) (`_get_owned_log`).
 - `GET /queries/{id}/export?format=xlsx|csv` — **SQL ذخیره‌شده دوباره اعتبارسنجی و اجرا می‌شود** تا سقف `RAHKARAN_EXPORT_MAX_ROWS`=۵۰۰۰. Excel: RTL، هدر رنگی، freeze؛ CSV با BOM. محافظ formula-injection: مقدار متنی که با `= + @ \t \r` شروع شود با `'` پیشوند می‌گیرد.
-- admin: `GET /queries` (فیلتر status, صفحه‌بندی), `GET /queries/stats`, `POST /hints/ingest`.
-- `GET /accounting-db/freshness`: هر کاربر لاگین‌شده.
+- نظارت (admin با دسترسی مالی): `GET /queries` (فیلتر status, صفحه‌بندی), `GET /queries/stats`. admin: `POST /hints/ingest`, `GET /freshness`.
+- **چه کسی می‌تواند بپرسد:** هر کاربری که `can_use_accounting` دارد (super_admin همیشه؛ دیگران با واگذاری super_admin) و فقط در چت شخصی ← [../03-access-control.md](../03-access-control.md).
 
 ## پیکربندی مرتبط
 `RAHKARAN_DB_ENABLED, _HOST, _PORT, _NAME, _USER, _PASSWORD, _QUERY_TIMEOUT_SECONDS, _MAX_ROWS, _ROWS_TO_MODEL`, `RAHKARAN_SQL_MAX_ATTEMPTS`, `RAHKARAN_HINTS_TOP_K`, `RAHKARAN_ARTIFACT_MAX_ROWS`, `RAHKARAN_EXPORT_MAX_ROWS`, `LLM_SQL_MODEL` — ← [../reference/configuration.md](../reference/configuration.md).

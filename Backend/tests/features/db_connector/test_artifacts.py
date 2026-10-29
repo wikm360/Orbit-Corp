@@ -75,7 +75,7 @@ class _Scripted:
 
 
 async def _seed(db_session):
-    user = User(id=uuid.uuid4(), email=f"{uuid.uuid4()}@example.com", hashed_password="pw", role=UserRole.ADMIN)
+    user = User(id=uuid.uuid4(), email=f"{uuid.uuid4()}@example.com", hashed_password="pw", role=UserRole.ADMIN, accounting_access=True)
     db_session.add(user)
     await db_session.flush()
     conv = Conversation(id=uuid.uuid4(), type=ConversationType.PERSONAL, created_by=user.id, title="t")
@@ -172,6 +172,11 @@ async def test_feedback_and_export_are_limited_to_the_owner_or_admin(client, db_
     owner_headers, owner_id = await _register(client, "owner@example.com")
     other_headers, _ = await _register(client, "other@example.com")
     log = await _log_for(db_session, owner_id)
+    # a plain user can open their own answers only once a super admin grants accounting access
+    fb_before = f"/api/v1/accounting-db/queries/{log.id}/feedback"
+    assert (await client.post(fb_before, json={"feedback": 1}, headers=owner_headers)).status_code == 403
+    granted = await client.put(f"/api/v1/admin/users/{owner_id}/accounting-access", json={"enabled": True}, headers=admin_headers)
+    assert granted.status_code == 200 and granted.json()["accounting_access"] is True
 
     async def fake_exec(sql, max_rows=None):
         return QueryResult(columns=["sl_code", "note"], rows=[["111302", "=HYPERLINK(\"x\")"], ["111005", "ok"]], truncated=False, duration_ms=3)

@@ -11,6 +11,7 @@ export const adminApi = {
   assignUserToTeam: workspaceApi.addTeamMember,
   removeUserFromTeam: workspaceApi.removeTeamMember,
   setUserRole: workspaceApi.updateUserRole,
+  setAccountingAccess: workspaceApi.setAccountingAccess,
   listAllDocuments: () => apiRequest<Document[]>("/admin/documents"),
 };
 

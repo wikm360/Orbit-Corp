@@ -45,6 +45,11 @@ class UserCreateRequest(BaseModel):
     password: str
     full_name: str
     role: UserRole = UserRole.USER
+    accounting_access: bool = False
+
+
+class AccountingAccessUpdate(BaseModel):
+    enabled: bool
 
 
 @router.get("/users", response_model=list[UserRead])
@@ -60,12 +65,15 @@ async def create_user(
 ):
     if payload.role in (UserRole.ADMIN, UserRole.SUPER_ADMIN) and not context.is_super_admin:
         raise ForbiddenError("Only super admins can create admin users")
+    if payload.accounting_access and not context.is_super_admin:
+        raise ForbiddenError("Only super admins can grant accounting access")
     return await service.create_user(
         db,
         email=payload.email,
         password=payload.password,
         full_name=payload.full_name,
         role=payload.role,
+        accounting_access_granted_by=context.id if payload.accounting_access else None,
     )
 
 
@@ -78,6 +86,22 @@ async def set_user_role(user_id: uuid.UUID, payload: UserRoleUpdate, db: AsyncSe
     """Granting ADMIN/SUPER_ADMIN is reserved for super admins, to avoid a
     plain admin escalating themselves or others."""
     return await service.set_user_role(db, user_id, payload.role)
+
+
+@router.put(
+    "/users/{user_id}/accounting-access",
+    response_model=UserRead,
+    dependencies=[Depends(require_super_admin)],
+)
+async def set_accounting_access(
+    user_id: uuid.UUID,
+    payload: AccountingAccessUpdate,
+    context: UserContext = Depends(get_current_user_context),
+    db: AsyncSession = Depends(get_db),
+):
+    """Super admins grant or revoke the Rahkaran accounting tools for any user (admin or not). A super admin always has
+    access and cannot be changed here, so the organisation can never lock itself out."""
+    return await service.set_accounting_access(db, user_id, enabled=payload.enabled, granted_by=context.id)
 
 
 @router.get("/documents", response_model=list[DocumentRead])

@@ -12,6 +12,7 @@ from app.core.database import async_session_factory
 from app.core.dependencies import UserContext
 from app.core.exceptions import BadRequestError, ForbiddenError
 from app.features.agent.engine import AgentEngine, AgentTurnResult
+from app.features.chat.financial import has_financial_artifacts, messages_for_reader
 from app.features.chat.models import Conversation, ConversationType, Message, SenderType
 from app.features.chat.schemas import ConversationCreate, MessageRead
 from app.features.chat.ws import manager as ws_manager
@@ -150,7 +151,9 @@ async def list_messages_after(
 
 
 def _serialize_message(message: Message) -> dict:
-    return MessageRead.model_validate(message).model_dump(mode="json")
+    # Broadcast to every member of the chat at once, so accounting content is always withheld here; clients fetch it
+    # over REST where it is filtered per reader.
+    return messages_for_reader([message], can_use_accounting=False)[0].model_dump(mode="json")
 
 
 # ---------------------------------------------------------------------------
@@ -284,6 +287,7 @@ async def _stream_chat_events(
         content=result.content,
         sources=[s.model_dump() for s in result.citations],
         artifacts=result.artifacts,
+        contains_financial=has_financial_artifacts(result.artifacts),
     )
     db.add(assistant_message)
     await db.commit()
@@ -398,6 +402,7 @@ async def _generate_group_ai_reply(
             content=result.content,
             sources=[s.model_dump() for s in result.citations],
             artifacts=result.artifacts,
+            contains_financial=has_financial_artifacts(result.artifacts),
             reply_to_message_id=trigger_message_id,
         )
         db.add(assistant_message)

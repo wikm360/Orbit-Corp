@@ -57,5 +57,6 @@ export function useAdmin() {
     assignUserToTeam: (userId: string, teamId: string, role: "leader" | "member") => mutate(() => adminApi.assignUserToTeam(teamId, userId, role)),
     removeUserFromTeam: (userId: string, teamId: string) => mutate(() => adminApi.removeUserFromTeam(teamId, userId)),
     setUserRole: (userId: string, role: UserRole) => mutate(() => adminApi.setUserRole(userId, role)),
+    setAccountingAccess: (userId: string, enabled: boolean) => mutate(() => adminApi.setAccountingAccess(userId, enabled)),
   };
 }

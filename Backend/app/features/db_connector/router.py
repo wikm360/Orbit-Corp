@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import get_current_user_context, require_admin, UserContext
+from app.core.dependencies import UserContext, get_current_user_context, require_accounting_admin, require_admin
 from app.core.config import get_settings
 from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
 from app.features.db_connector import hints, service
@@ -27,9 +27,10 @@ router = APIRouter(prefix="/accounting-db", tags=["accounting-db"])
 
 
 async def _get_owned_log(db: AsyncSession, query_id: uuid.UUID, context: UserContext) -> DbQueryLog:
-    """A query log is visible to the admin who asked it (and to other admins) - never to non-admins."""
-    if not context.is_admin:
-        raise ForbiddenError("Only administrators can access accounting query logs")
+    """A query log is visible to its owner and to admins - and only while the caller still holds accounting access,
+    so revoking it also stops feedback and (re-running) exports of old answers."""
+    if not context.can_use_accounting:
+        raise ForbiddenError("Accounting access is required to open accounting query logs")
     log = (await db.execute(select(DbQueryLog).where(DbQueryLog.id == query_id))).scalar_one_or_none()
     if log is None:
         raise NotFoundError("Query log not found")
@@ -121,18 +122,18 @@ async def export_query_result(
     )
 
 
-@router.get("/queries", response_model=list[DbQueryLogRead], dependencies=[Depends(require_admin)])
+@router.get("/queries", response_model=list[DbQueryLogRead], dependencies=[Depends(require_accounting_admin)])
 async def list_queries(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     status: QueryStatus | None = None,
     db: AsyncSession = Depends(get_db),
 ):
-    """Admin oversight: list historical accounting database queries and outcomes."""
+    """Admin oversight (admin role + accounting access): list historical accounting database queries and outcomes."""
     return await service.list_query_logs(db, limit=limit, offset=offset, status=status)
 
 
-@router.get("/queries/stats", response_model=DbQueryStats, dependencies=[Depends(require_admin)])
+@router.get("/queries/stats", response_model=DbQueryStats, dependencies=[Depends(require_accounting_admin)])
 async def get_stats(db: AsyncSession = Depends(get_db)):
     """Admin oversight: aggregate metrics on query volume, accuracy, and latency."""
     return await service.get_query_stats(db)

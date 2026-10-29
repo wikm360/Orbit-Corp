@@ -29,6 +29,9 @@ class UserRead(BaseModel):
     email: EmailStr
     full_name: str | None
     role: UserRole
+    # Effective access to the Rahkaran accounting tools (super admins always; others only when granted).
+    accounting_access: bool = Field(validation_alias="has_accounting_access")
+    accounting_access_granted_at: datetime | None = None
     created_at: datetime
 
 

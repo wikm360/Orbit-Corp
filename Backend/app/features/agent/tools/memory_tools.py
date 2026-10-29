@@ -55,7 +55,9 @@ class RememberProjectInsightTool(BaseTool):
         "Save a fact or decision to this project's shared memory, so it can be "
         "recalled in future conversations by anyone on the project. Only call "
         "this when the user explicitly asks you to remember something - never "
-        "on your own initiative. Only available in a project-linked conversation."
+        "on your own initiative. Never store figures or other data that came from the accounting database: project memory "
+        "is visible to every project member, including people without accounting access. "
+        "Only available in a project-linked conversation."
     )
     parameters = {
         "type": "object",

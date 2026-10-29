@@ -1,17 +1,20 @@
 import { Markdown } from "@/shared/components/ui/Markdown";
 
-import { ChatMessage, SqlResultArtifact } from "../types";
+import { AgentStep, ChatMessage, SqlResultArtifact } from "../types";
+import { AgentActivityBanner } from "./AgentActivityBanner";
 import { SourceCitationList } from "./SourceCitation";
 import { SqlResultCard } from "./SqlResultCard";
 
 export function MessageBubble({
   message,
   isPending = false,
+  activeSteps,
   senderName,
   replyPreview,
 }: {
   message: ChatMessage;
   isPending?: boolean;
+  activeSteps?: AgentStep[];
   senderName?: string;
   replyPreview?: string;
 }) {
@@ -28,6 +31,10 @@ export function MessageBubble({
     );
   }
 
+  // The server swaps accounting replies for a placeholder (and drops the artifacts) for readers without accounting access.
+  const withheldFinancial = Boolean((message as unknown as { contains_financial?: boolean }).contains_financial) && (message.artifacts ?? []).length === 0;
+  const stepsToRender = isPending ? activeSteps : message.steps;
+
   return (
     <div className="flex gap-3 py-3">
       <div className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-[#142b40] text-teal-300 shadow-sm">
@@ -37,7 +44,14 @@ export function MessageBubble({
       </div>
       <div className="min-w-0 flex-1 rounded-2xl border border-slate-200/60 bg-white px-4 py-3 text-[15px] leading-8 text-gray-900">
           {replyPreview && <p className="mb-2 border-r-2 border-brand-200 pr-2 text-xs leading-5 text-gray-500">در پاسخ به: {replyPreview}</p>}
-          {message.content ? (
+          {stepsToRender && stepsToRender.length > 0 && (
+            <div className="mb-3">
+              <AgentActivityBanner steps={stepsToRender} isCompleted={!isPending} />
+            </div>
+          )}
+          {withheldFinancial ? (
+            <p className="py-1 text-sm text-gray-500">🔒 این پاسخ شامل اطلاعات مالی است و برای مشاهده‌ی آن مجوز دسترسی مالی لازم است.</p>
+          ) : message.content ? (
             <Markdown content={message.content} />
           ) : isPending ? (
             <span className="inline-flex gap-1 py-2" aria-label="در حال آماده‌سازی پاسخ">

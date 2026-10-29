@@ -5,6 +5,9 @@ export interface User {
   email: string;
   full_name: string | null;
   role: UserRole;
+  /** Effective access to the Rahkaran accounting tools: super admins always, everyone else only when a super admin granted it. */
+  accounting_access: boolean;
+  accounting_access_granted_at?: string | null;
   created_at: string;
 }
 

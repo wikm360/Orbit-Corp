@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String, Text, func
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String, Text, false, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -86,6 +86,11 @@ class Message(Base):
     sources: Mapped[list[dict]] = mapped_column(JSONB, default=list, nullable=False)
     # Structured evidence attached to an AI reply by tools (e.g. {"type": "sql_result", ...}: exact SQL + rows of a database answer).
     artifacts: Mapped[list[dict]] = mapped_column(JSONB, default=list, nullable=False)
+    # True when the reply carries accounting data (figures in `content`, a `sql_result` artifact). Readers without
+    # accounting access get a placeholder instead, and the model never sees the content in their history.
+    contains_financial: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
     # Set on an AI reply to point back at the @-trigger message it answers,
     # so a group chat can show the reply threaded under the right message.
     reply_to_message_id: Mapped[uuid.UUID | None] = mapped_column(

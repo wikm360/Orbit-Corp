@@ -18,7 +18,7 @@
 | `get_current_chat_attachments` | project_tools | — | فایل‌های آپلودشده در همین گفتگو | conversation |
 | `recall_project_insights` | memory_tools | `query, category?` | top-5 حافظه (JSON `[{fact,category,is_verified}]`) | project scope |
 | `remember_project_insight` | memory_tools | `fact, category` | ذخیره‌ی حافظه؛ فقط به درخواست صریح کاربر | project scope |
-| `ask_accounting_db` | accounting_tools | `question` | پرسش مالی (← flows/accounting-query) | فقط با `RAHKARAN_DB_ENABLED` |
+| `ask_accounting_db` | accounting_tools | `question` | پرسش مالی (← flows/accounting-query) | فقط با `RAHKARAN_DB_ENABLED` **و** کاربر با `can_use_accounting` (واگذاری super_admin) **و** چت غیرگروهی |
 
 نکات:
 - ورودی `document_id` در ابزارهای سندی می‌تواند UUID معتبر یا نام فایل سند (با یا بدون `@`) باشد؛ در صورت ارسال نام فایل، سیستم سند را از میان اسناد در دسترس با همان نام پیدا می‌کند. همچنین `get_document_info` پارامتر اختیاری `filename` نیز می‌پذیرد.

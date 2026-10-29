@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useState } from "react";
+import { Badge } from "@/shared/components/ui/Badge";
 import { Button } from "@/shared/components/ui/Button";
 import { Input } from "@/shared/components/ui/Input";
 import { Select } from "@/shared/components/ui/Select";
@@ -15,7 +16,7 @@ const USER_ROLE_OPTIONS = [{ value: "user", label: "کاربر" }, { value: "adm
 
 export function AdminScreen() {
   const currentUser = useAuthStore((state) => state.user);
-  const { users, teams, memberships, documents, isLoading, isMutating, error, refresh, createTeam, assignUserToTeam, removeUserFromTeam, setUserRole } = useAdmin();
+  const { users, teams, memberships, documents, isLoading, isMutating, error, refresh, createTeam, assignUserToTeam, removeUserFromTeam, setUserRole, setAccountingAccess } = useAdmin();
   const [newTeamName, setNewTeamName] = useState("");
   const [selectedUser, setSelectedUser] = useState<Record<string, string>>({});
   const [selectedRole, setSelectedRole] = useState<Record<string, "leader" | "member">>({});
@@ -59,10 +60,19 @@ export function AdminScreen() {
       })}</div>
     </section>
     <section className="rounded-2xl border border-gray-200 bg-white p-5">
-      <h2 className="mb-4 font-semibold text-gray-800">کاربران</h2>
+      <h2 className="mb-1 font-semibold text-gray-800">کاربران</h2>
+      <p className="mb-4 text-xs text-gray-500">دسترسی مالی: استفاده از ابزار پرس‌وجوی پایگاه داده‌ی حسابداری راهکاران در چت. فقط مدیر ارشد می‌تواند آن را به هر کاربری (با هر نقش) بدهد یا بگیرد؛ مدیر ارشد همیشه دسترسی دارد.</p>
       <div className="space-y-3">{users.map((user) => <div key={user.id} className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 pb-3 text-sm">
-        <span className="break-all">{user.full_name || user.email} — {ROLE_LABEL[user.role]}</span>
-        {currentUser?.role === "super_admin" && <Select aria-label={`نقش سازمانی ${user.email}`} value={user.role} disabled={isMutating || user.id === currentUser.id} onValueChange={(nextValue) => void setUserRole(user.id, nextValue as UserRole).catch(() => {})} options={USER_ROLE_OPTIONS} className="w-36" />}
+        <span className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className="break-all">{user.full_name || user.email} — {ROLE_LABEL[user.role]}</span>
+          {user.accounting_access ? <Badge tone="green">دسترسی مالی</Badge> : <Badge tone="gray">بدون دسترسی مالی</Badge>}
+        </span>
+        {currentUser?.role === "super_admin" && <span className="flex flex-wrap items-center gap-2">
+          {user.role === "super_admin"
+            ? <span className="text-xs text-gray-500">همیشه دسترسی دارد</span>
+            : <Button type="button" variant="ghost" size="sm" disabled={isMutating} aria-label={`${user.accounting_access ? "لغو" : "اعطای"} دسترسی مالی ${user.email}`} onClick={() => void setAccountingAccess(user.id, !user.accounting_access).catch(() => {})}>{user.accounting_access ? "لغو دسترسی مالی" : "اعطای دسترسی مالی"}</Button>}
+          <Select aria-label={`نقش سازمانی ${user.email}`} value={user.role} disabled={isMutating || user.id === currentUser.id} onValueChange={(nextValue) => void setUserRole(user.id, nextValue as UserRole).catch(() => {})} options={USER_ROLE_OPTIONS} className="w-36" />
+        </span>}
       </div>)}</div>
     </section>
     <section className="rounded-2xl border border-gray-200 bg-white p-5">

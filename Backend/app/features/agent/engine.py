@@ -14,6 +14,7 @@ from app.features.agent.scope import resolve_retrieval_scope
 from app.features.agent.tools.folder_tools import project_tree_summary
 from app.features.agent.tools.registry import ToolRegistry, build_default_registry
 from app.features.auth.models import User
+from app.features.chat.financial import FINANCIAL_PLACEHOLDER
 from app.features.chat.models import Conversation, ConversationType, Message, SenderType
 from app.features.documents import service as documents_service
 from app.providers.llm_provider import ChatMessage, get_llm_provider
@@ -284,7 +285,13 @@ class AgentEngine:
                 f"with the sender's name so you can tell participants apart."
             )
 
-        if settings.rahkaran_db_enabled:
+        can_query_accounting = (
+            settings.rahkaran_db_enabled
+            and context is not None
+            and context.can_use_accounting
+            and not group
+        )
+        if can_query_accounting:
             system_content += (
                 "\n\nYou have access to the company's official accounting database via the "
                 "'ask_accounting_db' tool. When asked about financial reports, accounts, vouchers, contract costs, "
@@ -324,10 +331,13 @@ class AgentEngine:
                 result = await db.execute(select(User).where(User.id.in_(sender_ids)))
                 sender_names = {user.id: (user.full_name or user.email) for user in result.scalars().all()}
 
+        # Figures from the accounting database must not reach a model that is answering someone without that access
+        # (access revoked since, or an admin reading another user's chat): the model would repeat them.
+        hide_financial = context is None or not context.can_use_accounting
         messages: list[ChatMessage] = [{"role": "system", "content": system_content}]
         for msg in history:
             role = "assistant" if msg.sender_type == SenderType.ASSISTANT else "user"
-            content = msg.content
+            content = FINANCIAL_PLACEHOLDER if (hide_financial and msg.contains_financial) else msg.content
             if group and role == "user" and msg.sender_id is not None:
                 content = f"{sender_names.get(msg.sender_id, 'User')}: {content}"
             messages.append({"role": role, "content": content})

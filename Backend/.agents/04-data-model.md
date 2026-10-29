@@ -28,7 +28,7 @@ erDiagram
 ## جدول‌ها
 
 ### `users` (`auth/models.py`)
-`id` UUID PK · `email` unique+index · `hashed_password` (bcrypt) · `full_name` nullable · `role` enum `user_role` (`super_admin|admin|user`، پیش‌فرض user) · `created_at`.
+`id` UUID PK · `email` unique+index · `hashed_password` (bcrypt) · `full_name` nullable · `role` enum `user_role` (`super_admin|admin|user`، پیش‌فرض user) · **`accounting_access`** bool (پیش‌فرض false؛ واگذاری مالی توسط super_admin، مستقل از role) · `accounting_access_granted_by` FK→users SET NULL · `accounting_access_granted_at` · `created_at`. property `has_accounting_access` = super_admin یا فلگ.
 رابطه: `team_memberships` (cascade delete-orphan).
 
 ### `refresh_tokens`
@@ -52,7 +52,7 @@ erDiagram
 ایندکس: `created_by`, `project_id`. (هیچ CHECK بین type و project_id در DB نیست؛ در schema pydantic `ConversationCreate` اعمال می‌شود.)
 
 ### `messages`
-`id` · `conversation_id` FK CASCADE · `sender_type` enum `sender_type` (`user|assistant`) · `sender_id` FK SET NULL (null برای assistant) · `content` Text · **`sources` JSONB** (list از `SourceCitation`) · **`artifacts` JSONB** (list از artifact؛ پیش‌فرض `[]`) · `reply_to_message_id` FK→messages SET NULL (پاسخ AI به پیام trigger) · `created_at`.
+`id` · `conversation_id` FK CASCADE · `sender_type` enum `sender_type` (`user|assistant`) · `sender_id` FK SET NULL (null برای assistant) · `content` Text · **`sources` JSONB** (list از `SourceCitation`) · **`artifacts` JSONB** (list از artifact؛ پیش‌فرض `[]`) · **`contains_financial`** bool (پاسخ حاوی داده‌ی مالی؛ برای خواننده‌ی بدون دسترسی پنهان می‌شود) · `reply_to_message_id` FK→messages SET NULL (پاسخ AI به پیام trigger) · `created_at`.
 ترتیب پیام‌ها: `(created_at, id)`. توجه: `created_at` زمان شروع transaction است، نه commit.
 ⚠️ پیام‌های `tool` و `tool_calls` (دورهای میانی agent) **ذخیره نمی‌شوند**؛ فقط متن نهایی + sources + artifacts.
 
@@ -107,6 +107,7 @@ erDiagram
 | `0009_ocr_cache` | جدول `ocr_cache` (نتیجه‌ی OCR بر اساس هش تصویر + مدل/prompt) |
 | `0010_ocr_cache_rotation` | ستون `ocr_cache.rotation` (چرخش پیداشده برای تصویر) |
 | `0011_file_manager` | جدول‌های `document_folders` و `archive_imports`، ستون `documents.folder_id`، مقدارهای `cancelled`/`unsupported` برای `document_status` (در downgrade حذف نمی‌شوند: Postgres حذف مقدار enum را ندارد) |
+| `0013_accounting_access` | ستون‌های `users.accounting_access/_granted_by/_granted_at` (ادمین‌های موجود `true`)، `messages.contains_financial` (backfill از artifact `sql_result`) |
 | `0012_ocr_cache_document_source` | ستون‌های `document_id`، `source_filename` و `page_number` در `ocr_cache` برای اتصال کش OCR به سند، ردیابی و امکان حذف انتخابی/خودکار کش |
 
 قواعد: ← [guides/add-migration.md](guides/add-migration.md). تست `tests/test_migrations.py` تضمین می‌کند `upgrade head` دقیقاً همان جدول/ستون‌های `Base.metadata` را می‌سازد (فقط نام ستون‌ها مقایسه می‌شود، نه نوع/ایندکس).

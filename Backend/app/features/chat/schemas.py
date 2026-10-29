@@ -16,6 +16,7 @@ class MessageRead(BaseModel):
     content: str
     sources: list[SourceCitation]
     artifacts: list[dict] = []
+    contains_financial: bool = False
     reply_to_message_id: uuid.UUID | None
     created_at: datetime
 

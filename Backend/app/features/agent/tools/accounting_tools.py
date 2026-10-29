@@ -4,7 +4,7 @@ from app.core.dependencies import UserContext
 from app.core.exceptions import ForbiddenError
 from app.features.agent.schemas import ToolExecutionResult
 from app.features.agent.tools.base import BaseTool
-from app.features.chat.models import Conversation
+from app.features.chat.models import Conversation, ConversationType
 from app.features.db_connector import service as db_connector_service
 
 
@@ -38,8 +38,13 @@ class AskAccountingDbTool(BaseTool):
         context: UserContext | None = None,
         conversation: Conversation | None = None,
     ) -> bool:
-        # Strictly available only to admin and super_admin users.
-        return context is not None and context.is_admin
+        # Only for users holding accounting access, and never in a group chat: the reply is broadcast to every
+        # member, including people without that access.
+        return (
+            context is not None
+            and context.can_use_accounting
+            and not (conversation is not None and conversation.type == ConversationType.PROJECT_GROUP)
+        )
 
     async def execute(
         self,
@@ -50,8 +55,10 @@ class AskAccountingDbTool(BaseTool):
         question: str,
         **_: Any,
     ) -> ToolExecutionResult:
-        if not context.is_admin:
-            raise ForbiddenError("Only administrators and super administrators can access the accounting database.")
+        if not context.can_use_accounting:
+            raise ForbiddenError("Accounting access is required to query the accounting database.")
+        if conversation.type == ConversationType.PROJECT_GROUP:
+            raise ForbiddenError("The accounting database cannot be queried in a group chat.")
 
         answer = await db_connector_service.run_accounting_query(
             db,

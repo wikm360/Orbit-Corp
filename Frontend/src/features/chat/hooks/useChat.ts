@@ -6,9 +6,14 @@ import { useAuthStore } from "@/features/auth/hooks/useAuthStore";
 import { Document } from "@/features/documents/types";
 
 import { chatApi, streamChat } from "../api/chatApi";
-import { normalizeAgentStatus } from "../lib/agentStatus";
+import {
+  completeAgentSteps,
+  failAgentSteps,
+  normalizeAgentStatus,
+  recordAgentStep,
+} from "../lib/agentStatus";
 import { ConversationDocumentTracker } from "../lib/conversationDocuments";
-import { AgentActivity, AgentStatus, ChatMessage, Conversation, GroupEvent } from "../types";
+import { AgentActivity, AgentStatus, AgentStep, ChatMessage, Conversation, GroupEvent } from "../types";
 
 function addMessage(current: ChatMessage[], message: ChatMessage): ChatMessage[] {
   const pendingId = message.sender_type === "assistant" && message.reply_to_message_id ? `pending-${message.reply_to_message_id}` : null;
@@ -28,6 +33,11 @@ function settlePending(messages: ChatMessage[]) {
   );
 }
 
+interface ActivityEntry {
+  status: AgentStatus | null;
+  steps: AgentStep[];
+}
+
 export function useChat() {
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
@@ -36,7 +46,7 @@ export function useChat() {
   const [documentsSyncPending, setDocumentsSyncPending] = useState(false);
   const [isDocumentStatusLoading, setIsDocumentStatusLoading] = useState(false);
   const [isSending, setIsSending] = useState(false);
-  const [activities, setActivities] = useState<Record<string, AgentStatus | null>>({});
+  const [activities, setActivities] = useState<Record<string, ActivityEntry>>({});
   const [connectionState, setConnectionState] = useState<"connecting" | "connected" | "reconnecting">("connecting");
   const [isLoadingConversation, setIsLoadingConversation] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -137,11 +147,16 @@ export function useChat() {
     const receiveMessage = (message: ChatMessage) => {
       latestMessageIdRef.current = message.id;
       if (message.sender_type === "assistant" && message.reply_to_message_id) {
+        let finalSteps: AgentStep[] = [];
         setActivities((current) => {
+          const prev = current[message.reply_to_message_id!];
+          finalSteps = completeAgentSteps(prev?.steps ?? []);
           const next = { ...current };
           delete next[message.reply_to_message_id!];
           return next;
         });
+        setMessages((current) => addMessage(current, { ...message, steps: message.steps ?? finalSteps }));
+        return;
       }
       setMessages((current) => addMessage(current, message));
     };
@@ -180,13 +195,30 @@ export function useChat() {
           } else if (isGroupConversation && payload.event === "message" && payload.message) {
             receiveMessage(payload.message);
           } else if (isGroupConversation && payload.event === "assistant_start") {
-            setActivities((current) => ({ ...current, [payload.reply_to_message_id]: { status: "preparing" } }));
+            const initialStatus: AgentStatus = { status: "preparing" };
+            const initialSteps = recordAgentStep([], initialStatus);
+            setActivities((current) => ({
+              ...current,
+              [payload.reply_to_message_id]: { status: initialStatus, steps: initialSteps },
+            }));
             setMessages((current) => current.some((item) => item.id === `pending-${payload.reply_to_message_id}`) ? current : [...current, pendingMessage(payload.reply_to_message_id)]);
           } else if (isGroupConversation && payload.event === "assistant_status") {
             const status = normalizeAgentStatus(payload);
-            if (status) setActivities((current) => ({ ...current, [payload.reply_to_message_id]: status }));
+            if (status) {
+              setActivities((current) => {
+                const prev = current[payload.reply_to_message_id];
+                const nextSteps = recordAgentStep(prev?.steps ?? [], status);
+                return { ...current, [payload.reply_to_message_id]: { status, steps: nextSteps } };
+              });
+            }
           } else if (isGroupConversation && payload.event === "assistant_delta") {
-            setActivities((current) => ({ ...current, [payload.reply_to_message_id]: null }));
+            setActivities((current) => {
+              const prev = current[payload.reply_to_message_id];
+              if (!prev) return current;
+              const genStatus: AgentStatus = { status: "generating" };
+              const nextSteps = recordAgentStep(prev.steps, genStatus);
+              return { ...current, [payload.reply_to_message_id]: { status: genStatus, steps: nextSteps } };
+            });
             setMessages((current) => {
               const pending = pendingMessage(payload.reply_to_message_id);
               return current.some((item) => item.id === pending.id)
@@ -281,7 +313,9 @@ export function useChat() {
       const userMessage: ChatMessage = { id: `local-${replyId}`, sender_type: "user", sender_id: null, content: text, sources: [], artifacts: [], reply_to_message_id: null, created_at: new Date().toISOString() };
       const assistantMessage = { ...pendingMessage(replyId), reply_to_message_id: null };
       setMessages((current) => [...current, userMessage, assistantMessage]);
-      setActivities({ [replyId]: { status: "preparing" } });
+      const initialStatus: AgentStatus = { status: "preparing" };
+      const initialSteps = recordAgentStep([], initialStatus);
+      setActivities({ [replyId]: { status: initialStatus, steps: initialSteps } });
       await streamChat(text, targetId, {
         onStart: (id) => {
           if (!active()) return;
@@ -289,7 +323,17 @@ export function useChat() {
           setConversationId(id);
           activeConversationIdRef.current = id;
         },
-        onStatus: (status) => { if (active()) setActivities({ [replyId]: status }); },
+        onStatus: (status) => {
+          if (!active()) return;
+          setActivities((current) => {
+            const prev = current[replyId];
+            const nextSteps = recordAgentStep(prev?.steps ?? [], status);
+            return {
+              ...current,
+              [replyId]: { status, steps: nextSteps },
+            };
+          });
+        },
         onArtifact: (artifact) => {
           if (!active()) return;
           setMessages((current) => current.map((item) => {
@@ -301,17 +345,46 @@ export function useChat() {
         },
         onDelta: (delta) => {
           if (!active()) return;
-          setActivities({ [replyId]: null });
+          setActivities((current) => {
+            const prev = current[replyId];
+            if (!prev) return current;
+            const genStatus: AgentStatus = { status: "generating" };
+            const nextSteps = recordAgentStep(prev.steps, genStatus);
+            return {
+              ...current,
+              [replyId]: { status: genStatus, steps: nextSteps },
+            };
+          });
           setMessages((current) => current.map((item) => item.id === assistantMessage.id ? { ...item, content: item.content + delta } : item));
         },
         onDone: (sources, messageId, artifacts) => {
           if (!active()) return;
-          setActivities({});
-          setMessages((current) => current.map((item) => item.id === assistantMessage.id ? { ...item, id: messageId, sources, artifacts } : item));
+          let finalSteps: AgentStep[] = [];
+          setActivities((current) => {
+            const prev = current[replyId];
+            finalSteps = completeAgentSteps(prev?.steps ?? []);
+            const next = { ...current };
+            delete next[replyId];
+            return next;
+          });
+          setMessages((current) => current.map((item) =>
+            item.id === assistantMessage.id ? { ...item, id: messageId, sources, artifacts, steps: finalSteps } : item
+          ));
           if (targetId) void chatApi.getConversation(targetId).then((detail) => { if (active()) setConversation(detail); }).catch(() => {});
           window.dispatchEvent(new Event("orbit:conversations-changed"));
         },
-        onError: (message) => { if (active()) setError(message); },
+        onError: (message) => {
+          if (!active()) return;
+          setError(message);
+          setActivities((current) => {
+            const prev = current[replyId];
+            if (!prev) return current;
+            return {
+              ...current,
+              [replyId]: { status: prev.status, steps: failAgentSteps(prev.steps) },
+            };
+          });
+        },
       }, controller.signal);
     } catch (err) {
       if (active()) setError(friendlyErrorMessage(err, "ارسال پیام ناموفق بود."));
@@ -348,7 +421,11 @@ export function useChat() {
     window.dispatchEvent(new Event("orbit:conversations-changed"));
   }, [conversation]);
 
-  const agentActivities: AgentActivity[] = Object.entries(activities).map(([replyId, status]) => ({ replyId, status }));
+  const agentActivities: AgentActivity[] = Object.entries(activities).map(([replyId, data]) => ({
+    replyId,
+    status: data.status,
+    steps: data.steps,
+  }));
   return {
     conversation, conversationId, messages, conversationDocuments, hasProcessingDocuments, isDocumentStatusLoading, isStreaming: isSending || agentActivities.length > 0,
     isSending, agentActivities, connectionState, isLoadingConversation, error,

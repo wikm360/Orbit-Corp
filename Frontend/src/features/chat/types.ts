@@ -29,6 +29,17 @@ export interface SqlResultArtifact {
 
 export type MessageArtifact = SqlResultArtifact | { type: string; [key: string]: unknown };
 
+export interface AgentStep {
+  id: string;
+  status: string;
+  tool?: string;
+  args?: Record<string, unknown>;
+  label: string;
+  detail?: string;
+  state: "running" | "completed" | "failed";
+  timestamp: number;
+}
+
 export interface ChatMessage {
   id: string;
   sender_type: "user" | "assistant";
@@ -36,8 +47,11 @@ export interface ChatMessage {
   content: string;
   sources: SourceCitation[];
   artifacts?: MessageArtifact[];
+  /** The reply carries accounting data; readers without accounting access get a placeholder text and no artifacts. */
+  contains_financial?: boolean;
   reply_to_message_id: string | null;
   created_at: string;
+  steps?: AgentStep[];
 }
 
 export interface Conversation {
@@ -63,6 +77,7 @@ export interface AgentStatus {
 export interface AgentActivity {
   replyId: string;
   status: AgentStatus | null;
+  steps?: AgentStep[];
 }
 
 export type GroupEvent =

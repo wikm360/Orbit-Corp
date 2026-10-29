@@ -11,6 +11,9 @@ const paths = {
   check: <path d="m5 12 4 4L19 6"/>,
   folder: <path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/>,
   plus: <path d="M12 5v14M5 12h14"/>,
+  chevron: <path d="m6 9 6 6 6-6"/>,
+  database: <><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4 3 9 3s9-1.34 9-3"/></>,
+  eye: <><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></>,
 } as const;
 
 export type OrbitIconName = keyof typeof paths;

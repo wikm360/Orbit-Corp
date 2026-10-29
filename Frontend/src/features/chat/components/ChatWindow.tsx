@@ -259,13 +259,24 @@ export function ChatWindow({
           ) : (
             messages.map((message) => {
               const activity = agentActivities.find((item) => `pending-${item.replyId}` === message.id);
-              return <div key={message.id}>
-                {(!activity?.status || message.content) && <MessageBubble message={message} isPending={message.id.startsWith("pending-")} senderName={group && message.sender_id ? senderNames[message.sender_id] ?? "عضو پروژه" : undefined} replyPreview={group && message.reply_to_message_id ? messages.find((item) => item.id === message.reply_to_message_id)?.content.slice(0, 90) : undefined} />}
-                {activity?.status && <div className="py-2"><AgentActivityBanner status={activity.status} /></div>}
-              </div>;
+              return (
+                <div key={message.id}>
+                  <MessageBubble
+                    message={message}
+                    isPending={message.id.startsWith("pending-")}
+                    activeSteps={activity?.steps}
+                    senderName={group && message.sender_id ? senderNames[message.sender_id] ?? "عضو پروژه" : undefined}
+                    replyPreview={group && message.reply_to_message_id ? messages.find((item) => item.id === message.reply_to_message_id)?.content.slice(0, 90) : undefined}
+                  />
+                </div>
+              );
             })
           )}
-          {agentActivities.filter((activity) => activity.status && !messages.some((message) => message.id === `pending-${activity.replyId}`)).map((activity) => <AgentActivityBanner key={activity.replyId} status={activity.status!} />)}
+          {agentActivities
+            .filter((activity) => activity.status && !messages.some((message) => message.id === `pending-${activity.replyId}`))
+            .map((activity) => (
+              <AgentActivityBanner key={activity.replyId} status={activity.status!} steps={activity.steps} />
+            ))}
           {error && (
             <div role="alert" className="mx-auto w-full max-w-2xl rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-center text-sm text-red-700">
               {error}

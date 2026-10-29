@@ -98,14 +98,14 @@
 ## Accounting DB (`/accounting-db`)
 | endpoint | دسترسی |
 |---|---|
-| `POST /queries/{id}/feedback` `{feedback:-1..1, note?}` | صاحب log / admin |
-| `GET /queries/{id}/export?format=xlsx\|csv` | صاحب log / admin |
-| `GET /queries?limit&offset&status` · `GET /queries/stats` · `POST /hints/ingest` | admin |
-| `GET /freshness` | هر کاربر لاگین |
+| `POST /queries/{id}/feedback` `{feedback:-1..1, note?}` | دسترسی مالی + (صاحب log یا admin) |
+| `GET /queries/{id}/export?format=xlsx\|csv` | دسترسی مالی + (صاحب log یا admin) |
+| `GET /queries?limit&offset&status` · `GET /queries/stats` | admin **با** دسترسی مالی (`require_accounting_admin`) |
+| `POST /hints/ingest` · `GET /freshness` | admin |
 `DbQueryStats{total_queries,successful_queries,rejected_queries,error_queries,positive_feedback,negative_feedback,avg_duration_ms}`؛ `IngestResponse{total,unchanged,embedded,stored_without_embedding,deleted}`.
 
 ## Admin (`require_admin`)
-`GET /admin/users` · `POST /admin/users` · `PATCH /admin/users/{id}/role` `{role}` (super_admin) · `GET /admin/documents` (همه‌ی اسناد).
+`GET /admin/users` · `POST /admin/users` · `PATCH /admin/users/{id}/role` `{role}` (super_admin) · `PUT /admin/users/{id}/accounting-access` `{enabled}` (super_admin؛ super_admin هدف → 400؛ پاسخ `UserRead` با `accounting_access` مؤثر) · `POST /admin/users` فیلد اختیاری `accounting_access` (فقط super_admin) · `GET /admin/documents` (همه‌ی اسناد).
 داشبورد بازرس دیداری و متنی: `/db-admin/ocr-inspector` و `/admin/ocr-inspector` شامل:
 - بازرسی دیداری OCR و برش‌ها (`/api/v1/admin/ocr-debug/*`)
 - بازرسی متنی اسناد و صفحات، تصویر رندرشده صفحه و پردازش مجدد با OCR (`/api/v1/admin/documents-inspect/list`، `GET /documents-inspect/{id}`، `GET /documents-inspect/{id}/page-image/{page}`، `POST /documents-inspect/{id}/reprocess`)

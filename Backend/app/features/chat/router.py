@@ -15,6 +15,7 @@ from app.features.access_control.service import get_user_led_team_ids, get_user_
 from app.features.auth.models import User
 from app.features.chat import service
 from app.features.chat.dependencies import require_conversation_access
+from app.features.chat.financial import messages_for_reader
 from app.features.chat.models import Conversation, ConversationType
 from app.features.chat.schemas import (
     ChatRequest,
@@ -73,22 +74,27 @@ async def list_conversations(
 
 @router.get("/conversations/{conversation_id}", response_model=ConversationDetail)
 async def get_conversation(
+    context: UserContext = Depends(get_current_user_context),
     conversation: Conversation = Depends(require_conversation_access),
     db: AsyncSession = Depends(get_db),
 ):
     await db.refresh(conversation, attribute_names=["messages"])
-    return conversation
+    detail = ConversationDetail.model_validate(conversation)
+    detail.messages = messages_for_reader(conversation.messages, context.can_use_accounting)
+    return detail
 
 
 @router.get("/conversations/{conversation_id}/messages", response_model=list[MessageRead])
 async def list_messages(
     after: uuid.UUID | None = None,
+    context: UserContext = Depends(get_current_user_context),
     conversation: Conversation = Depends(require_conversation_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Catch-up fetch for a client reconnecting to the websocket: messages
     strictly newer than `after` (or the full history if omitted)."""
-    return await service.list_messages_after(db, conversation.id, after)
+    messages = await service.list_messages_after(db, conversation.id, after)
+    return messages_for_reader(messages, context.can_use_accounting)
 
 
 @router.patch("/conversations/{conversation_id}", response_model=ConversationRead)

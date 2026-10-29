@@ -129,50 +129,32 @@ async def test_agent_engine_dispatches_accounting_tool(db_session, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_accounting_tool_hidden_and_forbidden_for_normal_user(db_session, monkeypatch):
-    settings = get_settings()
-    monkeypatch.setattr(settings, "rahkaran_db_enabled", True)
+async def test_accounting_tool_follows_the_delegated_permission_not_the_role(db_session, monkeypatch):
+    monkeypatch.setattr(get_settings(), "rahkaran_db_enabled", True)
 
-    normal_user = User(
-        id=uuid.uuid4(),
-        email="normal-user@example.com",
-        hashed_password="pw",
-        role=UserRole.USER,
-    )
-    admin_user = User(
-        id=uuid.uuid4(),
-        email="admin-user@example.com",
-        hashed_password="pw",
-        role=UserRole.ADMIN,
-    )
-    conv = Conversation(
-        id=uuid.uuid4(),
-        type=ConversationType.PERSONAL,
-        created_by=normal_user.id,
-        title="تست دسترسی",
-    )
+    def user(role, access=False):
+        return User(id=uuid.uuid4(), email=f"{uuid.uuid4()}@example.com", hashed_password="pw", role=role, accounting_access=access)
 
+    personal = Conversation(id=uuid.uuid4(), type=ConversationType.PERSONAL, created_by=uuid.uuid4(), title="t")
+    group = Conversation(id=uuid.uuid4(), type=ConversationType.PROJECT_GROUP, project_id=uuid.uuid4(), title="g")
     reg = build_default_registry()
 
-    # 1. For normal user: tool is NOT in the tools offered to the model
-    user_context = UserContext(user=normal_user)
-    tools_for_user = reg.to_openai_tools(user_context, conv)
-    tool_names_for_user = [t["function"]["name"] for t in tools_for_user]
-    assert "ask_accounting_db" not in tool_names_for_user
+    def offered(u, conv):
+        return "ask_accounting_db" in [t["function"]["name"] for t in reg.to_openai_tools(UserContext(user=u), conv)]
 
-    # 2. For admin user: tool IS in the tools offered to the model
-    admin_context = UserContext(user=admin_user)
-    tools_for_admin = reg.to_openai_tools(admin_context, conv)
-    tool_names_for_admin = [t["function"]["name"] for t in tools_for_admin]
-    assert "ask_accounting_db" in tool_names_for_admin
+    assert not offered(user(UserRole.USER), personal)
+    assert not offered(user(UserRole.ADMIN), personal)  # an admin without the grant has no access
+    assert offered(user(UserRole.USER, access=True), personal)  # a plain user with the grant has
+    assert offered(user(UserRole.ADMIN, access=True), personal)
+    assert offered(user(UserRole.SUPER_ADMIN), personal)  # super admins always
+    assert not offered(user(UserRole.SUPER_ADMIN), group)  # never in a group chat: everybody there would read the reply
 
-    # 3. If a normal user tries to dispatch it directly: Permission Denied
-    result = await reg.dispatch(
-        "ask_accounting_db",
-        json.dumps({"question": "حقوق مدیران چقدر است؟"}),
-        db=db_session,
-        context=user_context,
-        conversation=conv,
-    )
-    assert "Permission Denied" in result.text
-
+    for denied, conv in ((user(UserRole.ADMIN), personal), (user(UserRole.SUPER_ADMIN), group)):
+        result = await reg.dispatch(
+            "ask_accounting_db",
+            json.dumps({"question": "حقوق مدیران چقدر است؟"}),
+            db=db_session,
+            context=UserContext(user=denied),
+            conversation=conv,
+        )
+        assert "Permission Denied" in result.text

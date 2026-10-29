@@ -46,6 +46,15 @@ class UserContext:
         """SUPER_ADMIN or ADMIN (CEO) — org-wide privileges."""
         return self.role in ADMIN_ROLES
 
+    @property
+    def is_super_admin(self) -> bool:
+        return self.role == UserRole.SUPER_ADMIN
+
+    @property
+    def can_use_accounting(self) -> bool:
+        """The Rahkaran accounting tools: super admins always, anyone else only when a super admin granted it."""
+        return self.user.has_accounting_access
+
     def leads_team(self, team_id: UUID) -> bool:
         return self.is_admin or team_id in self.led_team_ids
 
@@ -98,6 +107,20 @@ def require_role(*roles: UserRole):
 
 require_super_admin = require_role(UserRole.SUPER_ADMIN)
 require_admin = require_role(*ADMIN_ROLES)
+
+
+async def require_accounting_access(user: User = Depends(get_current_user)) -> User:
+    """Holders of the delegated accounting permission (and super admins)."""
+    if not user.has_accounting_access:
+        raise ForbiddenError("Accounting access is required for this action")
+    return user
+
+
+async def require_accounting_admin(user: User = Depends(get_current_user)) -> User:
+    """Organisation oversight of accounting activity: an admin who also holds the accounting permission."""
+    if user.role not in ADMIN_ROLES or not user.has_accounting_access:
+        raise ForbiddenError("Admin role with accounting access is required for this action")
+    return user
 
 
 async def require_team_manager(

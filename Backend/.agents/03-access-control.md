@@ -10,6 +10,8 @@
 | `admin` | مدیر سازمان (CEO). به همه‌ی تیم‌ها/پروژه‌ها/گفتگوها (حتی چت شخصی دیگران) دسترسی دارد. |
 | `user` | کاربر عادی؛ فقط به چیزهایی که اضافه شده. |
 
+**دسترسی مالی (permission مستقل از نقش)** — `users.accounting_access` (+ `accounting_access_granted_by/at`). فقط **super_admin** با `PUT /admin/users/{id}/accounting-access {enabled}` آن را به هر کاربری (admin یا user) می‌دهد/می‌گیرد. مؤثر = `User.has_accounting_access` = super_admin **یا** فلگ (`UserContext.can_use_accounting`). super_admin همیشه دارد و قابل تغییر نیست (400) تا سازمان قفل نشود؛ ادمین معمولی نمی‌تواند واگذار کند حتی اگر خودش دسترسی داشته باشد. دسترسی از DB در هر درخواست خوانده می‌شود، پس لغو فوری اثر می‌کند. migration `0013` به ادمین‌های موجود فلگ را `true` داد (رفتار قبلی حفظ شد)؛ ادمین‌های جدید پیش‌فرض بدون دسترسی‌اند.
+
 **نقش داخل تیم** — `team_memberships.role` (`TeamRole`): `leader` یا `member`. یک نفر می‌تواند در تیم A لیدر و در تیم B عضو ساده باشد. (مفهوم «Leader Team» در سند اولیه‌ی نیازمندی.)
 
 سلسله‌مراتب سازمانی: `System Admin` ← `CEO(admin)` ← `Leader Team` ← `User`. «افراد باید توسط لیدر تیم به پروژه assign شوند و پروژه هم توسط لیدر ساخته می‌شود.»
@@ -61,10 +63,14 @@
 | دیدن چت شخصی دیگران | ✗ | ✗ | ✗ | ✓ | ✓ |
 | تغییر نقش سراسری | ✗ | ✗ | ✗ | ✗ | ✓ |
 | `/admin/users`, `/admin/documents` | ✗ | ✗ | ✗ | ✓ | ✓ |
-| `/accounting-db/queries`, `/queries/stats`, `/hints/ingest`, `/freshness` | ✗ | ✗ | ✗ | ✓ | ✓ |
-| استفاده از ابزار مالی `ask_accounting_db` در چت | ✗ | ✗ | ✗ | ✓ | ✓ |
+| `/hints/ingest`, `/freshness` (عملیاتی؛ داده‌ی مالی نمی‌دهند) | ✗ | ✗ | ✗ | ✓ | ✓ |
+| `/accounting-db/queries`, `/queries/stats` (نظارت) | ✗ | ✗ | ✗ | ✓ **و** دسترسی مالی | ✓ |
+| feedback و export یک پاسخ مالی | ✗ | ✗ | ✗ | دسترسی مالی؛ صاحب log یا ادمین | ✓ |
+| استفاده از ابزار مالی `ask_accounting_db` (فقط چت شخصی، نه گروهی) | ✗ (مگر دسترسی مالی داده شده) | ✗ (مگر داده شده) | ✗ (مگر داده شده) | **فقط با دسترسی مالی** | ✓ همیشه |
+| `PUT /admin/users/{id}/accounting-access` | ✗ | ✗ | ✗ | ✗ | ✓ |
 
 قواعد مهم:
+0. **محتوای مالی در چت:** ابزار مالی در گفتگوی گروهی (`project_group`) در دسترس نیست (پاسخ برای همه‌ی اعضا پخش می‌شود). پیام assistant با artifact `sql_result` علامت `messages.contains_financial` می‌گیرد؛ در `GET /chat/conversations/{id}` و `/messages` برای خواننده‌ی **بدون دسترسی مالی** متن به `FINANCIAL_PLACEHOLDER` تبدیل و `sources`/`artifacts` خالی می‌شود (ادمین بدون دسترسی که چت شخصی دیگران را می‌بیند، یا کاربری که دسترسی‌اش لغو شده)، پخش websocket همیشه بدون محتوای مالی است، و در تاریخچه‌ی ارسالی به مدل نیز همین جایگزینی انجام می‌شود تا مدل ارقام را تکرار نکند (`financial.py`، `AgentEngine._build_messages`). بخش مالی system prompt فقط برای کاربر دارای دسترسی (و چت غیرگروهی) اضافه می‌شود. ⚠️ حافظه‌ی پروژه برای همه‌ی اعضا خوانا است؛ فقط prompt ابزار حافظه ذخیره‌ی داده‌ی مالی را ممنوع می‌کند (کد جلویش را نمی‌گیرد).
 1. دسترسی به **پروژه** فقط از راه `project_memberships` است و عضو پروژه باید عضو **تیمِ پروژه** هم باشد (در `add_project_member` چک می‌شود و در `get_user_project_ids` هم join است).
 2. **حذف از تیم** در `access_control.service.remove_user_from_team` همه‌ی `project_memberships` کاربر در پروژه‌های آن تیم را هم پاک می‌کند.
 3. سازنده‌ی پروژه خودکار عضو پروژه می‌شود.
