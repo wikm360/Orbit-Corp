@@ -83,39 +83,8 @@ async def put_cached_ocr(
 
 
 async def purge_document_ocr_cache(db: AsyncSession, document_id: uuid.UUID) -> int:
-    """Deletes all OcrCache rows associated with a document.
-
-    Matches by `document_id` and also computes cache keys from the document's rendered pages
-    on disk so even legacy or unlinked entries are reliably wiped.
-    """
-    keys_to_delete: set[str] = set()
-    doc = await db.get(Document, document_id)
-    if doc and doc.file_path and Path(doc.file_path).exists():
-        suffix = Path(doc.file_path).suffix.lower()
-        if suffix == ".pdf":
-            try:
-                import pypdf
-                from app.features.documents.ingestion.parser import render_pdf_page
-
-                reader = pypdf.PdfReader(doc.file_path)
-                for p_idx in range(len(reader.pages)):
-                    rendered = render_pdf_page(doc.file_path, p_idx + 1)
-                    if rendered and rendered.data:
-                        keys_to_delete.add(ocr_cache_key(rendered.data))
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Could not precompute PDF page cache keys: %s", exc)
-        elif suffix in {".png", ".jpg", ".jpeg", ".webp"}:
-            try:
-                data = Path(doc.file_path).read_bytes()
-                keys_to_delete.add(ocr_cache_key(data))
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Could not precompute image cache key: %s", exc)
-
-    conditions = [OcrCache.document_id == document_id]
-    if keys_to_delete:
-        conditions.append(OcrCache.cache_key.in_(list(keys_to_delete)))
-
-    stmt = delete(OcrCache).where(or_(*conditions))
+    """Deletes all OcrCache rows associated with a document."""
+    stmt = delete(OcrCache).where(OcrCache.document_id == document_id)
     result = await db.execute(stmt)
     await db.commit()
     return result.rowcount or 0

@@ -623,6 +623,35 @@ async def get_document_page_image(
     return document, rendered.data, _stored_rotation(recon, page_number)
 
 
+def _join_pages(filename: str, pages: list[tuple[int, str]], requested_end: int) -> str:
+    """`[صفحه N]` blocks for `pages` under the document header, cut at a page boundary once `read_pages_max_tokens` is
+    reached (the first page is always returned, truncated if it alone is over the cap). A cut ends with a note naming the
+    page to continue from, so the model asks for the rest instead of assuming it saw everything."""
+    capped = settings.read_pages_max_tokens > 0
+    budget = settings.read_pages_max_tokens
+    parts = [f"=== مستند: {filename} ==="]
+    shown_last = None
+    for index, (number, text) in enumerate(pages):
+        block = f"[صفحه {number}]\n{text}"
+        cost = _count_tokens(block)
+        if capped and cost > budget:
+            if index == 0:
+                parts.append(truncate_to_tokens(block, budget))
+                shown_last = number
+            break
+        parts.append(block)
+        shown_last = number
+        budget -= cost
+    last_available = pages[-1][0]
+    if shown_last is not None and shown_last < last_available:
+        parts.append(
+            f"[Output cut: pages up to {shown_last} are shown (the range was too large to return at once; "
+            f"requested up to {requested_end}). To continue, call read_document_pages again starting at page {shown_last + 1} "
+            "with a smaller range, or use search_knowledge_base to find the exact page.]"
+        )
+    return "\n\n".join(parts)
+
+
 async def get_document_page_range(
     db: AsyncSession,
     document_id: uuid.UUID,
@@ -632,7 +661,7 @@ async def get_document_page_range(
     project_id: uuid.UUID | None,
     conversation_id: uuid.UUID,
 ) -> str:
-    """Continuous text for pages `start_page..end_page` (1-indexed, inclusive)."""
+    """Continuous text for pages `start_page..end_page` (1-indexed, inclusive), capped at `read_pages_max_tokens`."""
     if start_page < 1 or end_page < start_page:
         raise BadRequestError("start_page must be >= 1 and end_page must be >= start_page")
 
@@ -643,14 +672,12 @@ async def get_document_page_range(
     # 1. Try reading directly from the reconstructed JSON file if available
     recon = load_reconstructed_document(document.file_path)
     if recon and "pages" in recon:
-        matching_pages = [
-            p for p in recon["pages"] if start_page <= p.get("page", 0) <= end_page
-        ]
+        matching_pages = sorted(
+            ((p["page"], p["text"]) for p in recon["pages"] if start_page <= p.get("page", 0) <= end_page),
+            key=lambda item: item[0],
+        )
         if matching_pages:
-            parts = [f"=== مستند: {document.filename} ==="]
-            for p in matching_pages:
-                parts.append(f"[صفحه {p['page']}]\n{p['text']}")
-            return "\n\n".join(parts)
+            return _join_pages(document.filename, matching_pages, end_page)
 
     # 2. Query chunks from DB
     result = await db.execute(
@@ -674,20 +701,16 @@ async def get_document_page_range(
         if not pages_content:
             return f"[سند: {document.filename}] این بازه صفحه‌ای برای سند یافت نشد."
 
-        parts = [f"=== مستند: {document.filename} ==="]
-        for p_num in sorted(pages_content.keys()):
-            parts.append(f"[صفحه {p_num}]\n" + "\n\n".join(pages_content[p_num]))
-        return "\n\n".join(parts)
+        return _join_pages(
+            document.filename, [(n, "\n\n".join(pages_content[n])) for n in sorted(pages_content)], end_page
+        )
 
     # 3. Fallback for legacy documents without page metadata (chunk_index as stand-in)
     legacy_chunks = [c for c in all_chunks if (start_page - 1) <= c.chunk_index <= (end_page - 1)]
     if not legacy_chunks:
         return f"[سند: {document.filename}] این بازه صفحه‌ای برای سند یافت نشد."
 
-    parts = [f"=== مستند: {document.filename} ==="]
-    for chunk in legacy_chunks:
-        parts.append(f"[صفحه {chunk.chunk_index + 1}]\n{chunk.content}")
-    return "\n\n".join(parts)
+    return _join_pages(document.filename, [(c.chunk_index + 1, c.content) for c in legacy_chunks], end_page)
 
 
 async def get_full_document_content(

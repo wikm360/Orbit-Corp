@@ -207,3 +207,19 @@ async def test_get_document_info_is_scoped_to_accessible_projects(client, db_ses
             project_id=uuid.UUID(other_project_id),
             conversation_id=other_conversation.id,
         )
+
+
+def test_join_pages_cuts_at_a_page_boundary_and_says_where_to_continue(monkeypatch):
+    from app.features.documents import service
+
+    monkeypatch.setattr(service.settings, "read_pages_max_tokens", 300)
+    pages = [(n, "word " * 200) for n in range(5, 10)]
+
+    text = service._join_pages("a.pdf", pages, 9)
+
+    assert "[صفحه 5]" in text and "[صفحه 9]" not in text
+    assert "starting at page 6" in text
+
+    monkeypatch.setattr(service.settings, "read_pages_max_tokens", 0)
+    uncapped = service._join_pages("a.pdf", pages, 9)
+    assert "[صفحه 9]" in uncapped and "Output cut" not in uncapped

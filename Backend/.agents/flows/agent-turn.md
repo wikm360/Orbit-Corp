@@ -31,15 +31,18 @@ for step in 0..7:
       - content delta → callback("agent_activity",{generating}) (یک‌بار) + callback("delta")
       - tool_calls    → ذخیره
     اگر tool_calls نبود: full_response = متن گام؛ break
+    اگر گام آخر بود (provider به tool_choice="none" توجه نکرده): callها اجرا نمی‌شوند؛ _force_final_answer = یک فراخوانی بدون tools با پیام «همین حالا پاسخ بده»؛ break
     messages += assistant(tool_calls)
     برای هر call:
         کلید (name, آرگومان canonical) تکراری؟ → نتیجه‌ی قبلی بدون اجرای دوباره
         status = reading_documents | querying_database | searching ؛ callback(agent_activity, {status,tool,args})
         result = registry.dispatch(...)   # هرگز استثنا بالا نمی‌دهد
         citations/artifacts جمع؛ callback("artifact") برای هر artifact
-        messages += tool(tool_call_id, result.text)
+        messages += tool(tool_call_id, result.text + _budget_note(step))   # «[Step n/8: k tool step(s) remain ...]»
+اگر full_response هنوز خالی بود: _NO_ANSWER_TEXT (متن ثابت فارسی) به‌عنوان delta و پاسخ
 return AgentTurnResult(full_response, citations, artifacts)
 ```
+- **بودجه‌ی گام**: مدل با دو راه از سقف خبر دارد: جمله‌ی «Step budget» در `SYSTEM_PROMPT` و خط `_budget_note` در انتهای هر نتیجه‌ی ابزار (به tool message اضافه می‌شود، نه prefix، پس prefix cache سالم می‌ماند). گام آخر هیچ‌وقت turn را بدون پاسخ تمام نمی‌کند (retry بدون ابزار، بعد متن ثابت).
 - **dedup داخل turn**: اگر مدل همان ابزار با همان آرگومان را دوباره بزند (موازی یا گام بعد) فقط یک‌بار اجرا می‌شود (برای `ask_accounting_db` مهم است: دو LLM call + دو query صرفه‌جویی).
 - `_DOCUMENT_READ_TOOLS` = info/read pages/read entire/get_current_chat_attachments/browse_folder → status `reading_documents`.
 - متنی که مدل *قبل از* tool call می‌گوید هم stream (delta) می‌شود ولی در `full_response` (و پیام ذخیره‌شده) نمی‌آید؛ فقط متن گام نهایی ذخیره می‌شود. ⚠️ ممکن است کلاینت متنی را در حین stream ببیند که بعد از بارگذاری مجدد گفتگو نیست.

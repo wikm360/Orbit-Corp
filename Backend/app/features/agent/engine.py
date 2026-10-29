@@ -27,6 +27,29 @@ settings = get_settings()
 # browse folders -> search -> (reworded search | read the exact pages) -> answer needs room; the last step caps the cost.
 MAX_STEPS = 8
 
+# Shown to the user when the model still has no answer after the tool budget and the answer-only retry.
+_NO_ANSWER_TEXT = (
+    "نتوانستم در محدودیت تعداد مراحل جستجو به پاسخ قطعی برسم. لطفاً پرسش را دقیق‌تر یا کوچک‌تر مطرح کنید "
+    "(مثلاً نام سند یا شماره صفحه را بنویسید)."
+)
+
+_FORCE_ANSWER_NOTE = (
+    "[System message, not from the user: the tool-call budget for this turn is used up and no more tools are available. "
+    "Write the final answer NOW, in the user's language, from what the tools already returned. State what you found, "
+    "cite the document and page, and say plainly what you could not confirm. Do not call any tool.]"
+)
+
+
+def _budget_note(step: int) -> str:
+    """One line appended to every tool result so the model knows where it is in the turn's step budget."""
+    left = MAX_STEPS - step - 2  # the last step is answer-only, so it is not a tool step
+    if left <= 0:
+        return f"\n\n[Step {step + 1}/{MAX_STEPS}: no tool steps remain - your next message must be the final answer.]"
+    return (
+        f"\n\n[Step {step + 1}/{MAX_STEPS}: {left} tool step(s) remain, then one answer-only step. "
+        "Stop searching once you have enough to answer.]"
+    )
+
 # Caps the attachment metadata injected into the prompt each turn.
 _MAX_LISTED_ATTACHMENTS = 50
 
@@ -59,7 +82,10 @@ SYSTEM_PROMPT = (
     "search or page text, which loses the column alignment. Never add up or compare numbers yourself - not even numbers already shown "
     "earlier in the chat: run a new query (SUM/COUNT in SQL) and state which sheet you used. Quote the values exactly as returned, and cite the sheet and the "
     "`_row` (and file column letter when given) from the result - never invent a sheet, row or column. If the name the user typed "
-    "matches no row, say so plainly and offer the similar names the tool lists; never answer for a different person without asking."
+    "matches no row, say so plainly and offer the similar names the tool lists; never answer for a different person without asking.\n\n"
+    f"Step budget: a turn allows at most {MAX_STEPS} model steps; the last one cannot call tools, and every tool result ends with a "
+    "'[Step n/N ...]' line telling you where you are. Plan for it: do not repeat a search with near-identical wording, prefer "
+    "reading the exact pages a search pointed to, and when few steps remain answer with what you have, saying what is unconfirmed."
 )
 
 _PROJECT_TREE_INTRO = (
@@ -161,6 +187,13 @@ class AgentEngine:
                 full_response = content_buffer
                 break
 
+            if is_last_step:
+                # `tool_choice="none"` is ignored by some gateways. Do not run these calls (the loop is over and nothing
+                # would read their results): ask once more, without tools, for the answer.
+                logger.warning("[AGENT:FORCED_ANSWER] Model called tools on the answer-only step; retrying without tools")
+                full_response = content_buffer.strip() or await self._force_final_answer(llm_provider, messages, callback)
+                break
+
             messages.append(
                 {
                     "role": "assistant",
@@ -180,7 +213,13 @@ class AgentEngine:
             for call in tool_calls:
                 call_key = (call["name"], _canonical_args(call["arguments"]))
                 if call_key in executed_calls:
-                    messages.append({"role": "tool", "tool_call_id": call["id"], "content": executed_calls[call_key].text})
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": call["id"],
+                            "content": executed_calls[call_key].text + _budget_note(step),
+                        }
+                    )
                     continue
                 if call["name"] in _DOCUMENT_READ_TOOLS:
                     status = "reading_documents"
@@ -234,7 +273,7 @@ class AgentEngine:
                             f"\n(Page-image limit reached for this turn ({settings.agent_max_page_views_per_turn}): "
                             "this page was NOT attached. Answer from what you have and say so.)"
                         )
-                messages.append({"role": "tool", "tool_call_id": call["id"], "content": tool_text})
+                messages.append({"role": "tool", "tool_call_id": call["id"], "content": tool_text + _budget_note(step)})
 
             if step_images:
                 # Tool messages are text-only, and they must directly follow the assistant's tool calls: the page images go
@@ -256,6 +295,11 @@ class AgentEngine:
                     }
                 )
 
+        if not full_response.strip():
+            logger.warning("[AGENT:NO_ANSWER] Turn ended without an answer; sending the fallback text")
+            full_response = _NO_ANSWER_TEXT
+            await callback("delta", {"content": full_response})
+
         turn_dur = time.monotonic() - turn_start
         logger.info(
             "[AGENT:TURN_COMPLETE] Turn finished in %.2fs | Response: %d chars | Citations: %d | Artifacts: %d",
@@ -267,6 +311,17 @@ class AgentEngine:
         logger.info("=" * 70)
 
         return AgentTurnResult(content=full_response, citations=all_citations, artifacts=all_artifacts)
+
+    @staticmethod
+    async def _force_final_answer(llm_provider, messages: list[ChatMessage], callback: AgentCallback) -> str:
+        """One tool-less call asking for the final answer; empty string if the model still gives none."""
+        messages.append({"role": "user", "content": _FORCE_ANSWER_NOTE})
+        text = ""
+        async for event in llm_provider.stream_chat(messages, tools=None):
+            if event["type"] == "content":
+                text += event["delta"]
+                await callback("delta", {"content": event["delta"]})
+        return text
 
     async def _build_messages(
         self, db: AsyncSession, conversation: Conversation, context: UserContext | None = None

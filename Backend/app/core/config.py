@@ -206,6 +206,9 @@ class Settings(BaseSettings):
     # search_knowledge_base widens the top chunks to their full pages ("small-to-big"); this caps the page text returned per
     # search. Hits beyond the budget fall back to their chunk text. 0 disables the widening.
     search_page_expansion_max_tokens: int = 6000
+    # read_document_pages returns at most this many tokens of page text per call; a longer range is cut at a page boundary
+    # and the result says which page to continue from. 0 disables the cap.
+    read_pages_max_tokens: int = 15000
     # Hybrid document retrieval: vector + Postgres full-text (+ trigram for short queries) fused with Reciprocal Rank Fusion.
     # Off = the previous vector-only behaviour.
     retrieval_hybrid_enabled: bool = True

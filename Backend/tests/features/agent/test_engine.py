@@ -139,6 +139,67 @@ async def test_run_agent_loop_stops_at_max_steps_and_forces_a_final_answer(db_se
     assert result.content == "final answer"
 
 
+class _IgnoresToolChoiceProvider:
+    """A gateway that ignores `tool_choice="none"`: always calls a tool while tools are offered; answers only when
+    `tools=None` (the engine's forced-answer retry). `answer` is what it then says."""
+
+    def __init__(self, answer: str):
+        self.answer = answer
+        self.calls: list[list[dict] | None] = []
+        self.messages: list[list] = []
+
+    def stream_chat(self, messages, tools=None, tool_choice="auto"):
+        self.calls.append(tools)
+        self.messages.append(list(messages))
+        return self._stream(tools)
+
+    async def _stream(self, tools):
+        if tools:
+            yield {
+                "type": "tool_calls",
+                "calls": [{"id": f"call_{len(self.calls)}", "name": "list_user_projects", "arguments": "{}"}],
+            }
+        elif self.answer:
+            yield {"type": "content", "delta": self.answer}
+
+
+async def test_model_ignoring_tool_choice_on_last_step_still_gets_an_answer(db_session, monkeypatch):
+    user, conversation = await _seed_user_and_conversation(db_session)
+    provider = _IgnoresToolChoiceProvider("forced answer")
+    monkeypatch.setattr(engine_module, "get_llm_provider", lambda: provider)
+
+    events: list[tuple[str, dict]] = []
+
+    async def callback(event: str, data: dict) -> None:
+        events.append((event, data))
+
+    result = await AgentEngine().run_agent_loop(db_session, conversation, _context_for(user), callback)
+
+    assert len(provider.calls) == MAX_STEPS + 1
+    assert provider.calls[-1] is None  # the retry offers no tools
+    tool_notes = [m["content"] for m in provider.messages[-1] if m.get("role") == "tool"]
+    assert f"[Step 1/{MAX_STEPS}:" in tool_notes[0]
+    assert "no tool steps remain" in tool_notes[-1]
+    assert result.content == "forced answer"
+    assert ("delta", {"content": "forced answer"}) in events
+
+
+async def test_empty_turn_falls_back_to_a_fixed_message(db_session, monkeypatch):
+    user, conversation = await _seed_user_and_conversation(db_session)
+    provider = _IgnoresToolChoiceProvider("")
+    monkeypatch.setattr(engine_module, "get_llm_provider", lambda: provider)
+
+    events: list[tuple[str, dict]] = []
+
+    async def callback(event: str, data: dict) -> None:
+        events.append((event, data))
+
+    result = await AgentEngine().run_agent_loop(db_session, conversation, _context_for(user), callback)
+
+    assert result.content == engine_module._NO_ANSWER_TEXT
+    assert ("delta", {"content": engine_module._NO_ANSWER_TEXT}) in events
+
+
 async def test_a_failing_tool_call_does_not_abort_the_turn(db_session, monkeypatch):
     """A tool that raises (here: NotFoundError, since the document doesn't
     exist) must turn into a plain-text `tool` message the model can react

@@ -366,13 +366,14 @@ async def delete_items(
     Each document goes through `service.delete_document`, so a stored file shared with another document stays."""
     selection = await resolve_selection(db, project_id, document_ids, folder_ids)
     documents = await _expand(db, project_id, selection)
-    for document in documents:
-        await service.delete_document(db, document.id)
+    doc_ids = [doc.id for doc in documents]
+    for doc_id in doc_ids:
+        await service.delete_document(db, doc_id)
     if selection.folders:
         # Child folders (and anything left in them) go through the FK cascade.
         await db.execute(delete(DocumentFolder).where(DocumentFolder.id.in_([f.id for f in selection.folders])))
         await db.commit()
-    return len(documents)
+    return len(doc_ids)
 
 
 async def retry_items(

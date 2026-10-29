@@ -173,6 +173,16 @@ async def test_search_with_path_prefix_only_looks_inside_that_folder(client, db_
     missing = await tool.execute(db=db_session, context=context, conversation=conversation, query="x", path_prefix="نیست")
     assert "not found" in missing.text and not missing.citations
 
+    # a file name (bare, or with its folder) confines the search to that one file
+    by_name = await tool.execute(
+        db=db_session, context=context, conversation=conversation, query="مبلغ تایید کارفرما", path_prefix="وضعیت ۳.pdf"
+    )
+    by_path = await tool.execute(
+        db=db_session, context=context, conversation=conversation, query="مبلغ تایید کارفرما", path_prefix="تعدیل ۲/تایید کارفرما.pdf"
+    )
+    assert {c.document_id for c in by_name.citations} == {str(b.id)}
+    assert {c.document_id for c in by_path.citations} == {str(a.id)}
+
 
 async def test_folder_and_file_names_are_searchable_even_when_the_text_never_says_them(client, db_session, monkeypatch):
     project_id, user, conversation, context = await _setup(client, db_session, "names")

@@ -4,12 +4,15 @@ import logging
 import uuid
 from typing import Any
 
+from sqlalchemy import func, select
+
 from app.core.config import get_settings
 from app.core.exceptions import BadRequestError, NotFoundError
 from app.features.agent.schemas import SourceCitation, ToolExecutionResult
 from app.features.agent.scope import resolve_retrieval_scope
 from app.features.agent.tools.base import BaseTool
 from app.features.documents import folder_service, service as documents_service
+from app.features.documents.models import Document
 from app.features.documents.ingestion.ocr import prepare_image_for_ocr
 from app.features.retrieval.service import get_retriever
 from app.providers.embedding_provider import get_embedding_provider
@@ -203,7 +206,8 @@ class SearchKnowledgeBaseTool(BaseTool):
         "Search the knowledge base for specific topics, questions, facts, or clauses across all visible documents. "
         "Hybrid search (semantic meaning + exact keywords). It returns the best-matching passages widened to their full page. "
         "Keep exact terms such as clause numbers, codes and names in the query. File and folder names are searched too "
-        "(each passage is labelled with its folder path). To search inside one folder only, pass path_prefix. "
+        "(each passage is labelled with its folder path). To search inside one folder or one file only, pass path_prefix "
+        "(a folder path or a file name/path). Use it to confine the search to a document you already know. "
         "DO NOT use it just to open a file you already know (by document_id) - use read_entire_document or "
         "read_document_pages; to explore folders use browse_folder."
     )
@@ -218,7 +222,10 @@ class SearchKnowledgeBaseTool(BaseTool):
             },
             "path_prefix": {
                 "type": "string",
-                "description": "Only search inside this folder (and its subfolders), e.g. 'امور مربوط به تعدیل/تعدیل شماره2'",
+                "description": (
+                    "Only search inside this folder (and its subfolders) or this single file, e.g. "
+                    "'امور مربوط به تعدیل/تعدیل شماره2' or 'ضابطه773.pdf' or 'قراردادها/قرارداد1.pdf'"
+                ),
             },
         },
         "required": ["query"],
@@ -234,16 +241,22 @@ class SearchKnowledgeBaseTool(BaseTool):
         logger.info("[RAG:SEARCH] Query: %s | Scope: %s", repr(query), project_id or conversation.id)
 
         folder_ids = None
-        if path_prefix and path_prefix.strip("/ \\"):
+        document_ids = None
+        if path_prefix and path_prefix.strip("/ \\@"):
             if project_id is None:
                 return ToolExecutionResult(text="path_prefix needs a project: this conversation isn't linked to one.")
             folders = await folder_service.load_folders(db, project_id)
             try:
                 root = folder_service.resolve_path(folders, path_prefix)
+                folder_ids = folder_service.subtree_ids(folders, {root})
             except NotFoundError as exc:
-                top = sorted(f.name for f in folders.values() if f.parent_id is None)
-                return ToolExecutionResult(text=f"{exc.detail}. Top-level folders: " + (", ".join(top) or "(none)"))
-            folder_ids = folder_service.subtree_ids(folders, {root})
+                # Not a folder: the model often passes a file name here, so accept that too.
+                document_ids = await self._files_at(db, project_id, folders, path_prefix)
+                if not document_ids:
+                    top = sorted(f.name for f in folders.values() if f.parent_id is None)
+                    return ToolExecutionResult(
+                        text=f"{exc.detail}, and no file has that name. Top-level folders: " + (", ".join(top) or "(none)")
+                    )
 
         retriever = get_retriever()
         chunks = await retriever.retrieve(
@@ -255,6 +268,7 @@ class SearchKnowledgeBaseTool(BaseTool):
             query_text=query,
             min_similarity=settings.retrieval_score_threshold,
             **({"folder_ids": folder_ids} if folder_ids is not None else {}),
+            **({"document_ids": document_ids} if document_ids is not None else {}),
         )
 
         if not chunks:
@@ -289,6 +303,23 @@ class SearchKnowledgeBaseTool(BaseTool):
             text="\n\n".join(f"[Source {i + 1}: {label}]\n{text}" for i, (label, text) in enumerate(passages)),
             citations=citations,
         )
+
+    @staticmethod
+    async def _files_at(db, project_id, folders, path: str) -> set[uuid.UUID]:
+        """Ids of the project files a `path_prefix` names: 'a/b/file.pdf' (inside that folder) or a bare 'file.pdf'
+        (any folder). Case-insensitive; empty when no file matches."""
+        parts = folder_service.split_relative_path(path.strip().lstrip("@"))
+        if not parts:
+            return set()
+        filename = parts[-1].strip().lower()
+        stmt = select(Document.id).where(Document.project_id == project_id, func.lower(Document.filename) == filename)
+        if len(parts) > 1:
+            try:
+                parent = folder_service.resolve_path(folders, "/".join(parts[:-1]))
+            except NotFoundError:
+                return set()
+            stmt = stmt.where(folder_service.same_or_null(Document.folder_id, parent))
+        return set((await db.execute(stmt)).scalars().all())
 
     @staticmethod
     async def _passages(db, chunks, expand: str, project_id, conversation_id) -> list[tuple[str, str]]:
