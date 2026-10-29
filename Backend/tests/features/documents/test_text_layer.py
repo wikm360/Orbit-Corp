@@ -51,6 +51,30 @@ def test_control_character_stream_detected_as_garbled():
     assert assess_text_layer(ctrl_stream) == TEXT_GARBLED
 
 
+def test_legacy_non_unicode_ansi_persian_detected_as_garbled():
+    # Zarnegar / IranSystem / ANSI-mapped Persian fonts (common in نشریه 101, ضابطه 773)
+    sample_nashrieh_101 = (
+        "Ê¯Zy cZÌ¸¼  /  ¹Á{ ¶§01/06 /1404˺˾\n"
+        "g:    ZÆ¿M dYu Á ¨u Âf{ Ä¯ Ê¿Zfy{ ÄyZ ZË Äf§³ Y« Ì» cÁZn» { Ä¯ Ê¿Zfy{ ÄyZ Är¿ZÀq\n"
+        "|¿Â « dy{ ÄÀe ®Ë{¿ Y |ËZ] |ÀZ] Ã| ÃY ºËu ¶yY{ f» lÀa {Á|u Ã| Ã{Y{.    ¾ËY «"
+    )
+    assert assess_text_layer(sample_nashrieh_101) == TEXT_GARBLED
+
+    # MacPersian / Zarnegar B-variant mapping into Latin Extended-A/B
+    sample_latin_ext = "ŭƺººƫ ŜººƫŚƣ Źŵ řŹ ƶººƗƺưŬƯ Ʋººƿř ƾººƨǀƳƹźŤƨƫř ƶŴººƀƳ ƾººƴƟ ƽŚƷŹŚǀººƘƯ ƹ ƎŝřƺººƋ ƲººƿƹŶţ"
+    assert assess_text_layer(sample_latin_ext) == TEXT_GARBLED
+
+
+def test_european_languages_with_accents_are_not_flagged_as_garbled():
+    french = "Le modèle d'intelligence artificielle est très efficace pour détecter les anomalies et gérer l'ensemble des données."
+    german = "Die Überprüfung der Qualität und die Ausführung der Bauarbeiten sind für die Sicherheit von größter Bedeutung."
+    spanish = "La evaluación técnica de las operaciones ejecutadas según la norma oficial establecida por el ministerio."
+    assert assess_text_layer(french) == TEXT_OK
+    assert assess_text_layer(german) == TEXT_OK
+    assert assess_text_layer(spanish) == TEXT_OK
+
+
+
 def test_fix_visual_persian_restores_readable_words():
     fixed = fix_visual_persian(_VISUAL_HEADING)
     assert any("بخش" in token for token in fixed.split())

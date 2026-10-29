@@ -149,7 +149,7 @@ class Settings(BaseSettings):
     # PDF pages whose text layer is unusable (visual-order Persian presentation forms, or symbol garbage) are rendered and
     # OCR'd instead of trusting the layer; capped per document because it is one vision call per page.
     ocr_replace_bad_text_layer: bool = True
-    ocr_max_replaced_pages: int = 300
+    ocr_max_replaced_pages: int = 1000
     # Pages OCR'd at the same time inside one document (each call takes 10-30 s). Measured: 12 concurrent pages were 3.2x
     # faster than 4 with no failures. The real load is WORKER_REPLICAS x this value, so lower it if the provider rate-limits (429).
     ocr_concurrency: int = 12

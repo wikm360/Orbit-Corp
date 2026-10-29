@@ -30,6 +30,8 @@ _CONTROL_CHAR = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 _MIN_ARABIC_LETTERS = 20
 _VISUAL_RATIO = 0.15
 _MIN_GARBLED_CHARS = 40
+_LEGACY_ANSI_SYMBOLS = frozenset("{}|[]«»§¶\\")
+
 
 
 def assess_text_layer(text: str) -> str:
@@ -54,7 +56,14 @@ def assess_text_layer(text: str) -> str:
     if ctrl_count >= 10 or (len(compact) >= 40 and ctrl_count / len(compact) >= 0.05):
         return TEXT_GARBLED
 
-    # 3. High noise / low wordlike ratio (residual OCR garbage, symbols)
+    # 3. Legacy non-Unicode Persian encoding (Zarnegar / IranSystem / ANSI-mapped Persian fonts like Parwin/Shitab/Maryam)
+    # where Persian letters are mapped to Latin Extended (0x80-0x024F) or symbols ({, }, |, etc.) without Arabic Unicode.
+    if len(compact) >= 30 and (arabic / len(compact) < 0.15):
+        legacy_count = sum(1 for c in compact if (0x80 <= ord(c) <= 0x024F) or c in _LEGACY_ANSI_SYMBOLS)
+        if legacy_count / len(compact) >= 0.18:
+            return TEXT_GARBLED
+
+    # 4. High noise / low wordlike ratio (residual OCR garbage, symbols)
     if len(compact) >= _MIN_GARBLED_CHARS:
         wordlike = sum(1 for t in tokens if sum(c.isalpha() for c in t) >= 3) / max(1, len(tokens))
         noise = sum(c in _NOISE for c in compact) / len(compact)
