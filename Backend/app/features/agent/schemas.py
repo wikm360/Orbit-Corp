@@ -10,6 +10,8 @@ class SourceCitation(BaseModel):
     snippet: str
     score: float
     page: int | None = None
+    # Last page when one citation stands for a range that was read (`page`..`page_end`).
+    page_end: int | None = None
 
 
 class AgentActivityEvent(BaseModel):

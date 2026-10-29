@@ -42,6 +42,8 @@ for step in 0..7:
 اگر full_response هنوز خالی بود: _NO_ANSWER_TEXT (متن ثابت فارسی) به‌عنوان delta و پاسخ
 return AgentTurnResult(full_response, citations, artifacts)
 ```
+- **منابع (`sources`)**: مدل در آخر پاسخ بلوک `<sources>نام فایل|صفحه; ...</sources>` می‌نویسد (دستور در `SYSTEM_PROMPT`). `SourcesTagFilter` (`agent/citations.py`) آن را از stream حذف می‌کند (تگ حتی اگر بین چند delta بشکند هرگز به کلاینت نمی‌رسد). `select_citations` هر مورد را با citationهایی که ابزارهای همین turn واقعاً برگرداندند تطبیق می‌دهد (نام فایل + صفحه داخل `page..page_end`)؛ موردِ ساختگی حذف می‌شود. اگر چیز قابل‌استفاده‌ای نبود: ۳ صفحه‌ی متمایزِ برتر بر اساس `score`. فقط همین لیست کوتاه در `Message.sources` و `done.sources` می‌رود (قبلاً همه‌ی hitهای همه‌ی ابزارها، گاهی ۴۰ مورد).
+- **history و منابع**: `_build_messages` به متن هر پیام assistant خط `[منابع این پاسخ: سند (صفحه N)، ...]` را از `sources` ذخیره‌شده اضافه می‌کند (پیام‌های قدیمیِ پرمنبع → ۳ مورد برتر). نتیجه‌ی خود ابزارها همچنان بازپخش نمی‌شود. `SourceCitation.page_end` = آخر بازه‌ای که `read_document_pages`/`read_entire_document` خوانده.
 - **بودجه‌ی گام**: مدل با دو راه از سقف خبر دارد: جمله‌ی «Step budget» در `SYSTEM_PROMPT` و خط `_budget_note` در انتهای هر نتیجه‌ی ابزار (به tool message اضافه می‌شود، نه prefix، پس prefix cache سالم می‌ماند). گام آخر هیچ‌وقت turn را بدون پاسخ تمام نمی‌کند (retry بدون ابزار، بعد متن ثابت).
 - **dedup داخل turn**: اگر مدل همان ابزار با همان آرگومان را دوباره بزند (موازی یا گام بعد) فقط یک‌بار اجرا می‌شود (برای `ask_accounting_db` مهم است: دو LLM call + دو query صرفه‌جویی).
 - `_DOCUMENT_READ_TOOLS` = info/read pages/read entire/get_current_chat_attachments/browse_folder → status `reading_documents`.

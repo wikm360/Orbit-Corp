@@ -17,6 +17,7 @@ from app.features.auth.models import User
 from app.features.chat.financial import FINANCIAL_PLACEHOLDER
 from app.features.chat.models import Conversation, ConversationType, Message, SenderType
 from app.features.documents import service as documents_service
+from app.features.agent.citations import SourcesTagFilter, select_citations, sources_line
 from app.providers.llm_provider import ChatMessage, get_llm_provider
 
 logger = logging.getLogger(__name__)
@@ -83,6 +84,10 @@ SYSTEM_PROMPT = (
     "earlier in the chat: run a new query (SUM/COUNT in SQL) and state which sheet you used. Quote the values exactly as returned, and cite the sheet and the "
     "`_row` (and file column letter when given) from the result - never invent a sheet, row or column. If the name the user typed "
     "matches no row, say so plainly and offer the similar names the tool lists; never answer for a different person without asking.\n\n"
+    "Sources: end every answer that uses documents with one block, after the answer text and nothing after it: "
+    "<sources>file name|page; file name|page</sources> - only the documents and pages (as shown in the tool results) that your "
+    "answer is really based on, at most 6, exactly as the tool results name them. For a spreadsheet give just the file name. "
+    "Omit the block when the answer used no document. Do not repeat the sources in the answer text itself.\n\n"
     f"Step budget: a turn allows at most {MAX_STEPS} model steps; the last one cannot call tools, and every tool result ends with a "
     "'[Step n/N ...]' line telling you where you are. Plan for it: do not repeat a search with near-identical wording, prefer "
     "reading the exact pages a search pointed to, and when few steps remain answer with what you have, saying what is unconfirmed."
@@ -160,6 +165,7 @@ class AgentEngine:
         # (in parallel or in consecutive steps); repeating a database question costs two LLM calls and two queries for nothing.
         executed_calls: dict[tuple[str, str], ToolExecutionResult] = {}
         full_response = ""
+        sources_block = ""
         page_images_sent = 0
 
         for step in range(MAX_STEPS):
@@ -172,6 +178,7 @@ class AgentEngine:
             content_buffer = ""
             tool_calls: list = []
             generating_emitted = False
+            tag_filter = SourcesTagFilter()
 
             async for event in llm_provider.stream_chat(messages, tools=step_tools, **extra):
                 if event["type"] == "content":
@@ -179,19 +186,26 @@ class AgentEngine:
                         await callback("agent_activity", {"status": "generating"})
                         generating_emitted = True
                     content_buffer += event["delta"]
-                    await callback("delta", {"content": event["delta"]})
+                    if shown := tag_filter.feed(event["delta"]):
+                        await callback("delta", {"content": shown})
                 else:
                     tool_calls = event["calls"]
+            if tail := tag_filter.finish():
+                await callback("delta", {"content": tail})
 
             if not tool_calls:
-                full_response = content_buffer
+                full_response = tag_filter.visible.rstrip()
+                sources_block = tag_filter.block
                 break
 
             if is_last_step:
                 # `tool_choice="none"` is ignored by some gateways. Do not run these calls (the loop is over and nothing
                 # would read their results): ask once more, without tools, for the answer.
                 logger.warning("[AGENT:FORCED_ANSWER] Model called tools on the answer-only step; retrying without tools")
-                full_response = content_buffer.strip() or await self._force_final_answer(llm_provider, messages, callback)
+                if tag_filter.visible.strip():
+                    full_response, sources_block = tag_filter.visible.rstrip(), tag_filter.block
+                else:
+                    full_response, sources_block = await self._force_final_answer(llm_provider, messages, callback)
                 break
 
             messages.append(
@@ -300,28 +314,32 @@ class AgentEngine:
             full_response = _NO_ANSWER_TEXT
             await callback("delta", {"content": full_response})
 
+        citations = select_citations(all_citations, sources_block) if all_citations else []
         turn_dur = time.monotonic() - turn_start
         logger.info(
             "[AGENT:TURN_COMPLETE] Turn finished in %.2fs | Response: %d chars | Citations: %d | Artifacts: %d",
             turn_dur,
             len(full_response),
-            len(all_citations),
+            len(citations),
             len(all_artifacts),
         )
         logger.info("=" * 70)
 
-        return AgentTurnResult(content=full_response, citations=all_citations, artifacts=all_artifacts)
+        return AgentTurnResult(content=full_response, citations=citations, artifacts=all_artifacts)
 
     @staticmethod
-    async def _force_final_answer(llm_provider, messages: list[ChatMessage], callback: AgentCallback) -> str:
-        """One tool-less call asking for the final answer; empty string if the model still gives none."""
+    async def _force_final_answer(
+        llm_provider, messages: list[ChatMessage], callback: AgentCallback
+    ) -> tuple[str, str]:
+        """One tool-less call asking for the final answer: `(visible text, sources block)`, empty if none is given."""
         messages.append({"role": "user", "content": _FORCE_ANSWER_NOTE})
-        text = ""
+        tag_filter = SourcesTagFilter()
         async for event in llm_provider.stream_chat(messages, tools=None):
-            if event["type"] == "content":
-                text += event["delta"]
-                await callback("delta", {"content": event["delta"]})
-        return text
+            if event["type"] == "content" and (shown := tag_filter.feed(event["delta"])):
+                await callback("delta", {"content": shown})
+        if tail := tag_filter.finish():
+            await callback("delta", {"content": tail})
+        return tag_filter.visible.rstrip(), tag_filter.block
 
     async def _build_messages(
         self, db: AsyncSession, conversation: Conversation, context: UserContext | None = None
@@ -393,6 +411,9 @@ class AgentEngine:
         for msg in history:
             role = "assistant" if msg.sender_type == SenderType.ASSISTANT else "user"
             content = FINANCIAL_PLACEHOLDER if (hide_financial and msg.contains_financial) else msg.content
+            if role == "assistant" and msg.sources and content is msg.content:
+                if line := sources_line(msg.sources):
+                    content = f"{content}\n\n{line}"
             if group and role == "user" and msg.sender_id is not None:
                 content = f"{sender_names.get(msg.sender_id, 'User')}: {content}"
             messages.append({"role": role, "content": content})

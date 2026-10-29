@@ -148,6 +148,7 @@ class ReadDocumentPagesTool(BaseTool):
                 snippet=text[:300],
                 score=1.0,
                 page=int(start_page),
+                page_end=int(end_page),
             )
         ]
         return ToolExecutionResult(text=text, citations=citations)
@@ -187,6 +188,7 @@ class ReadEntireDocumentTool(BaseTool):
         )
         if isinstance(result, dict):
             return ToolExecutionResult(text=json.dumps(result, ensure_ascii=False))
+        recon = documents_service.load_reconstructed_document(document.file_path)
         citations = [
             SourceCitation(
                 document_id=str(document.id),
@@ -195,6 +197,7 @@ class ReadEntireDocumentTool(BaseTool):
                 snippet=result[:300],
                 score=1.0,
                 page=1,
+                page_end=(recon or {}).get("total_pages"),
             )
         ]
         return ToolExecutionResult(text=result, citations=citations)

@@ -326,3 +326,42 @@ async def test_page_images_are_capped_per_turn(db_session, monkeypatch):
     second_call = provider.calls_messages[1]
     assert [p["image_url"]["url"] for p in second_call[-1]["content"][1:]] == ["data:image/jpeg;base64,PAGE1"]
     assert "limit reached" in second_call[-2]["content"] and "limit reached" not in second_call[-3]["content"]
+
+
+async def test_sources_block_is_hidden_validated_and_replayed_in_history(db_session, monkeypatch):
+    from app.features.agent.schemas import SourceCitation, ToolExecutionResult
+
+    user, conversation = await _seed_user_and_conversation(db_session)
+    real = SourceCitation(document_id="d1", document_filename="a.pdf", chunk_index=0, snippet="s", score=0.7, page=12)
+    other = SourceCitation(document_id="d2", document_filename="b.pdf", chunk_index=0, snippet="s", score=0.9, page=3)
+
+    class _Registry(engine_module.ToolRegistry if hasattr(engine_module, "ToolRegistry") else object):
+        def __init__(self):
+            pass
+
+        def to_openai_tools(self, context, conversation):
+            return [{"type": "function", "function": {"name": "t", "parameters": {}}}]
+
+        async def dispatch(self, name, arguments, **_):
+            return ToolExecutionResult(text="found", citations=[real, other])
+
+    provider = _ScriptedLLMProvider(
+        [
+            [{"type": "tool_calls", "calls": [{"id": "c1", "name": "t", "arguments": "{}"}]}],
+            [
+                {"type": "content", "delta": "جواب.\n<sou"},
+                {"type": "content", "delta": "rces>a.pdf|12; ghost.pdf|1</sources>"},
+            ],
+        ]
+    )
+    monkeypatch.setattr(engine_module, "get_llm_provider", lambda: provider)
+    events = []
+
+    async def callback(event, data):
+        events.append((event, data))
+
+    result = await AgentEngine(_Registry()).run_agent_loop(db_session, conversation, _context_for(user), callback)
+
+    assert result.content == "جواب."
+    assert [(c.document_filename, c.page) for c in result.citations] == [("a.pdf", 12)]
+    assert "".join(d["content"] for e, d in events if e == "delta") == "جواب.\n"

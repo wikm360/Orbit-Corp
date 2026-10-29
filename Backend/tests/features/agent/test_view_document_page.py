@@ -193,11 +193,12 @@ async def test_read_entire_document_returns_citations_and_content():
     from app.features.agent.tools.document_tools import ReadEntireDocumentTool
 
     doc_id = uuid.uuid4()
-    mock_doc = SimpleNamespace(id=doc_id, filename="letter.png")
+    mock_doc = SimpleNamespace(id=doc_id, filename="letter.png", file_path="/nonexistent/letter.png")
 
     with (
         patch.object(document_tools, "resolve_retrieval_scope", return_value=None),
         patch.object(documents_service, "get_accessible_document", new=AsyncMock(return_value=mock_doc)),
+        patch.object(documents_service, "load_reconstructed_document", return_value={"total_pages": 4}),
         patch.object(documents_service, "get_full_document_content", new=AsyncMock(return_value="متن کامل نامه اداری OCR شده")),
     ):
         result = await ReadEntireDocumentTool().execute(
@@ -212,6 +213,7 @@ async def test_read_entire_document_returns_citations_and_content():
     assert result.citations[0].document_filename == "letter.png"
     assert result.citations[0].snippet == "متن کامل نامه اداری OCR شده"
     assert result.citations[0].score == 1.0
+    assert (result.citations[0].page, result.citations[0].page_end) == (1, 4)
 
 
 async def test_read_document_pages_returns_citations_and_content():
