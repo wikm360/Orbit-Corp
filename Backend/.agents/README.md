@@ -26,6 +26,7 @@
 | لاگین، JWT، refresh token | [flows/auth-and-tokens.md](flows/auth-and-tokens.md) |
 | تیم، پروژه، عضویت، قطع دسترسی | [flows/teams-projects-membership.md](flows/teams-projects-membership.md) + [03](03-access-control.md) |
 | آپلود سند، OCR، chunk، embedding، worker | [flows/document-ingestion.md](flows/document-ingestion.md) |
+| گزارش حجم عملیات (volume_report، در حال توسعه) | [flows/volume-report.md](flows/volume-report.md) |
 | حلقه‌ی agent و tool-calling | [flows/agent-turn.md](flows/agent-turn.md) + [reference/agent-tools.md](reference/agent-tools.md) |
 | چت شخصی (SSE) | [flows/chat-personal-sse.md](flows/chat-personal-sse.md) |
 | چت گروهی (WebSocket، `@bot`) | [flows/chat-group-ws.md](flows/chat-group-ws.md) |

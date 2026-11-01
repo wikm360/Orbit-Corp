@@ -109,3 +109,6 @@
 
 ## `docs/rahkaran/`
 مستندات دامنه (README, GLOSSARY_*, enums, schema/*, QUESTIONS, TAXONOMY_REVIEW, ACCOUNTANT_QUESTIONS) و `tools/` (اسکریپت‌های تولید مستند؛ `db.py`, `peek.py`, `table_usage.py`, `gen_*`) و `data/mehvargostar_code.xlsx` (فایل طبقه‌بندی حسابدار).
+
+## `app/features/volume_report/` (در حال توسعه؛ فاز ۰-۱)
+`models,schemas,service,router,pipeline,compute,convert,export,seed,seed_data.py` · `extraction/{units,normalize,workbook,probe,income_parser,runner}.py` · `workers/volume_report_worker.py` · migration `0014_volume_report` ← [../flows/volume-report.md](../flows/volume-report.md).

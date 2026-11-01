@@ -12,5 +12,6 @@ from app.features.db_connector import models as _db_connector_models  # noqa: F4
 from app.features.documents import models as _documents_models  # noqa: F401
 from app.features.memory import models as _memory_models  # noqa: F401
 from app.features.projects import models as _projects_models  # noqa: F401
+from app.features.volume_report import models as _volume_report_models  # noqa: F401
 
 __all__: list[str] = []

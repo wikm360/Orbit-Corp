@@ -121,6 +121,10 @@ app.include_router(chat_router, prefix=settings.api_prefix)
 app.include_router(accounting_db_router, prefix=settings.api_prefix)
 app.include_router(admin_router, prefix=settings.api_prefix)
 app.include_router(inspector_router, prefix=settings.api_prefix)
+if settings.volume_report_enabled:
+    from app.features.volume_report.router import router as volume_report_router
+
+    app.include_router(volume_report_router, prefix=settings.api_prefix)
 
 setup_admin_panel(app)
 

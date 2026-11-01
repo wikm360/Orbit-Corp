@@ -9,6 +9,7 @@ import { chatApi } from "@/features/chat/api/chatApi";
 import { Conversation } from "@/features/chat/types";
 import { Project, User } from "@/shared/types";
 import { cn } from "@/shared/lib/utils";
+import { useVolumeEnabled } from "@/features/volume-reports/hooks/useVolumeEnabled";
 import { loadWorkspace } from "@/shared/lib/workspaceApi";
 
 type IconName =
@@ -22,6 +23,7 @@ type IconName =
   | "folder"
   | "chevron"
   | "admin"
+  | "chart"
   | "logout"
   | "close";
 
@@ -35,6 +37,7 @@ const paths: Record<IconName, React.ReactNode> = {
   workspace: <><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 9v12"/></>,
   folder: <><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z"/><path d="M3 10h18"/></>,
   chevron: <path d="m6 9 6 6 6-6"/>,
+  chart: <><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></>,
   admin: <><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></>,
   logout: <><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></>,
   close: <path d="m18 6-12 12M6 6l12 12"/>,
@@ -62,6 +65,7 @@ const NAV_ITEMS = [
   { href: "/documents", label: "اسناد", icon: "document" as const },
   { href: "/memories", label: "حافظه پروژه", icon: "memory" as const },
   { href: "/workspace", label: "فضای کاری", icon: "workspace" as const },
+  { href: "/volume-reports", label: "گزارش حجم عملیات", icon: "chart" as const, requiresVolumeModule: true },
   { href: "/admin", label: "مدیریت", icon: "admin" as const, adminOnly: true },
 ];
 
@@ -83,6 +87,7 @@ export function AppSidebar({
   onLogout,
 }: AppSidebarProps) {
   const pathname = usePathname();
+  const volumeModuleEnabled = useVolumeEnabled();
   const router = useRouter();
   const searchParams = useSearchParams();
   const activeConversationId = searchParams.get("conversation");
@@ -259,7 +264,7 @@ export function AppSidebar({
       </button>
 
       <nav aria-label="ناوبری اصلی" className="space-y-1">
-        {NAV_ITEMS.filter((item) => !item.adminOnly || user?.role === "admin" || user?.role === "super_admin").map((item) => {
+        {NAV_ITEMS.filter((item) => (!item.adminOnly || user?.role === "admin" || user?.role === "super_admin") && (!("requiresVolumeModule" in item) || volumeModuleEnabled === true)).map((item) => {
           const isActive = pathname.startsWith(item.href);
           return (
             <Link

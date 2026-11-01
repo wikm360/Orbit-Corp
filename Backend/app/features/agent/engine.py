@@ -378,6 +378,14 @@ class AgentEngine:
                 "(and which filters were applied) - never claim that the data does not exist, and never invent a reason."
             )
 
+        if settings.volume_report_enabled:
+            # After the accounting clause and before the project tree: keeps the stable prefix cache-friendly.
+            system_content += (
+                "\n\nFor questions about weekly/monthly physical work volumes (excavation, fill, subbase, base, asphalt, concrete, rebar, "
+                "formwork, prime/tack coat, precast, pile drilling, mining load) use 'get_volume_report'. Quote its figures exactly; "
+                "if no report is published, say so and offer to prepare one; never guess these figures from raw spreadsheets with query_spreadsheet."
+            )
+
         project_id = resolve_retrieval_scope(context, conversation) if context is not None else None
         if project_id is not None:
             tree = await project_tree_summary(db, project_id)

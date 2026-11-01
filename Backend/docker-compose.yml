@@ -85,6 +85,21 @@ services:
       redis:
         condition: service_healthy
 
+  # Volume-report jobs (own queue). Only started with `--profile volume-report` (needs VOLUME_REPORT_ENABLED=true).
+  vr-worker:
+    <<: *app
+    profiles: ["volume-report"]
+    command: python -m workers.volume_report_worker
+    deploy:
+      replicas: 1
+    volumes:
+      - uploads_data:/app/data/uploads
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
   mssql:
     image: mcr.microsoft.com/mssql/server:2022-CU27-ubuntu-22.04
     restart: unless-stopped

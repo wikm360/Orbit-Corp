@@ -7,12 +7,13 @@
     "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint .",
-    "test": "node --test tests/chat-contract.test.cjs tests/file-manager-contract.test.cjs",
+    "test": "node --test tests/chat-contract.test.cjs tests/file-manager-contract.test.cjs tests/volume-reports-contract.test.cjs",
     "test:browser": "node tests/chat-browser.cjs",
     "test:browser:batch": "node tests/batch-upload-browser.cjs",
     "test:browser:files": "node tests/file-manager-browser.cjs"
   },
   "dependencies": {
+    "echarts": "^5.5.1",
     "next": "16.3.4",
     "react": "19.2.8",
     "react-dom": "19.2.8",

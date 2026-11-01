@@ -27,7 +27,10 @@ export interface SqlResultArtifact {
   currency: "IRR";
 }
 
-export type MessageArtifact = SqlResultArtifact | { type: string; [key: string]: unknown };
+import type { VolumeTableArtifact } from "@/features/volume-reports/types";
+
+export type { VolumeTableArtifact };
+export type MessageArtifact = SqlResultArtifact | VolumeTableArtifact | { type: string; [key: string]: unknown };
 
 export interface AgentStep {
   id: string;

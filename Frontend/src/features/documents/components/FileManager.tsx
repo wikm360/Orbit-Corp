@@ -1,8 +1,10 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useMemo, useRef, useState } from "react";
 import { Button } from "@/shared/components/ui/Button";
 import { toFaDigits } from "@/shared/lib/utils";
+import { useVolumeEnabled } from "@/features/volume-reports/hooks/useVolumeEnabled";
 import { useBatchUpload } from "../hooks/useBatchUpload";
 import { useFileManager } from "../hooks/useFileManager";
 import { canDropOn, docKey, folderKey, selectionFromKeys, selectionSize } from "../lib/fileManager";
@@ -19,6 +21,8 @@ type Dialog = { kind: "new-folder" } | { kind: "rename"; key: string } | { kind:
 /** Project file manager: folders, cut/copy/paste, drag & drop, per-file processing status, archive upload. */
 export function FileManager({ projectId, canManage }: { projectId: string; canManage: boolean }) {
   const fm = useFileManager(projectId);
+  const router = useRouter();
+  const volumeModule = useVolumeEnabled();
   const { report, isUploading, progress, run } = useBatchUpload(fm.uploadFiles, { projectFiles: true });
   const [dialog, setDialog] = useState<Dialog>(null);
   const files = useRef<HTMLInputElement>(null);
@@ -72,6 +76,13 @@ export function FileManager({ projectId, canManage }: { projectId: string; canMa
         <Button type="button" size="sm" variant="ghost" disabled={!count || fm.busy} onClick={() => void fm.cancel(selection)}>لغو پردازش</Button>
         <Button type="button" size="sm" variant="ghost" className="text-red-600 hover:bg-red-50" disabled={!count || fm.busy} onClick={() => setDialog({ kind: "delete", selection })}>حذف</Button>
       </>}
+      {volumeModule && (
+        <Button type="button" size="sm" variant="ghost" className="text-teal-700" disabled={!selection.document_ids.length}
+          title="فقط فایل‌های اکسل آماده در گزارش لحاظ می‌شوند"
+          onClick={() => router.push(`/volume-reports/new?project=${projectId}&docs=${selection.document_ids.join(",")}`)}>
+          ساخت گزارش حجم از فایل‌های انتخابی
+        </Button>
+      )}
       <div className="ms-auto flex items-center gap-2">
         <input type="search" value={fm.query} onChange={(event) => fm.setQuery(event.target.value)} placeholder="جست‌وجوی نام فایل…" aria-label="جست‌وجوی نام فایل" className="w-44 rounded-lg border border-gray-300 px-3 py-1.5 text-xs focus:border-teal-600 focus:outline-none" />
         <Button type="button" variant="ghost" size="sm" onClick={() => void fm.refresh()} disabled={fm.isLoading}>به‌روزرسانی</Button>

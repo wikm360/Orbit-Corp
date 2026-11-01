@@ -173,6 +173,20 @@ class Settings(BaseSettings):
     # RQ job timeout for one document (OCR of a long scanned PDF is slow).
     ingestion_job_timeout_seconds: int = 3600
 
+    # Volume report module (app/features/volume_report). Off = no router, no agent tool, no worker job is reachable.
+    volume_report_enabled: bool = False
+    vr_queue_name: str = "volume_report"
+    vr_job_timeout_seconds: int = 1800
+    # "strict" refuses to publish while anything is unconfirmed/unresolved; "warn" publishes and records the causes.
+    vr_publish_gate: str = "strict"
+    # Tool-calling model of the volume-report agent (falls back to llm_model). Avoid heavy reasoning models here.
+    llm_vr_model: str | None = None
+    vr_agent_max_steps: int = 40
+    vr_max_questions_per_pass: int = 15
+    vr_agent_batch_size: int = 40
+    # Agent proposals with confidence >= this are also written to the decision memory. 1.0 = never (recommended).
+    vr_llm_auto_accept_confidence: float = 1.0
+
     # Rahkaran accounting-database connector (read-only SQL Server, schema `ai`).
     # Off by default: when enabled the agent gets the `ask_accounting_db` tool.
     rahkaran_db_enabled: bool = False

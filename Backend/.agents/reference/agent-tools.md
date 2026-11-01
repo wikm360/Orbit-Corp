@@ -30,3 +30,9 @@
 - `search_knowledge_base` پارامتر `path_prefix` دارد (فقط داخل آن پوشه و زیرپوشه‌هایش، **یا فقط همان فایل** اگر نام/مسیر یک فایل باشد: `a/b/file.pdf` یا فقط `file.pdf` در هر پوشه‌ای؛ فایل از `document_ids` در retriever می‌آید؛ از `folder_service.resolve_path` + `subtree_ids`، علاوه بر نه به‌جای `accessible_documents_filter`) و هر passage با **مسیر کامل** (`پوشه/زیرپوشه/فایل`) برچسب می‌خورد. نام فایل/پوشه هم جست‌وجو می‌شود چون مسیر در `search_text` هر chunk است ([../04-data-model.md](../04-data-model.md)).
 - ترتیب ابزارها در لیست ارسالی به مدل = ترتیب ساخت در `build_default_registry` (سند، شیت، پروژه، حافظه، سپس مالی).
 - **چرا ابزار شیت:** مدل از متن تخت `a \| \| b` با ستون‌های عریض و عددهای تکراری ستون را اشتباه می‌شمرد (پاسخ غلط برای «دستمزد روزانه» یک نفر). حالا ingestion رکورد نام‌دار می‌نویسد و برای مقدار دقیق، SYSTEM_PROMPT (قاعده‌ی ۴) مدل را به `describe_spreadsheet` → `query_spreadsheet` می‌فرستد. جدول از فایل اصلی lazy ساخته و کنار فایل cache می‌شود، پس اسناد قدیمی برای این ابزارها reprocess نمی‌خواهند (فقط متن chunkها قالب قدیمی دارد تا reprocess شوند). artifact برای UI هنوز ساخته نمی‌شود (فقط `sources`).
+
+## ابزارهای agent گزارش حجم (registry جدا، نه ابزار چت)
+فهرست و قراردادها: [../flows/volume-report.md](../flows/volume-report.md) (بخش فاز ۳). این ابزارها فقط داخل job گزارش حجم اجرا می‌شوند و هرگز کمیت برنمی‌گردانند.
+
+## `get_volume_report` (ابزار چت؛ فقط با `VOLUME_REPORT_ENABLED`)
+`period?` (`latest` | `YYYY-MM-DD..YYYY-MM-DD` | برچسب)، `company?`، `site?`، `item?`، `group_by?` (`holding|company|site|item`). فقط خواندن؛ اجرای گزارش از چت ممنوع. خروجی Markdown + artifact `volume_table` (← [api-endpoints.md](api-endpoints.md)). نسخه‌ی قدیمی‌تر که نسخه‌ی منتشرشده‌تری جایگزینش کرده نادیده گرفته می‌شود. بند کوتاه `SYSTEM_PROMPT` فقط وقتی سوییچ روشن است و بعد از بند حسابداری می‌آید (حفظ prefix cache).

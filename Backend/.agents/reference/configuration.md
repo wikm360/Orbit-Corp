@@ -125,3 +125,16 @@ OCR و SQL از همان `LLM_API_BASE_URL`/`LLM_API_KEY` استفاده می‌
 
 ## فایل‌های env موجود در پوشه
 `.env` (توسعه)، `.env.example` (نمونه، در git)، `.env.production` و `.env.production.bak-*` (نسخه‌های پروداکشن؛ **حاوی secret واقعی، در git نیستند**؛ `.gitignore` همه‌ی `.env*` به‌جز `.env.example` را نادیده می‌گیرد).
+
+## Volume report (`volume_report`)
+| env | پیش‌فرض | توضیح |
+|---|---|---|
+| `VOLUME_REPORT_ENABLED` | false | سوییچ اصلی: ثبت router؛ خاموش = هیچ endpoint/job فعال نیست |
+| `VR_QUEUE_NAME` | volume_report | صف RQ جدا از ingestion؛ worker: `python -m workers.volume_report_worker` |
+| `VR_JOB_TIMEOUT_SECONDS` | 1800 | timeout هر job |
+| `VR_PUBLISH_GATE` | strict | `strict` انتشار را با هر مورد تأییدنشده/حل‌نشده رد می‌کند؛ `warn` منتشر می‌کند و علل را در snapshot می‌نویسد |
+| `LLM_VR_MODEL` | None → `LLM_MODEL` | مدل tool-calling agent؛ مدل reasoning سنگین نگذارید |
+| `VR_AGENT_MAX_STEPS` | 40 | سقف گام هر دور (گام آخر بدون ابزار) |
+| `VR_MAX_QUESTIONS_PER_PASS` | 15 | سقف سؤال باز؛ کم‌اثرها حذف و گروهشان `needs_input` می‌ماند |
+| `VR_AGENT_BATCH_SIZE` | 40 | سقف گروه در هر `get_groups`/`classify` |
+| `VR_LLM_AUTO_ACCEPT_CONFIDENCE` | 1.0 | 1.0 = هرگز؛ کمتر → پیشنهاد با اطمینان ≥ آستانه وارد حافظه می‌شود (تا چند هفته فعال نکنید) |

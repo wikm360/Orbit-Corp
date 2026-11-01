@@ -116,3 +116,6 @@ Document.status == READY  AND  ( Document.conversation_id == :conversation_id
 | `memory/router.py` | `require_project_manager` + `memory.project_id == project.id` |
 | `db_connector/router._get_owned_log` | صاحب log یا admin (برای feedback/export) |
 | `agent/tools/*` | `resolve_retrieval_scope` + فیلتر اسناد |
+
+## volume_report
+دامنه‌ی دسترسی = پروژه‌ی Orbit (`vr_reports.project_id`)؛ جدول دسترسی جدید ندارد. اعضای پروژه (و leader تیم والد/admin) گزارش را می‌بینند/می‌سازند/اجرا و منتشر می‌کنند؛ غیرعضو 403، گزارش ناموجود 404، سند پروژه‌ی دیگر 404. ویرایش تنظیمات سراسری (شرکت‌ها، نوع کارگاه، پارامترهای تبدیل): فقط admin یا کاربری با `led_team_ids` غیرتهی (وگرنه 403)؛ `GET /catalog` برای هر کاربر لاگین‌شده. آپلود فایل منبع همچنان فقط leader/admin در فایل‌منیجر.

@@ -1,6 +1,7 @@
 import { Markdown } from "@/shared/components/ui/Markdown";
 
-import { AgentStep, ChatMessage, SqlResultArtifact } from "../types";
+import { VolumeTableCard } from "@/features/volume-reports/components/VolumeTableCard";
+import { AgentStep, ChatMessage, SqlResultArtifact, VolumeTableArtifact } from "../types";
 import { AgentActivityBanner } from "./AgentActivityBanner";
 import { SourceCitationList } from "./SourceCitation";
 import { SqlResultCard } from "./SqlResultCard";
@@ -69,6 +70,9 @@ export function MessageBubble({
           {(message.artifacts ?? [])
             .filter((artifact): artifact is SqlResultArtifact => artifact.type === "sql_result")
             .map((artifact) => <SqlResultCard key={artifact.query_id} artifact={artifact} />)}
+          {(message.artifacts ?? [])
+            .filter((artifact): artifact is VolumeTableArtifact => artifact.type === "volume_table")
+            .map((artifact) => <VolumeTableCard key={`${artifact.report_id}-${artifact.columns.join("")}-${artifact.rows.length}`} artifact={artifact} />)}
           <SourceCitationList sources={message.sources} />
       </div>
     </div>

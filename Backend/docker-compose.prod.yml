@@ -140,6 +140,14 @@ services:
     mem_limit: 2g
     pids_limit: 512
 
+  vr-worker:
+    <<: *hardened
+    user: "10001:10001"
+    networks: !override [data, egress]
+    environment: *appenv
+    mem_limit: 2g
+    pids_limit: 512
+
   rahkaran-refresh:
     <<: *hardened
     user: "10001:10001"

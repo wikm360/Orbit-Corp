@@ -4,6 +4,7 @@ from functools import lru_cache
 from typing import Literal, TypedDict
 
 import asyncio
+import re
 import logging
 
 import httpx
@@ -68,6 +69,17 @@ class ToolCallsEvent(TypedDict):
 StreamEvent = ContentEvent | ToolCallsEvent
 
 
+class CompletionUsage(TypedDict):
+    prompt_tokens: int
+    completion_tokens: int
+
+
+class CompletionResult(TypedDict):
+    content: str
+    tool_calls: list[ToolCall]
+    usage: CompletionUsage
+
+
 class LLMProvider(ABC):
     """Abstract interface every chat/completion backend must implement.
 
@@ -88,6 +100,24 @@ class LLMProvider(ABC):
         content after a `tool_calls` event; the caller runs the tools and
         starts a new `stream_chat` turn with the results appended to history.
         """
+
+    async def complete(
+        self,
+        messages: list[ChatMessage],
+        tools: list[ToolSpec] | None = None,
+        tool_choice: str = "auto",
+        response_format: dict | None = None,
+    ) -> CompletionResult:
+        """One non-streaming turn. The default drains `stream_chat` (so any provider/stub works, usage unknown = 0);
+        `OpenAICompatibleLLMProvider` overrides it with a real non-streaming call that reports token usage."""
+        content: list[str] = []
+        calls: list[ToolCall] = []
+        async for event in self.stream_chat(messages, tools, tool_choice):
+            if event["type"] == "content":
+                content.append(event["delta"])
+            else:
+                calls.extend(event["calls"])
+        return {"content": "".join(content), "tool_calls": calls, "usage": {"prompt_tokens": 0, "completion_tokens": 0}}
 
 
 async def _strip_tag_blocks(
@@ -291,6 +321,50 @@ class OpenAICompatibleLLMProvider(LLMProvider):
     ) -> AsyncIterator[StreamEvent]:
         return self._stream_events(messages, tools, tool_choice)
 
+    async def complete(
+        self,
+        messages: list[ChatMessage],
+        tools: list[ToolSpec] | None = None,
+        tool_choice: str = "auto",
+        response_format: dict | None = None,
+        temperature: float = 0,
+    ) -> CompletionResult:
+        extra_body = {"enable_thinking": False} if self._disable_thinking else None
+        kwargs: dict = {}
+        if tools:
+            kwargs["tools"] = tools
+            kwargs["tool_choice"] = tool_choice
+        if response_format:
+            kwargs["response_format"] = response_format
+        for attempt in range(1, _STREAM_ATTEMPTS + 1):
+            try:
+                response = await self._client.chat.completions.create(
+                    model=self._model, messages=messages, temperature=temperature, extra_body=extra_body, **kwargs  # type: ignore[arg-type]
+                )
+                break
+            except _TRANSIENT_STREAM_ERRORS as exc:
+                if attempt == _STREAM_ATTEMPTS:
+                    raise
+                logger.warning("LLM completion failed (attempt %d/%d): %s", attempt, _STREAM_ATTEMPTS, exc)
+                await asyncio.sleep(1.5 * attempt)
+        if response.usage is not None:
+            _log_usage(self._model, response.usage)
+        message = response.choices[0].message
+        text = message.content or ""
+        for tag in self._strip_tags:
+            text = re.sub(rf"<{tag}>.*?</{tag}>", "", text, flags=re.DOTALL)
+        return {
+            "content": text,
+            "tool_calls": [
+                {"id": tc.id, "name": tc.function.name, "arguments": tc.function.arguments or "{}"}
+                for tc in (message.tool_calls or [])
+            ],
+            "usage": {
+                "prompt_tokens": getattr(response.usage, "prompt_tokens", 0) or 0,
+                "completion_tokens": getattr(response.usage, "completion_tokens", 0) or 0,
+            },
+        }
+
 
 @lru_cache
 def get_llm_provider() -> LLMProvider:
@@ -323,6 +397,18 @@ def get_sql_llm_provider() -> LLMProvider:
         base_url=settings.llm_api_base_url,
         api_key=settings.llm_api_key,
         model=settings.llm_sql_model or settings.llm_model,
+        disable_thinking=settings.llm_disable_thinking,
+        strip_tags=settings.llm_strip_content_tags,
+    )
+
+
+def get_vr_llm_provider() -> LLMProvider:
+    """Provider for the volume-report agent: `llm_vr_model` when set, otherwise the default chat model (no cache)."""
+    settings = get_settings()
+    return OpenAICompatibleLLMProvider(
+        base_url=settings.llm_api_base_url,
+        api_key=settings.llm_api_key,
+        model=settings.llm_vr_model or settings.llm_model,
         disable_thinking=settings.llm_disable_thinking,
         strip_tags=settings.llm_strip_content_tags,
     )

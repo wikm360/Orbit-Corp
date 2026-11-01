@@ -108,4 +108,8 @@ def build_default_registry() -> ToolRegistry:
     ]
     if get_settings().rahkaran_db_enabled:
         tools.append(AskAccountingDbTool())
+    if get_settings().volume_report_enabled:
+        from app.features.volume_report.chat_tool import GetVolumeReportTool
+
+        tools.append(GetVolumeReportTool())
     return ToolRegistry(tools)

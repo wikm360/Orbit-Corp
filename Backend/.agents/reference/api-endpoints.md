@@ -121,3 +121,29 @@
 ## ناسازگاری‌های شناخته‌شده‌ی قرارداد
 - فرانت قبلاً با مسیرهای قدیمی (`/documents`, `/admin/teams`, `sender_type` جدید, refresh token, چت گروهی) هماهنگ نبود؛ وضعیت فعلی هماهنگی را در `../Frontend` بررسی کنید (نیاز به تأیید).
 - وضعیت `agent_activity.status = querying_database` را کلاینت باید بشناسد.
+
+## volume-reports (فقط با `VOLUME_REPORT_ENABLED=true`)
+پیشوند `/api/v1/volume-reports`؛ همه `get_current_user_context`. دسترسی: عضو پروژه‌ی گزارش (یا leader تیم والد/admin)؛ تنظیمات نوشتنی فقط admin یا leader. اعداد رشته‌ی دسیمال. شرح فازها: [../flows/volume-report.md](../flows/volume-report.md).
+
+| مسیر | شرح |
+|---|---|
+| `POST /` · `GET /?project_id=&status=` · `GET/DELETE /{id}` | ساخت draft، فهرست، جزئیات (+`issues`)، حذف draft/failed |
+| `PUT /{id}/files` | `{files:[{document_id, company_id}]}` → `suggested_company` هر فایل |
+| `POST /{id}/run` · `POST /{id}/continue` · `POST /{id}/recompute` · `GET /{id}/progress` | اجرا (202، صف جدا)، دور بعد پس از پاسخ، محاسبه‌ی مجدد، polling |
+| `GET /{id}/sources` | `sheet_log` و هشدارها به‌تفکیک فایل |
+| `GET /{id}/questions?status=` · `POST …/{qid}/answer` · `POST …/{qid}/skip` | کارت‌ها |
+| `GET /{id}/review/groups?state=` · `POST /{id}/review/confirm` | تأیید/اصلاح گروهی |
+| `GET /{id}/results?group_by=holding\|company\|site&include=other,problems,nonphysical` · `GET /{id}/lines` · `GET /{id}/trace` | نتایج و drill-down |
+| `POST /{id}/publish` · `POST /{id}/reopen` · `GET /{id}/export?format=xlsx\|csv` | انتشار (قفل strict/warn)، نسخه‌ی جدید، export |
+| `GET /catalog` | آیتم‌های فعال (هر کاربر) |
+| `GET/POST/PUT /settings/{items,lexicon,companies,sites,conversions}` · `GET /settings/decisions[/similar]` · `POST /settings/decisions/{id}/revoke` | تنظیمات (GET برای همه؛ نوشتن و تصمیم‌ها admin/leader) |
+
+### artifact چت: `volume_table` (ابزار `get_volume_report`)
+```json
+{"type":"volume_table","version":1,"report_id":"<uuid>","title":"…","period":"شهریور 1405",
+ "columns":["شرکت","کارگاه","آیتم","مقدار"],   // پیشوند بسته به group_by: holding/item → ["آیتم","مقدار"]; company → +شرکت؛ site → +شرکت،کارگاه
+ "rows":[["محورگستر","سیرجان","اساس","563.00"]],   // مقدار با `decimals` آیتم؛ «*» انتهای مقدار = شامل ردیف تأییدنشده
+ "unit_by_row":["m3"],                              // هم‌طول rows
+ "notes":["گزارش منتشرشده: …"]}
+```
+ابزار فقط snapshotهای منتشرشده‌ی پروژه‌ی متصل به گفتگو را می‌خواند (scope از `resolve_retrieval_scope`)؛ بدون پروژه: «This conversation isn't linked to any project.»؛ بدون گزارش منتشرشده: «No published volume report… Existing drafts: …» (بدون عدد).
