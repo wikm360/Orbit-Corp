@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.database import get_db
-from app.core.dependencies import UserContext, get_current_user_context, require_project_access, require_project_manager
+from app.core.dependencies import UserContext, get_current_user_context, require_project_access, require_project_permission
 from app.core.exceptions import BadRequestError
 from app.features.documents import archive_service, file_ops, folder_service, service
 from app.features.documents.schemas import (
@@ -24,7 +24,9 @@ from app.features.documents.schemas import (
     FolderUpdate,
 )
 from app.features.projects.models import Project
+from app.features.projects.permissions import DOCUMENTS
 
+require_documents_manager = require_project_permission(DOCUMENTS)
 router = APIRouter(tags=["documents"])
 settings = get_settings()
 
@@ -41,7 +43,7 @@ async def list_project_documents(
 async def upload_project_document(
     file: UploadFile = File(...),
     folder_id: uuid.UUID | None = Form(None),
-    project: Project = Depends(require_project_manager),
+    project: Project = Depends(require_documents_manager),
     context: UserContext = Depends(get_current_user_context),
     db: AsyncSession = Depends(get_db),
 ):
@@ -78,7 +80,7 @@ async def upload_project_document(
 async def upload_project_documents_batch(
     files: list[UploadFile] = File(...),
     folder_id: uuid.UUID | None = Form(None),
-    project: Project = Depends(require_project_manager),
+    project: Project = Depends(require_documents_manager),
     context: UserContext = Depends(get_current_user_context),
     db: AsyncSession = Depends(get_db),
 ):
@@ -130,7 +132,7 @@ async def search_files(
 @router.post("/projects/{project_id}/folders", response_model=FolderRead, status_code=201)
 async def create_folder(
     body: FolderCreate,
-    project: Project = Depends(require_project_manager),
+    project: Project = Depends(require_documents_manager),
     context: UserContext = Depends(get_current_user_context),
     db: AsyncSession = Depends(get_db),
 ):
@@ -141,7 +143,7 @@ async def create_folder(
 async def rename_folder(
     folder_id: uuid.UUID,
     body: FolderUpdate,
-    project: Project = Depends(require_project_manager),
+    project: Project = Depends(require_documents_manager),
     db: AsyncSession = Depends(get_db),
 ):
     return await folder_service.rename_folder(db, project.id, folder_id, body.name)
@@ -151,7 +153,7 @@ async def rename_folder(
 async def rename_project_document(
     document_id: uuid.UUID,
     body: DocumentUpdate,
-    project: Project = Depends(require_project_manager),
+    project: Project = Depends(require_documents_manager),
     db: AsyncSession = Depends(get_db),
 ):
     return await folder_service.rename_document(db, project.id, document_id, body.filename)
@@ -160,7 +162,7 @@ async def rename_project_document(
 @router.post("/projects/{project_id}/files/move", response_model=BulkResult)
 async def move_files(
     body: FilePlacement,
-    project: Project = Depends(require_project_manager),
+    project: Project = Depends(require_documents_manager),
     db: AsyncSession = Depends(get_db),
 ):
     moved = await file_ops.move_items(
@@ -172,7 +174,7 @@ async def move_files(
 @router.post("/projects/{project_id}/files/copy", response_model=BulkResult)
 async def copy_files(
     body: FilePlacement,
-    project: Project = Depends(require_project_manager),
+    project: Project = Depends(require_documents_manager),
     context: UserContext = Depends(get_current_user_context),
     db: AsyncSession = Depends(get_db),
 ):
@@ -185,7 +187,7 @@ async def copy_files(
 @router.post("/projects/{project_id}/files/delete", response_model=BulkResult)
 async def delete_files(
     body: FileSelection,
-    project: Project = Depends(require_project_manager),
+    project: Project = Depends(require_documents_manager),
     db: AsyncSession = Depends(get_db),
 ):
     return BulkResult(count=await file_ops.delete_items(db, project.id, body.document_ids, body.folder_ids))
@@ -194,7 +196,7 @@ async def delete_files(
 @router.post("/projects/{project_id}/files/retry", response_model=BulkResult)
 async def retry_files(
     body: FileSelection,
-    project: Project = Depends(require_project_manager),
+    project: Project = Depends(require_documents_manager),
     db: AsyncSession = Depends(get_db),
 ):
     retried, skipped = await file_ops.retry_items(db, project.id, body.document_ids, body.folder_ids)
@@ -204,7 +206,7 @@ async def retry_files(
 @router.post("/projects/{project_id}/files/cancel", response_model=BulkResult)
 async def cancel_files(
     body: FileSelection,
-    project: Project = Depends(require_project_manager),
+    project: Project = Depends(require_documents_manager),
     db: AsyncSession = Depends(get_db),
 ):
     cancelled, skipped = await file_ops.cancel_items(db, project.id, body.document_ids, body.folder_ids)
@@ -214,7 +216,7 @@ async def cancel_files(
 @router.delete("/projects/{project_id}/archives/{archive_id}", status_code=204)
 async def dismiss_archive_import(
     archive_id: uuid.UUID,
-    project: Project = Depends(require_project_manager),
+    project: Project = Depends(require_documents_manager),
     db: AsyncSession = Depends(get_db),
 ):
     await file_ops.dismiss_archive(db, project.id, archive_id)
@@ -223,7 +225,7 @@ async def dismiss_archive_import(
 @router.post("/projects/{project_id}/documents/{document_id}/cancel", response_model=DocumentRead)
 async def cancel_project_document(
     document_id: uuid.UUID,
-    project: Project = Depends(require_project_manager),
+    project: Project = Depends(require_documents_manager),
     db: AsyncSession = Depends(get_db),
 ):
     document = await service.get_document(db, document_id)
@@ -235,7 +237,7 @@ async def cancel_project_document(
 @router.post("/projects/{project_id}/documents/{document_id}/retry", response_model=DocumentRead)
 async def retry_project_document(
     document_id: uuid.UUID,
-    project: Project = Depends(require_project_manager),
+    project: Project = Depends(require_documents_manager),
     db: AsyncSession = Depends(get_db),
 ):
     document = await service.get_document(db, document_id)
@@ -247,7 +249,7 @@ async def retry_project_document(
 @router.delete("/projects/{project_id}/documents/{document_id}", status_code=204)
 async def delete_project_document(
     document_id: uuid.UUID,
-    project: Project = Depends(require_project_manager),
+    project: Project = Depends(require_documents_manager),
     db: AsyncSession = Depends(get_db),
 ):
     document = await service.get_document(db, document_id)

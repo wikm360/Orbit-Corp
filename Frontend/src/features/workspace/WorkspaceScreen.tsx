@@ -7,7 +7,12 @@ import { Input } from "@/shared/components/ui/Input";
 import { Select } from "@/shared/components/ui/Select";
 import { friendlyErrorMessage } from "@/shared/lib/errorMessages";
 import { loadWorkspace, workspaceApi, WorkspaceOverview } from "@/shared/lib/workspaceApi";
-import { ProjectMembership, TeamMembership } from "@/shared/types";
+import { ProjectMembership, ProjectPermission, TeamMembership } from "@/shared/types";
+
+const PERMISSION_OPTIONS: { key: ProjectPermission; label: string }[] = [
+  { key: "documents", label: "مدیریت اسناد" },
+  { key: "memory", label: "مدیریت حافظه" },
+];
 
 export function WorkspaceScreen() {
   const user = useAuthStore((state) => state.user);
@@ -79,6 +84,11 @@ export function WorkspaceScreen() {
     setNewTeamMemberId("");
   }
 
+  async function togglePermission(userId: string, current: ProjectPermission[], permission: ProjectPermission, enabled: boolean) {
+    const next = enabled ? [...current, permission] : current.filter((item) => item !== permission);
+    await mutate(() => workspaceApi.setMemberPermissions(activeProjectId, userId, next));
+  }
+
   async function addProjectMember(event: FormEvent) {
     event.preventDefault();
     if (!newProjectMemberId || !activeProjectId) return;
@@ -107,7 +117,18 @@ export function WorkspaceScreen() {
           <Select aria-label="پروژه" value={activeProjectId} onValueChange={setProjectId} options={teamProjects.map((project) => ({ value: project.id, label: project.name, description: project.description }))} className="max-w-sm" />
           {selectedProject?.description && <p className="mt-2 text-sm text-gray-500">{selectedProject.description}</p>}
           <h3 className="mt-5 font-medium">اعضای پروژه</h3>
-          <div className="mt-2 space-y-2">{visibleProjectMembers.map((membership) => <div key={membership.user.id} className="flex flex-wrap items-center gap-2 text-sm"><span className="flex-1 break-all">{membership.user.full_name || membership.user.email}</span>{canManage && <Button type="button" variant="ghost" size="sm" disabled={isBusy} onClick={() => void mutate(() => workspaceApi.removeProjectMember(activeProjectId, membership.user.id))}>حذف</Button>}</div>)}</div>
+          <div className="mt-2 space-y-2">{visibleProjectMembers.map((membership) => {
+            const isLeader = visibleTeamMembers.some((member) => member.user.id === membership.user.id && member.role === "leader");
+            const granted = membership.permissions ?? [];
+            return <div key={membership.user.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+              <span className="min-w-40 flex-1 break-all">{membership.user.full_name || membership.user.email}</span>
+              {isLeader ? <span className="text-xs text-gray-500">سرپرست تیم — همه‌ی دسترسی‌ها</span>
+                : <span className="flex flex-wrap items-center gap-3">{PERMISSION_OPTIONS.map((option) => canManage
+                  ? <label key={option.key} className="flex items-center gap-1.5 text-xs text-gray-700"><input type="checkbox" className="accent-teal-600" disabled={isBusy} checked={granted.includes(option.key)} onChange={(event) => void togglePermission(membership.user.id, granted, option.key, event.target.checked)} />{option.label}</label>
+                  : granted.includes(option.key) && <span key={option.key} className="rounded-full bg-teal-50 px-2 py-0.5 text-xs text-teal-800">{option.label}</span>)}</span>}
+              {canManage && <Button type="button" variant="ghost" size="sm" disabled={isBusy} onClick={() => void mutate(() => workspaceApi.removeProjectMember(activeProjectId, membership.user.id))}>حذف</Button>}
+            </div>;
+          })}</div>
           {canManage && <form onSubmit={addProjectMember} className="mt-4 flex flex-wrap gap-2"><Select aria-label="عضو جدید پروژه" value={newProjectMemberId} onValueChange={setNewProjectMemberId} options={visibleTeamMembers.filter((member) => !visibleProjectMembers.some((projectMember) => projectMember.user.id === member.user.id)).map((member) => ({ value: member.user.id, label: member.user.full_name || member.user.email, description: member.role === "leader" ? "سرپرست تیم" : "عضو تیم" }))} placeholder="انتخاب عضو تیم" className="min-w-56 flex-1 sm:flex-none" /><Button type="submit" disabled={isBusy || !newProjectMemberId}>افزودن به پروژه</Button></form>}
         </>}
       </section>

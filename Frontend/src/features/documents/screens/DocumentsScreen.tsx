@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Select } from "@/shared/components/ui/Select";
 import { useAuthStore } from "@/features/auth/hooks/useAuthStore";
 import { friendlyErrorMessage } from "@/shared/lib/errorMessages";
-import { loadWorkspace, WorkspaceOverview } from "@/shared/lib/workspaceApi";
+import { hasProjectPermission, loadWorkspace, WorkspaceOverview } from "@/shared/lib/workspaceApi";
 import { FileManager } from "../components/FileManager";
 
 export function DocumentsScreen() {
@@ -14,7 +14,7 @@ export function DocumentsScreen() {
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
 
   const selectedProject = workspace?.projects.find((project) => project.id === projectId);
-  const canManageProject = Boolean(selectedProject && (user?.role === "admin" || user?.role === "super_admin" || workspace?.managedTeamIds.has(selectedProject.team_id)));
+  const canManageProject = Boolean(selectedProject && (user?.role === "admin" || user?.role === "super_admin" || workspace?.managedTeamIds.has(selectedProject.team_id) || hasProjectPermission(selectedProject, "documents")));
 
   useEffect(() => {
     if (!user) return;

@@ -1,5 +1,5 @@
 import { apiRequest } from "./apiClient";
-import type { Project, ProjectMembership, Team, TeamMembership, User, UserRole } from "@/shared/types";
+import type { Project, ProjectMembership, ProjectPermission, Team, TeamMembership, User, UserRole } from "@/shared/types";
 
 export const workspaceApi = {
   myTeams: () => apiRequest<Team[]>("/teams/mine"),
@@ -14,6 +14,7 @@ export const workspaceApi = {
   projectMembers: (projectId: string) => apiRequest<ProjectMembership[]>(`/projects/${projectId}/members`),
   addProjectMember: (projectId: string, userId: string) => apiRequest<void>(`/projects/${projectId}/members`, { method: "POST", body: { user_id: userId } }),
   removeProjectMember: (projectId: string, userId: string) => apiRequest<void>(`/projects/${projectId}/members/${userId}`, { method: "DELETE" }),
+  setMemberPermissions: (projectId: string, userId: string, permissions: ProjectPermission[]) => apiRequest<ProjectMembership>(`/projects/${projectId}/members/${userId}/permissions`, { method: "PUT", body: { permissions } }),
   users: () => apiRequest<User[]>("/admin/users"),
   updateUserRole: (userId: string, role: UserRole) => apiRequest<User>(`/admin/users/${userId}/role`, { method: "PATCH", body: { role } }),
   setAccountingAccess: (userId: string, enabled: boolean) => apiRequest<User>(`/admin/users/${userId}/accounting-access`, { method: "PUT", body: { enabled } }),
@@ -39,3 +40,6 @@ export async function loadWorkspace(user: User): Promise<WorkspaceOverview> {
     : teams.filter((team, index) => memberships[index]?.some((membership) => membership.user.id === user.id && membership.role === "leader")).map((team) => team.id));
   return { teams, projects, managedTeamIds };
 }
+
+/** Whether the caller may use a delegated project permission here: the backend reports the effective set (leaders/admins hold all). */
+export const hasProjectPermission = (project: Project | undefined | null, permission: ProjectPermission) => Boolean(project?.my_permissions?.includes(permission));

@@ -8,6 +8,7 @@ from app.features.access_control.models import TeamMembership
 from app.features.access_control.service import is_team_member
 from app.features.auth.models import User
 from app.features.projects.models import Project, ProjectMembership
+from app.features.projects.permissions import PROJECT_PERMISSIONS
 
 
 async def get_project(db: AsyncSession, project_id: uuid.UUID) -> Project:
@@ -51,6 +52,40 @@ async def get_user_project_ids(db: AsyncSession, user_id: uuid.UUID) -> list[uui
         .where(ProjectMembership.user_id == user_id)
     )
     return [row[0] for row in result.all()]
+
+
+async def get_user_project_permissions(db: AsyncSession, user_id: uuid.UUID) -> dict[uuid.UUID, frozenset[str]]:
+    """Project id -> delegated permissions, for every project the user effectively belongs to (same join as above)."""
+    result = await db.execute(
+        select(ProjectMembership.project_id, ProjectMembership.permissions)
+        .join(Project, Project.id == ProjectMembership.project_id)
+        .join(
+            TeamMembership,
+            and_(TeamMembership.team_id == Project.team_id, TeamMembership.user_id == user_id),
+        )
+        .where(ProjectMembership.user_id == user_id)
+    )
+    return {project_id: frozenset(permissions or []) for project_id, permissions in result.all()}
+
+
+async def set_member_permissions(
+    db: AsyncSession, project_id: uuid.UUID, user_id: uuid.UUID, permissions: list[str]
+) -> ProjectMembership:
+    unknown = sorted(set(permissions) - set(PROJECT_PERMISSIONS))
+    if unknown:
+        raise BadRequestError(f"Unknown permission(s): {', '.join(unknown)}")
+    result = await db.execute(
+        select(ProjectMembership).where(
+            ProjectMembership.project_id == project_id, ProjectMembership.user_id == user_id
+        )
+    )
+    membership = result.scalar_one_or_none()
+    if membership is None:
+        raise NotFoundError("Membership not found")
+    membership.permissions = [p for p in PROJECT_PERMISSIONS if p in set(permissions)]  # canonical order, no duplicates
+    await db.commit()
+    await db.refresh(membership)
+    return membership
 
 
 async def is_project_member(db: AsyncSession, user_id: uuid.UUID, project_id: uuid.UUID) -> bool:

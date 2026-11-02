@@ -13,7 +13,8 @@ from app.core.security import decode_access_token
 from app.features.access_control.service import get_user_led_team_ids, get_user_team_ids
 from app.features.auth.models import User, UserRole
 from app.features.projects.models import Project
-from app.features.projects.service import get_user_project_ids
+from app.features.projects.permissions import PROJECT_PERMISSIONS
+from app.features.projects.service import get_user_project_permissions
 
 bearer_scheme = HTTPBearer()
 
@@ -32,6 +33,7 @@ class UserContext:
     team_ids: list[UUID] = field(default_factory=list)
     led_team_ids: list[UUID] = field(default_factory=list)
     project_ids: list[UUID] = field(default_factory=list)
+    project_permissions: dict[UUID, frozenset[str]] = field(default_factory=dict)
 
     @property
     def id(self) -> UUID:
@@ -61,6 +63,15 @@ class UserContext:
     def is_project_member(self, project_id: UUID) -> bool:
         return self.is_admin or project_id in self.project_ids
 
+    def project_permission_set(self, project_id: UUID, team_id: UUID) -> frozenset[str]:
+        """Effective delegated permissions: everything for admins/the team's leader, else what the membership grants."""
+        if self.leads_team(team_id):
+            return frozenset(PROJECT_PERMISSIONS)
+        return self.project_permissions.get(project_id, frozenset())
+
+    def has_project_permission(self, project_id: UUID, team_id: UUID, permission: str) -> bool:
+        return permission in self.project_permission_set(project_id, team_id)
+
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
@@ -88,9 +99,10 @@ async def get_current_user_context(
 ) -> UserContext:
     team_ids = await get_user_team_ids(db, user.id)
     led_team_ids = await get_user_led_team_ids(db, user.id)
-    project_ids = await get_user_project_ids(db, user.id)
+    project_permissions = await get_user_project_permissions(db, user.id)
     return UserContext(
-        user=user, team_ids=team_ids, led_team_ids=led_team_ids, project_ids=project_ids
+        user=user, team_ids=team_ids, led_team_ids=led_team_ids,
+        project_ids=list(project_permissions), project_permissions=project_permissions,
     )
 
 
@@ -145,6 +157,24 @@ async def require_project_manager(
     if not context.leads_team(project.team_id):
         raise ForbiddenError("Team leader or admin privileges required")
     return project
+
+
+def require_project_permission(permission: str):
+    """Dependency factory: the parent team's leader, an org admin, or a project member who was granted `permission`."""
+
+    async def _dependency(
+        project_id: UUID,
+        context: UserContext = Depends(get_current_user_context),
+        db: AsyncSession = Depends(get_db),
+    ) -> Project:
+        project = await db.get(Project, project_id)
+        if project is None:
+            raise NotFoundError("Project not found")
+        if not context.has_project_permission(project.id, project.team_id, permission):
+            raise ForbiddenError("You do not have permission to perform this action in this project")
+        return project
+
+    return _dependency
 
 
 async def require_project_access(

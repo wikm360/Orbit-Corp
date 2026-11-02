@@ -22,10 +22,12 @@
 | `GET /teams/{id}/members` | عضو تیم/admin | `[{user, role}]` |
 | `POST /teams/{id}/members` `{user_id, role=member}` | leader/admin (leader شدن: admin) | 204، upsert |
 | `DELETE /teams/{id}/members/{user}` | leader/admin (حذف leader: admin) | 204، عضویت پروژه‌ها هم پاک |
-| `POST /teams/{id}/projects` `{name, description?}` | leader/admin | `ProjectRead{id,team_id,name,description}` |
+| `POST /teams/{id}/projects` `{name, description?}` | leader/admin | `ProjectRead{id,team_id,name,description,my_permissions}` |
 | `GET /teams/{id}/projects` | عضو تیم/admin | فیلتر برای member |
 | `GET /projects/mine` · `GET /projects/{id}` | لاگین / عضو پروژه | |
-| `GET /projects/{id}/members` | عضو پروژه | `[{user}]` |
+| `GET /projects/{id}/members` | عضو پروژه | `[{user, permissions}]` |
+| `PUT /projects/{id}/members/{user}/permissions` `{permissions:[…]}` | manager (leader/admin) | عضو با پرمیشن‌های جدید؛ نام ناشناخته 400، غیرعضو 404 |
+| `GET /project-permissions` | لاگین‌شده | نام پرمیشن‌های قابل‌واگذاری |
 | `POST /projects/{id}/members` `{user_id}` · `DELETE …/{user}` | manager | 204 |
 
 ## Documents

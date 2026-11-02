@@ -14,6 +14,8 @@
 
 **نقش داخل تیم** — `team_memberships.role` (`TeamRole`): `leader` یا `member`. یک نفر می‌تواند در تیم A لیدر و در تیم B عضو ساده باشد. (مفهوم «Leader Team» در سند اولیه‌ی نیازمندی.)
 
+**دسترسی واگذارشده‌ی پروژه** — `project_memberships.permissions` (JSONB، پیش‌فرض خالی؛ migration `0016`). فهرست مجاز در `projects/permissions.py`: `documents` (آپلود/حذف/تغییر نام/انتقال/کپی/پوشه/retry/cancel در فایل‌منیجر) و `memory` (حافظه‌ی پروژه). **روی هر پروژه جدا** است (در پروژه‌ی A بله، در B نه). فقط leader همان تیم، admin یا super_admin می‌دهد/می‌گیرد: `PUT /projects/{id}/members/{user_id}/permissions {permissions:[…]}` (نام ناشناخته 400، غیرعضو پروژه 404). leader/admin همیشه همه را دارند. **مدیریت اعضای پروژه و خود واگذاری هرگز واگذار نمی‌شود** (عضو نمی‌تواند دسترسی خودش را بالا ببرد). دسترسی مالی همان‌طور سراسری و فقط super_admin می‌ماند.
+
 سلسله‌مراتب سازمانی: `System Admin` ← `CEO(admin)` ← `Leader Team` ← `User`. «افراد باید توسط لیدر تیم به پروژه assign شوند و پروژه هم توسط لیدر ساخته می‌شود.»
 
 ## `UserContext` (`core/dependencies.py`)
@@ -24,6 +26,8 @@
 - `project_ids` — `get_user_project_ids`: عضویت پروژه **join‌شده با عضویت تیمِ همان پروژه**؛ یعنی عضویت پروژه‌ای که کاربر دیگر عضو تیمش نیست نادیده گرفته می‌شود
 - `is_admin` = `role in (SUPER_ADMIN, ADMIN)`
 - `leads_team(team_id)` = `is_admin or team_id in led_team_ids`
+- `project_permissions` — `{project_id: frozenset}` از همان query عضویت (بدون query اضافه)؛ `project_permission_set/has_project_permission(project_id, team_id, perm)` = leader/admin همه، وگرنه آنچه عضویت دارد
+- `project_permissions` — `{project_id: frozenset}` از همان query عضویت (بدون query اضافه)؛ `project_permission_set/has_project_permission(project_id, team_id, perm)` = leader/admin همه، وگرنه آنچه عضویت دارد (WebSocket هم همین را می‌سازد)
 - `is_project_member(project_id)` = `is_admin or project_id in project_ids`  ← ⚠️ **ادمین به‌طور خودکار عضو همه‌ی پروژه‌ها حساب می‌شود**
 
 هزینه: هر درخواست ۳ query اضافه برای ساخت context (+ query خود کاربر).
@@ -37,6 +41,7 @@
 | `require_admin` / `require_super_admin` | admin+super / فقط super | 403 |
 | `require_team_manager(team_id)` | `context.leads_team(team_id)` | 403 |
 | `require_project_manager(project_id)` | لیدر تیمِ پروژه یا admin → خروجی `Project` | 404 اگر پروژه نباشد |
+| `require_project_permission(perm)` | leader تیمِ پروژه، admin، یا عضو پروژه‌ای که `perm` به او داده شده → خروجی `Project` | 403 / 404 |
 | `require_project_access(project_id)` | عضو پروژه، یا لیدر تیم پروژه، یا admin → خروجی `Project` | |
 | `chat.dependencies.require_conversation_access` | شخصی: صاحب یا admin. گروهی: عضو پروژه (`is_project_member`) یا لیدر تیم پروژه | 403/404 |
 
@@ -56,9 +61,10 @@
 | لیست پروژه‌های تیم | عضو تیم: فقط پروژه‌های خودش | | همه‌ی پروژه‌های تیم | همه | همه |
 | افزودن/حذف عضو پروژه (فقط از اعضای همان تیم) | ✗ | ✗ | ✓ | ✓ | ✓ |
 | دیدن پروژه / اعضا / اسناد / چت گروهی | ✗ | ✓ | ✓ | ✓ | ✓ |
-| آپلود/retry/cancel/حذف/تغییر نام سند **پروژه** و همه‌ی عملیات فایل‌منیجر (پوشه، move/copy، آپلود آرشیو) | ✗ | ✗ | ✓ | ✓ | ✓ |
+| آپلود/retry/cancel/حذف/تغییر نام سند **پروژه** و همه‌ی عملیات فایل‌منیجر (پوشه، move/copy، آپلود آرشیو) | ✗ | فقط با پرمیشن `documents` | ✓ | ✓ | ✓ |
 | دیدن درخت پوشه‌ها و جست‌وجوی نام فایل | ✗ | ✓ | ✓ | ✓ | ✓ |
-| لیست/ساخت/ویرایش/حذف **حافظه‌ی پروژه** از REST | ✗ | ✗ | ✓ | ✓ | ✓ |
+| لیست/ساخت/ویرایش/حذف **حافظه‌ی پروژه** از REST | ✗ | فقط با پرمیشن `memory` | ✓ | ✓ | ✓ |
+| واگذاری/لغو پرمیشن پروژه به عضو | ✗ | ✗ | ✓ | ✓ | ✓ |
 | آپلود سند داخل **گفتگو** | صاحب گفتگو | هر شرکت‌کننده‌ی گروه | ✓ | ✓ | ✓ |
 | دیدن چت شخصی دیگران | ✗ | ✗ | ✗ | ✓ | ✓ |
 | تغییر نقش سراسری | ✗ | ✗ | ✗ | ✗ | ✓ |

@@ -13,9 +13,11 @@ from app.core.dependencies import (
     require_team_manager,
 )
 from app.core.exceptions import ForbiddenError
+from app.features.auth.models import User
 from app.features.auth.schemas import UserRead
 from app.features.projects import service
 from app.features.projects.models import Project
+from app.features.projects.permissions import PROJECT_PERMISSIONS
 
 router = APIRouter(tags=["projects"])
 
@@ -32,10 +34,25 @@ class ProjectRead(BaseModel):
     team_id: uuid.UUID
     name: str
     description: str | None
+    # What the caller may do here: everything for admins/the team's leader, else the delegated permissions.
+    my_permissions: list[str] = []
 
 
 class ProjectMemberRead(BaseModel):
     user: UserRead
+    permissions: list[str] = []
+
+
+class MemberPermissionsUpdate(BaseModel):
+    permissions: list[str]
+
+
+def _project_read(project: Project, context: UserContext) -> ProjectRead:
+    effective = context.project_permission_set(project.id, project.team_id)
+    return ProjectRead(
+        id=project.id, team_id=project.team_id, name=project.name, description=project.description,
+        my_permissions=[p for p in PROJECT_PERMISSIONS if p in effective],
+    )
 
 
 class ProjectMemberAdd(BaseModel):
@@ -49,7 +66,8 @@ async def create_project(
     context: UserContext = Depends(require_team_manager),
     db: AsyncSession = Depends(get_db),
 ):
-    return await service.create_project(db, team_id, payload.name, payload.description, context.id)
+    project = await service.create_project(db, team_id, payload.name, payload.description, context.id)
+    return _project_read(project, context)
 
 
 @router.get("/teams/{team_id}/projects", response_model=list[ProjectRead])
@@ -62,9 +80,9 @@ async def list_team_projects(
         raise ForbiddenError("You are not a member of this team")
     all_projects = await service.list_team_projects(db, team_id)
     if context.is_admin or team_id in context.led_team_ids:
-        return all_projects
+        return [_project_read(p, context) for p in all_projects]
     # Regular team members only see the projects they've actually been added to.
-    return [p for p in all_projects if p.id in context.project_ids]
+    return [_project_read(p, context) for p in all_projects if p.id in context.project_ids]
 
 
 @router.get("/projects/mine", response_model=list[ProjectRead])
@@ -72,12 +90,15 @@ async def list_my_projects(
     context: UserContext = Depends(get_current_user_context),
     db: AsyncSession = Depends(get_db),
 ):
-    return await service.list_user_projects(db, context.id)
+    return [_project_read(p, context) for p in await service.list_user_projects(db, context.id)]
 
 
 @router.get("/projects/{project_id}", response_model=ProjectRead)
-async def get_project(project: Project = Depends(require_project_access)):
-    return project
+async def get_project(
+    project: Project = Depends(require_project_access),
+    context: UserContext = Depends(get_current_user_context),
+):
+    return _project_read(project, context)
 
 
 @router.get("/projects/{project_id}/members", response_model=list[ProjectMemberRead])
@@ -86,7 +107,7 @@ async def list_project_members(
     db: AsyncSession = Depends(get_db),
 ):
     rows = await service.list_project_members(db, project.id)
-    return [ProjectMemberRead(user=UserRead.model_validate(user)) for user, _membership in rows]
+    return [ProjectMemberRead(user=UserRead.model_validate(user), permissions=list(membership.permissions or [])) for user, membership in rows]
 
 
 @router.post("/projects/{project_id}/members", status_code=204)
@@ -106,3 +127,22 @@ async def remove_project_member(
     db: AsyncSession = Depends(get_db),
 ):
     await service.remove_project_member(db, project.id, user_id)
+
+
+@router.get("/project-permissions", response_model=list[str])
+async def list_project_permissions(_: UserContext = Depends(get_current_user_context)):
+    """The delegable permission names."""
+    return list(PROJECT_PERMISSIONS)
+
+
+@router.put("/projects/{project_id}/members/{user_id}/permissions", response_model=ProjectMemberRead)
+async def set_member_permissions(
+    user_id: uuid.UUID,
+    payload: MemberPermissionsUpdate,
+    project: Project = Depends(require_project_manager),
+    db: AsyncSession = Depends(get_db),
+):
+    """Team leader / admin only (never delegable). Replaces the member's permission set in this project."""
+    membership = await service.set_member_permissions(db, project.id, user_id, payload.permissions)
+    user = await db.get(User, user_id)
+    return ProjectMemberRead(user=UserRead.model_validate(user), permissions=list(membership.permissions))

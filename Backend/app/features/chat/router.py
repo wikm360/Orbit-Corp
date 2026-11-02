@@ -35,7 +35,7 @@ from app.features.documents.schemas import (
     DocumentUploadResponse,
 )
 from app.features.projects.models import Project
-from app.features.projects.service import get_user_project_ids
+from app.features.projects.service import get_user_project_permissions
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 settings = get_settings()
@@ -196,8 +196,9 @@ async def _authenticate_websocket(db: AsyncSession, token: str) -> UserContext |
 
     team_ids = await get_user_team_ids(db, user.id)
     led_team_ids = await get_user_led_team_ids(db, user.id)
-    project_ids = await get_user_project_ids(db, user.id)
-    return UserContext(user=user, team_ids=team_ids, led_team_ids=led_team_ids, project_ids=project_ids)
+    project_permissions = await get_user_project_permissions(db, user.id)
+    return UserContext(user=user, team_ids=team_ids, led_team_ids=led_team_ids,
+                       project_ids=list(project_permissions), project_permissions=project_permissions)
 
 
 @router.websocket("/conversations/{conversation_id}/ws")

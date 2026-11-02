@@ -7,7 +7,7 @@ import { Button } from "@/shared/components/ui/Button";
 import { Modal } from "@/shared/components/ui/Modal";
 import { Select } from "@/shared/components/ui/Select";
 import { friendlyErrorMessage } from "@/shared/lib/errorMessages";
-import { loadWorkspace, type WorkspaceOverview } from "@/shared/lib/workspaceApi";
+import { hasProjectPermission, loadWorkspace, type WorkspaceOverview } from "@/shared/lib/workspaceApi";
 
 import { CATEGORY_OPTIONS, MemoryForm } from "../components/MemoryForm";
 import { CATEGORY_META, MemoryCard } from "../components/MemoryCard";
@@ -43,7 +43,7 @@ export function MemoryScreen() {
   const [deletingMemory, setDeletingMemory] = useState<ProjectMemory | null>(null);
 
   const managedProjects = useMemo(
-    () => workspace?.projects.filter((project) => workspace.managedTeamIds.has(project.team_id)) ?? [],
+    () => workspace?.projects.filter((project) => workspace.managedTeamIds.has(project.team_id) || hasProjectPermission(project, "memory")) ?? [],
     [workspace]
   );
   const selectedProject = managedProjects.find((project) => project.id === projectId) ?? null;
@@ -56,7 +56,7 @@ export function MemoryScreen() {
       .then((data) => {
         if (cancelled) return;
         setWorkspace(data);
-        const manageable = data.projects.filter((project) => data.managedTeamIds.has(project.team_id));
+        const manageable = data.projects.filter((project) => data.managedTeamIds.has(project.team_id) || hasProjectPermission(project, "memory"));
         setProjectId((current) => manageable.some((project) => project.id === current) ? current : manageable[0]?.id ?? null);
       })
       .catch((err) => {

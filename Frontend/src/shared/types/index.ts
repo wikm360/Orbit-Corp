@@ -22,7 +22,11 @@ export interface Project {
   team_id: string;
   name: string;
   description: string | null;
+  /** What the caller may do in this project: everything for admins/the team leader, else the delegated permissions. */
+  my_permissions?: ProjectPermission[];
 }
+
+export type ProjectPermission = "documents" | "memory";
 
 export interface TeamMembership {
   user: User;
@@ -31,4 +35,5 @@ export interface TeamMembership {
 
 export interface ProjectMembership {
   user: User;
+  permissions?: ProjectPermission[];
 }
