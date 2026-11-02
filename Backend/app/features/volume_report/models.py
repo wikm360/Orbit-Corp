@@ -9,7 +9,7 @@ from decimal import Decimal
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
-    Boolean, Date, DateTime, Enum, Float, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, func, text,
+    BigInteger, Boolean, Date, DateTime, Enum, Float, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, func, text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -450,6 +450,21 @@ class AgentStep(Base):
     arguments: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
     result_summary: Mapped[str] = mapped_column(Text, default="", nullable=False)
     duration_ms: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = _now()
+
+
+class Activity(Base):
+    """Append-only, user-facing timeline of what a report job did (never holds quantities). `id` is the cursor for polling."""
+
+    __tablename__ = "vr_activity"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    report_id: Mapped[uuid.UUID] = _fk("vr_reports", "CASCADE", index=True)
+    attempt: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    phase: Mapped[str] = mapped_column(String(20), nullable=False)
+    kind: Mapped[str] = mapped_column(String(20), default="info", nullable=False)
+    title: Mapped[str] = mapped_column(String(400), nullable=False)
+    detail: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
     created_at: Mapped[datetime] = _now()
 
 

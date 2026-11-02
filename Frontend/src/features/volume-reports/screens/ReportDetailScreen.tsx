@@ -11,17 +11,19 @@ import { friendlyErrorMessage } from "@/shared/lib/errorMessages";
 
 import { volumeReportApi, type ExportFormat } from "../api/volumeReportApi";
 import { Card, ErrorBox, LoadingBlock, ReportStatusBadge, Tabs } from "../components/common";
+import { ActivityPanel } from "../components/ActivityPanel";
 import { ProgressCard } from "../components/ProgressCard";
 import { ResultsView } from "../components/ResultsView";
 import { ReviewPanel } from "../components/ReviewPanel";
 import { SourcesPanel } from "../components/SourcesPanel";
+import { useReportActivity } from "../hooks/useReportActivity";
 import { useRunProgress } from "../hooks/useRunProgress";
 import { runSoon } from "../lib/defer";
 import { formatJalaliDate, formatJalaliDateTime, toFa } from "../lib/jalali";
 import { GATE_HINTS, PERIOD_LABELS, gateLabel, parseGateError } from "../lib/status";
 import type { CatalogItem, GateCause, Progress, ReportDetail } from "../types";
 
-type TabId = "results" | "review" | "sources";
+type TabId = "results" | "review" | "sources" | "activity";
 
 export function ReportDetailScreen({ reportId }: { reportId: string }) {
   const router = useRouter();
@@ -52,6 +54,7 @@ export function ReportDetailScreen({ reportId }: { reportId: string }) {
 
   const refresh = useCallback(async () => { await load(); setRefreshKey((k) => k + 1); }, [load]);
 
+  const activity = useReportActivity(reportId, report?.status === "processing");
   useRunProgress(reportId, report?.status === "processing", (p) => setProgress(p.progress), () => { void refresh(); });
 
   async function act<T>(name: string, fn: () => Promise<T>, done?: string): Promise<T | undefined> {
@@ -135,16 +138,18 @@ export function ReportDetailScreen({ reportId }: { reportId: string }) {
         </p>
       )}
       {processing && <ProgressCard progress={progress} />}
+      {(processing || report.status === "failed") && <ActivityPanel items={activity.items} loaded={activity.loaded} processing={processing} progress={progress} />}
 
       {!processing && report.status !== "draft" && report.status !== "failed" && (
         <>
-          <Tabs<TabId> value={tab} onChange={setTab} tabs={[{ id: "results", label: "نتایج" }, { id: "review", label: "بازبینی", badge: openQuestions }, { id: "sources", label: "منابع و هشدارها" }]} />
+          <Tabs<TabId> value={tab} onChange={setTab} tabs={[{ id: "results", label: "نتایج" }, { id: "review", label: "بازبینی", badge: openQuestions }, { id: "sources", label: "منابع و هشدارها" }, { id: "activity", label: "گزارش فعالیت" }]} />
           {tab === "results" && <ResultsView reportId={reportId} catalog={catalog} refreshKey={refreshKey} />}
           {tab === "review" && (
             <ReviewPanel reportId={reportId} catalog={catalog} editable={editable} canContinue={canContinue}
               onChanged={() => void refresh()} onContinue={async () => { await volumeReportApi.continueRun(reportId); await load(); }} />
           )}
           {tab === "sources" && <SourcesPanel reportId={reportId} refreshKey={refreshKey} />}
+          {tab === "activity" && <ActivityPanel items={activity.items} loaded={activity.loaded} processing={false} />}
         </>
       )}
       {report.status === "draft" && report.files.length > 0 && (

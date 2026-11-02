@@ -115,6 +115,17 @@ async def test_pass_classifies_asks_and_never_leaks_quantities(client, tmp_path,
     assert [o["label"] for o in agent_q["spec"]["options"][:2]] == ["آسفالت بیندر", "آسفالت توپکا"]  # labels from code
     assert (await client.get(f"{API}/{rid}/progress", headers=leader)).json()["status"] == "awaiting_user"
 
+    feed = (await client.get(f"{API}/{rid}/activity", headers=leader)).json()
+    titles = [i["title"] for i in feed["items"]]
+    assert feed["status"] == "awaiting_user" and feed["items"][0]["phase"] == "start" and feed["items"][-1]["phase"] == "done"
+    assert {"parse", "classify", "agent", "compute"} <= {i["phase"] for i in feed["items"]}
+    assert any(t.startswith("برای شما سؤال ثبت شد") for t in titles) and any("به آیتم‌ها نسبت داده شد" in t for t in titles)
+    assert [i["id"] for i in feed["items"]] == sorted(i["id"] for i in feed["items"])
+    cursor = feed["items"][2]["id"]
+    later = (await client.get(f"{API}/{rid}/activity?after_id={cursor}", headers=leader)).json()["items"]
+    assert later and all(i["id"] > cursor for i in later)
+    assert not re.search(r"\d{4}\.\d", json.dumps(feed["items"], ensure_ascii=False))  # no quantities in the timeline
+
 
 async def test_answer_loop_confirms_remembers_and_continue_requeues(client, tmp_path, monkeypatch, _env):
     provider, leader, rid, _ = await _go(client, tmp_path, monkeypatch, "b", FULL_PASS)

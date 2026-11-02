@@ -4,7 +4,7 @@ export type PeriodType = "week" | "month";
 export type ReportStatus = "draft" | "processing" | "awaiting_user" | "needs_review" | "ready" | "published" | "failed";
 export type SiteKind = "road" | "mining" | "other";
 
-export interface Progress { step?: string; done?: number; total?: number; message?: string }
+export interface Progress { step?: string; done?: number; total?: number; message?: string; agent_step?: number; max_steps?: number }
 
 export interface ReportSummary {
   id: string;
@@ -109,3 +109,7 @@ export interface VolumeTableArtifact {
   type: "volume_table"; version: number; report_id: string; title: string; period: string;
   columns: string[]; rows: string[][]; unit_by_row: string[]; notes: string[];
 }
+
+export type ActivityKind = "info" | "step" | "success" | "warn" | "error" | "question";
+export interface ActivityItem { id: number; attempt: number; phase: string; kind: ActivityKind; title: string; detail: Record<string, unknown>; created_at: string }
+export interface ActivityResponse { status: ReportStatus; progress: Progress; items: ActivityItem[] }

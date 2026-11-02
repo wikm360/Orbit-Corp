@@ -12,7 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.features.volume_report import questions
+from app.features.volume_report import activity, questions
 from app.features.volume_report.agent.index import GroupIndex
 from app.features.volume_report.agent.playbook import build_system_prompt
 from app.features.volume_report.agent.tools import ToolContext, VrToolRegistry
@@ -67,12 +67,17 @@ async def run_pass(db: AsyncSession, report: Report, provider: LLMProvider, lexi
     try:
         for step in range(1, settings.vr_agent_max_steps + 1):
             last = step == settings.vr_agent_max_steps
+            total_groups = len(index.groups)
+            report.progress = {"step": "agent", "done": total_groups - len(index.unresolved()), "total": total_groups,
+                               "message": f"گام {step} از {settings.vr_agent_max_steps}", "agent_step": step, "max_steps": settings.vr_agent_max_steps}
+            await db.commit()  # the UI shows "waiting for the model" with the step number while the request is in flight
             result = await provider.complete(messages, tools=registry.specs(), tool_choice="none" if last else "auto")
             run.prompt_tokens += result["usage"]["prompt_tokens"]
             run.completion_tokens += result["usage"]["completion_tokens"]
             run.steps = step
             calls = result["tool_calls"]
             if not calls:
+                await activity.log_activity(db, report.id, "agent", "مدل بدون انجام کار پاسخ داد؛ گروه‌های باقی‌مانده باز می‌مانند", kind="warn")
                 break  # the model answered in prose without finishing: leftovers stay open below
             messages.append({
                 "role": "assistant", "content": result["content"] or None,
@@ -92,6 +97,8 @@ async def run_pass(db: AsyncSession, report: Report, provider: LLMProvider, lexi
                     arguments = {"raw": call["arguments"][:200]}
                 db.add(AgentStep(run_id=run.id, step_no=step, tool_name=call["name"], arguments=arguments if isinstance(arguments, dict) else {},
                                  result_summary=text[:300], duration_ms=int((time.monotonic() - started) * 1000)))
+                title, kind, detail = activity.describe_tool(call["name"], arguments if isinstance(arguments, dict) else {}, text, ok)
+                await activity.log_activity(db, report.id, "agent", title, kind=kind, detail={**detail, "step": step}, commit=False)
                 messages.append({"role": "tool", "tool_call_id": call["id"], "content": text[:6000]})
                 if call["name"] == "finish_pass" and ok:
                     finished = True
@@ -111,6 +118,8 @@ async def run_pass(db: AsyncSession, report: Report, provider: LLMProvider, lexi
         run = await db.get(AgentRun, run_id)
         run.status, run.error_message = RunStatus.FAILED, f"{type(exc).__name__}"
         _mark_leftovers(db, report_id, await GroupIndex.load(db, report), "agent_failed")
+        await activity.log_activity(db, report_id, "agent", "ارتباط با مدل یا پردازش پاسخ آن ناموفق بود؛ گروه‌های باقی‌مانده برای تصمیم شما می‌مانند",
+                                    kind="error", detail={"error": type(exc).__name__}, commit=False)
     run.finished_at = datetime.now(timezone.utc)
     await db.commit()
     return run

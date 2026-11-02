@@ -204,3 +204,21 @@ def test_hidden_sheets_are_marked_and_kept_out_of_ingestion_text(tmp_path):
 
     text = "\n".join(p.text for p in parse_document_pages(str(path)))
     assert "visible-row" in text and "hidden-row" not in text
+
+
+def test_huge_numbers_do_not_overflow_sqlite(tmp_path):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "BigNums"
+    ws.append(["id", "huge_val", "huge_text"])
+    # 4.27e21 and 2**65 both exceed signed 64-bit int (2**63 - 1)
+    ws.append([1, 4.27363213165574e+21, str(2**65)])
+    path = tmp_path / "big.xlsx"
+    wb.save(path)
+
+    tables = spreadsheet.load_tables(str(path))
+    # Querying should succeed without OverflowError: Python int too large to convert to SQLite INTEGER
+    res = _query(tables, 'SELECT _row, huge_val FROM BigNums WHERE id = 1')
+    assert len(res.rows) == 1
+    assert res.rows[0][0] == 2
+    assert isinstance(res.rows[0][1], (int, float))

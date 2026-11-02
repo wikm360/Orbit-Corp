@@ -130,6 +130,7 @@
 | `POST /` · `GET /?project_id=&status=` · `GET/DELETE /{id}` | ساخت draft، فهرست، جزئیات (+`issues`)، حذف draft/failed |
 | `PUT /{id}/files` | `{files:[{document_id, company_id}]}` → `suggested_company` هر فایل |
 | `POST /{id}/run` · `POST /{id}/continue` · `POST /{id}/recompute` · `GET /{id}/progress` | اجرا (202، صف جدا)، دور بعد پس از پاسخ، محاسبه‌ی مجدد، polling |
+| `GET /{id}/activity?after_id=&limit=` | تاریخچه‌ی فعالیت job (قدیمی‌ترین اول) + `status`/`progress`؛ با `after_id` = آخرین `id` دریافتی poll می‌شود |
 | `GET /{id}/sources` | `sheet_log` و هشدارها به‌تفکیک فایل |
 | `GET /{id}/questions?status=` · `POST …/{qid}/answer` · `POST …/{qid}/skip` | کارت‌ها |
 | `GET /{id}/review/groups?state=` · `POST /{id}/review/confirm` | تأیید/اصلاح گروهی |

@@ -26,11 +26,14 @@ from app.core.exceptions import BadRequestError
 
 logger = logging.getLogger(__name__)
 
-TABLES_VERSION = 2
+TABLES_VERSION = 3
 MAX_ROWS_PER_SHEET = 20000
 MAX_SQL_LENGTH = 4000
 _HEADER_SCAN_ROWS = 10
 _FUZZY_MAX_DISTINCT = 5000
+
+_SQLITE_MIN_INT = -9223372036854775808
+_SQLITE_MAX_INT = 9223372036854775807
 
 _FA_TRANSLATE = str.maketrans(
     {
@@ -100,13 +103,19 @@ class QueryResult:
 
 
 def _to_number(value):
-    """int/float for numeric cells and numeric-looking text ('15,979,160', '۱۲٫۵'); None otherwise (leading zeros stay text)."""
+    """int/float for numeric cells and numeric-looking text ('15,979,160', '۱۲٫۵'); None otherwise (leading zeros stay text).
+
+    Integers outside SQLite's signed 64-bit integer range are kept as float so `conn.executemany` never raises
+    OverflowError when binding parameters.
+    """
     if isinstance(value, bool):
         return None
     if isinstance(value, int):
-        return value
+        return value if _SQLITE_MIN_INT <= value <= _SQLITE_MAX_INT else float(value)
     if isinstance(value, float):
-        return int(value) if value.is_integer() else value
+        if _SQLITE_MIN_INT <= value <= _SQLITE_MAX_INT and value.is_integer():
+            return int(value)
+        return value
     if isinstance(value, str):
         text = normalize_text(value)
         if not _NUMERIC_TEXT.match(text):
@@ -119,7 +128,9 @@ def _to_number(value):
             number = float(text)
         except ValueError:
             return None
-        return int(number) if number.is_integer() and "." not in text else number
+        if "." not in text and number.is_integer() and _SQLITE_MIN_INT <= number <= _SQLITE_MAX_INT:
+            return int(number)
+        return number
     return None
 
 
@@ -552,6 +563,17 @@ def _hint_columns(table: Table, limit: int = 40) -> list[Column]:
     return (named + [c for c in table.columns if c.synthetic])[:limit]
 
 
+def _sqlite_safe_val(val):
+    """Guarantees a cell value can be bound by sqlite3 without OverflowError."""
+    if isinstance(val, int) and not isinstance(val, bool):
+        if not (_SQLITE_MIN_INT <= val <= _SQLITE_MAX_INT):
+            try:
+                return float(val)
+            except OverflowError:
+                return str(val)
+    return val
+
+
 def run_query(tables: list[Table], sql: str, *, max_rows: int, timeout_seconds: float) -> QueryResult:
     """Runs one read-only SELECT over the tables (blocking: call from a thread)."""
     prepared, literals, sheets_used = _prepare_sql(sql)
@@ -568,7 +590,7 @@ def run_query(tables: list[Table], sql: str, *, max_rows: int, timeout_seconds: 
             placeholders = ", ".join("?" for _ in range(len(table.columns) + 1))
             conn.executemany(
                 f"INSERT INTO {_quote(table.name)} VALUES ({placeholders})",
-                ([number] + row for number, row in zip(table.row_numbers, table.rows)),
+                ([number] + [_sqlite_safe_val(v) for v in row] for number, row in zip(table.row_numbers, table.rows)),
             )
         conn.commit()
         conn.execute("PRAGMA query_only = ON")

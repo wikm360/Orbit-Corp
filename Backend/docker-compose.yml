@@ -85,10 +85,9 @@ services:
       redis:
         condition: service_healthy
 
-  # Volume-report jobs (own queue). Only started with `--profile volume-report` (needs VOLUME_REPORT_ENABLED=true).
+  # Volume-report jobs (own queue, so heavy parsing never blocks ingestion). Starts with a plain `up`; idle when VOLUME_REPORT_ENABLED=false.
   vr-worker:
     <<: *app
-    profiles: ["volume-report"]
     command: python -m workers.volume_report_worker
     deploy:
       replicas: 1

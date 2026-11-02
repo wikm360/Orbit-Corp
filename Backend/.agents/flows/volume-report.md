@@ -40,7 +40,7 @@
 | `service.py` | دسترسی، گزارش/فایل، `recompute`، `gate_causes`، review/confirm، results/lines/trace، publish/reopen |
 | `pipeline.py` | job؛ `run_report_sync` ورودی RQ |
 | `router.py`, `schemas.py`, `export.py` | API (xlsx/csv RTL با محافظ formula-injection) |
-| `workers/volume_report_worker.py` | worker صف جدا؛ compose: سرویس `vr-worker` با `--profile volume-report` |
+| `workers/volume_report_worker.py` | worker صف جدا؛ compose: سرویس `vr-worker` (با `up` معمولی بالا می‌آید) |
 
 ### قواعد و تصمیم‌های پیاده‌سازی (کد درست است)
 - **دسترسی:** `check_project_access` = معادل `require_project_access` (عضو پروژه، leader تیم والد، admin). گزارش ناموجود 404، غیرعضو 403. تنظیمات (ساخت/ویرایش شرکت، کارگاه، پارامتر تبدیل) فقط `is_admin` یا `led_team_ids` غیرتهی؛ خواندن برای هر کاربر لاگین‌شده.
@@ -94,7 +94,14 @@
 - **هم‌زمانی:** (۱) claim اتمیک `UPDATE … WHERE status != published AND (status != processing OR updated_at < now()-2×VR_JOB_TIMEOUT)` → run هم‌زمان 409، و گزارش `processing`ی که worker‌اش مرده دوباره قابل claim است؛ (۲) `pg_try_advisory_lock` روی اتصال جدا در `run_report` (job تکراری skip می‌شود)؛ (۳) `publish`/`reopen` با `SELECT … FOR UPDATE`.
 - **idempotency:** snapshot یکتا به‌ازای گزارش، reopen فقط یک‌بار، سؤال تکراری برای همان گروه رد می‌شود.
 - **تله‌ی دانستنی:** تست‌هایی که `review/confirm` را صدا می‌زنند باید `memory.get_embedding_provider` را stub کنند (وگرنه منتظر شبکه می‌مانند).
-- **deploy:** سرویس `vr-worker` (profile `volume-report`) را فقط وقتی `VOLUME_REPORT_ENABLED=true` است بالا بیاورید؛ در prod همراه `-f docker-compose.yml -f docker-compose.prod.yml --profile volume-report`. `xlrd` در `requirements.txt` است (image باید rebuild شود).
+- **deploy:** سرویس `vr-worker` با `up` معمولی (در prod همراه `-f docker-compose.yml -f docker-compose.prod.yml`) بالا می‌آید؛ بدون worker، `POST /run` فقط job را در صف می‌گذارد و گزارش برای همیشه روی «در حال پردازش» می‌ماند. `xlrd` در `requirements.txt` است (image باید rebuild شود).
+
+## گزارش فعالیت (`activity.py`، جدول `vr_activity`، migration `0015_vr_activity`)
+- timeline قابل‌نمایش به کاربر از کار job: هر مرحله‌ی pipeline (parse هر فایل/کارگاه، classify با شمارش علت‌ها، شروع/پایان agent، compute، نتیجه) و هر فراخوانی ابزار agent یک ردیف می‌شود. **در DB ذخیره می‌شود** نه فقط روی stream، پس با خروج و بازگشت به صفحه کل تاریخچه دیده می‌شود.
+- عنوان‌ها (فارسی) را **کد** از نام ابزار/نتیجه می‌سازد (`describe_tool`)، نه متن مدل؛ فقط شمارش، هرگز کمیت (تست: نبودن عدد کمیتی در فید). تنها استثنا متن `prompt` سؤال agent است.
+- `attempt` = شماره‌ی اجرا (هر job یکی؛ `new_attempt=True` در `_run_locked`)؛ `id` (BigInteger) همان cursor است. `kind`: `info|step|success|warn|error|question`.
+- `log_activity(..., commit=False)` وقتی caller بلافاصله commit می‌کند. در runner، `report.progress` در هر گام `{step:"agent", agent_step, max_steps, done, total}` به‌روز و commit می‌شود (برای «در انتظار پاسخ مدل — گام x از y»).
+- گزارش حذف‌شده → ردیف‌ها CASCADE پاک می‌شوند.
 
 ## فرانت‌اند
 پیاده‌سازی و قواعدش در `Frontend/FRONTEND_PLAN.md` (بخش «ماژول گزارش حجم عملیات»). نکات قراردادی که از بک‌اند می‌آید: فعال‌بودن ماژول با probe روی `GET /volume-reports/catalog` (۴۰۴ = خاموش)؛ `review/groups` حالا `confidence` دارد و `/catalog` حالا `rollup_of`؛ خطای قفل انتشار پیام `Publish blocked: [{"code","count"}…]` است.

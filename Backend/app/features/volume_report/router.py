@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.dependencies import UserContext, get_current_user_context
 from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
-from app.features.volume_report import export, memory, questions, service
+from app.features.volume_report import activity, export, memory, questions, service
 from app.features.volume_report.models import Company, Conversion, Item, Report, ReportStatus, Site
 from app.features.volume_report.schemas import (
     CompanyWrite, ConfirmRequest, ConversionWrite, FilesUpdate, ItemWrite, LexiconWrite, ReportCreate, ReportRead, SiteUpdate,
@@ -259,6 +259,13 @@ async def recompute(report: Report = Depends(get_report_for_member), db: AsyncSe
 @router.get("/{report_id}/progress")
 async def progress(report: Report = Depends(get_report_for_member)):
     return {"status": report.status.value, "progress": report.progress, "error_message": report.error_message}
+
+
+@router.get("/{report_id}/activity")
+async def report_activity(after_id: int = Query(0, ge=0), limit: int = Query(500, ge=1, le=1000), report: Report = Depends(get_report_for_member),
+                          db: AsyncSession = Depends(get_db)):
+    """Timeline of what the jobs did (oldest first). Poll with `after_id` = the last `id` received."""
+    return {"status": report.status.value, "progress": report.progress, "items": await activity.list_activity(db, report.id, after_id, limit)}
 
 
 @router.get("/{report_id}/sources")

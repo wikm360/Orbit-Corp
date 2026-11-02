@@ -3,7 +3,7 @@ import { API_BASE_URL, ApiError, apiRequest, authorizedFetch, parseErrorMessage 
 import type {
   AnswerPayload, CatalogItem, Company, ConfirmItem, Conversion, DecisionRow, FileSelection, LexiconEntry, LineRow, Question,
   ReportCreate, ReportDetail, ReportStatus, ReportSummary, ResultScope, ResultsResponse, ReviewGroup, SelectedFile, SettingsItem,
-  SettingsItemWrite, Site, SiteKind, SourceInfo, ProgressResponse, GateCause,
+  SettingsItemWrite, Site, SiteKind, SourceInfo, ProgressResponse, GateCause, ActivityResponse,
 } from "../types";
 
 const BASE = "/volume-reports";
@@ -26,6 +26,7 @@ export const volumeReportApi = {
   continueRun: (id: string) => send<ReportSummary>(`/${id}/continue`, "POST"),
   recompute: (id: string) => send<{ issues: GateCause[] }>(`/${id}/recompute`, "POST"),
   progress: (id: string) => apiRequest<ProgressResponse>(`${BASE}/${id}/progress`),
+  activity: (id: string, afterId = 0) => apiRequest<ActivityResponse>(`${BASE}/${id}/activity${qs({ after_id: afterId || undefined })}`),
   sources: (id: string) => apiRequest<SourceInfo[]>(`${BASE}/${id}/sources`),
   questions: (id: string, status?: string) => apiRequest<Question[]>(`${BASE}/${id}/questions${qs({ status })}`),
   answer: (id: string, questionId: string, payload: AnswerPayload) => send<Question>(`/${id}/questions/${questionId}/answer`, "POST", payload),
