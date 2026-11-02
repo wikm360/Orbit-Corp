@@ -111,6 +111,13 @@ def open_workbook(path: str) -> Iterator[WorkbookData]:
                 data = _open_xlsx(path, stack)
             except Exception as error:
                 raise BadRequestError("The spreadsheet could not be read.") from error
+        elif suffix == ".pdf":
+            try:
+                from app.features.volume_report.extraction.pdf_extractor import open_pdf_as_workbook
+
+                data = open_pdf_as_workbook(path)
+            except Exception as error:
+                raise BadRequestError("The PDF document could not be read.") from error
         else:
-            raise BadRequestError("Only .xls, .xlsx and .xlsm files are supported.")
+            raise BadRequestError("Only .xls, .xlsx, .xlsm and .pdf files are supported.")
         yield data

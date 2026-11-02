@@ -217,12 +217,14 @@ async def test_access_rules(client, tmp_path):
     other_project = (await client.post(f"/api/v1/teams/{team_id}/projects", json={"name": "other"}, headers=leader)).json()["id"]
     foreign = await _document(tmp_path, other_project, leader_id)
     processing = await _document(tmp_path, project_id, leader_id, status=DocumentStatus.PROCESSING)
+    docx = await _document(tmp_path, project_id, leader_id, name="a.docx")
     pdf = await _document(tmp_path, project_id, leader_id, name="a.pdf")
     base = f"{API}/{rid}/files"
     put = lambda d, c=company: client.put(base, json={"files": [{"document_id": d, "company_id": c}]}, headers=leader)
     assert (await put(foreign)).status_code == 404
     assert (await put(processing)).status_code == 400
-    assert (await put(pdf)).status_code == 400
+    assert (await put(docx)).status_code == 400
+    assert (await put(pdf)).status_code == 200
     assert (await put(doc, str(uuid.uuid4()))).status_code == 404
     # a report of another project is invisible to its members (403: not a member)
     other_report = (await client.post(API, json={"project_id": other_project, "title": "o", "period_type": "week", "period_start": "2026-01-01",

@@ -75,7 +75,11 @@ def find_layout(rows: list[list[Any]]) -> tuple[int, dict[str, int | None]] | No
             continue
         activity = next((i for i, label in enumerate(labels) if label == "فعالیت"), None)
         sharh = next((i for i, label in enumerate(labels) if label == "شرح"), None)
-        desc = activity if activity is not None else sharh
+        desc_compound = next(
+            (i for i, label in enumerate(labels) if label in {"شرح فعالیت", "شرح عملیات", "شرح کار", "شرح آیتم", "آیتم"}),
+            None,
+        )
+        desc = activity if activity is not None else (sharh if sharh is not None else desc_compound)
         if desc is None:
             continue
         section: int | None = sharh if sharh is not None and sharh != desc else None
@@ -93,7 +97,7 @@ def extract_site_name(rows: list[list[Any]], sheet_name: str) -> str:
                 continue
             text = light_clean(cell)
             squashed = normalize_text(text)
-            if "پروژه" not in squashed or not ("درآمد" in squashed or "درامد" in squashed):
+            if "پروژه" not in squashed:
                 continue
             after = text.split("پروژه", 1)[1]
             after = re.split(r"\s+در\s+ماه\b", after, maxsplit=1)[0]
@@ -102,6 +106,7 @@ def extract_site_name(rows: list[list[Any]], sheet_name: str) -> str:
             if name:
                 return name
     fallback = re.sub(r"در[آا]مد", "", light_clean(sheet_name))
+    fallback = re.sub(r"\(صفحه\s*\d+\)", "", fallback)
     return re.sub(r"\s+", " ", fallback).strip(" -_") or sheet_name.strip()
 
 

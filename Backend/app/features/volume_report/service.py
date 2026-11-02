@@ -30,7 +30,7 @@ from app.features.volume_report.seed import bump_catalog_version, current_catalo
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-EXCEL_SUFFIXES = {".xls", ".xlsx", ".xlsm"}
+EXCEL_SUFFIXES = {".xls", ".xlsx", ".xlsm", ".pdf"}
 _FROZEN = (ReportStatus.PUBLISHED, ReportStatus.PROCESSING)
 
 
@@ -114,7 +114,7 @@ async def set_files(db: AsyncSession, report: Report, selections: list[FileSelec
         if document.status != DocumentStatus.READY:
             raise BadRequestError("Document is not ready")
         if Path(document.filename).suffix.lower() not in EXCEL_SUFFIXES:
-            raise BadRequestError("Only .xls, .xlsx and .xlsm files are supported")
+            raise BadRequestError("Only .xls, .xlsx, .xlsm and .pdf files are supported")
         company = await db.get(Company, sel.company_id)
         if company is None or not company.is_active:
             raise NotFoundError("Company not found")

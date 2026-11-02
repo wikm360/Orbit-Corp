@@ -13,7 +13,8 @@
 | `seed_data.py` | seed واژگان (پیوست الف) و نگاشت `hard_exclusion` → `exclude_reason`؛ فاز ۱ همین داده را در `vr_lexicon` می‌ریزد |
 | `extraction/units.py` | `normalize_unit` → `unit_norm` ∈ {m3,m2,m,kg,t,m2cm,m3km,hr,lump,series,pct,ea,other} + `unit_dim` |
 | `extraction/normalize.py` | `Lexicon` (توکن‌گذاری روی **کلمه** با طولانی‌ترین عبارت اول؛ «زیر اساس» → `SUBBASE` نه `BASE`)، `role_hint`، `group_key`، `parse_quantity` (Decimal با ۴ رقم اعشار) |
-| `extraction/workbook.py` | `open_workbook`: `.xlsx/.xlsm` با openpyxl (`data_only`, `read_only`)، `.xls` با xlrd و fallback به `converted_copy`؛ سقف ۴۰۰×۴۰؛ blocking → فقط در worker/thread |
+| `extraction/workbook.py` | `open_workbook`: `.xlsx/.xlsm` با openpyxl (`data_only`, `read_only`)، `.xls` با xlrd و fallback به `converted_copy`، `.pdf` برداری با `pdf_extractor`؛ سقف ۴۰۰×۴۰؛ blocking → فقط در worker/thread |
+| `extraction/pdf_extractor.py` | استخراج جداول PDFهای برداری بر اساس مختصات متنی $(X, Y)$ و تبدیل هر صفحه به یک `SheetData` مجازی بدون نیاز به OCR/LLM |
 | `extraction/probe.py` | رده‌بندی شیت‌ها (`hidden/planned/expense/income/other`) و `suggest_company` |
 | `extraction/income_parser.py` | پیدا کردن سرتیتر/ستون‌ها با برچسب، توقف روی «جمع»، رد ردیف خالی، carry-forward عنوان بخش، نام کارگاه، `twin_rows`، هشدار ماه |
 | `extraction/runner.py` | `extract_file(path, lexicon, period_label)` → `sheet_log` + شیت‌های parse‌شده + هشدارها |
@@ -44,7 +45,7 @@
 
 ### قواعد و تصمیم‌های پیاده‌سازی (کد درست است)
 - **دسترسی:** `check_project_access` = معادل `require_project_access` (عضو پروژه، leader تیم والد، admin). گزارش ناموجود 404، غیرعضو 403. تنظیمات (ساخت/ویرایش شرکت، کارگاه، پارامتر تبدیل) فقط `is_admin` یا `led_team_ids` غیرتهی؛ خواندن برای هر کاربر لاگین‌شده.
-- **فایل:** `document.project_id == report.project_id` (وگرنه 404)، `READY`، پسوند اکسل (400)؛ مسیر فقط از `Document.file_path` و باید داخل `UPLOAD_DIR` باشد (در زمان run؛ تخطی → فایل `failed`).
+- **فایل:** `document.project_id == report.project_id` (وگرنه 404)، `READY`، پسوند اکسل یا پی‌دی‌اف (`.xls, .xlsx, .xlsm, .pdf`) (400)؛ مسیر فقط از `Document.file_path` و باید داخل `UPLOAD_DIR` باشد (در زمان run؛ تخطی → فایل `failed`).
 - **اولویت طبقه‌بندی هر گروه:** تصمیم human قبلی همان گزارش (re-run حفظش می‌کند) > قاعده‌ی سخت (`hard_exclusion`) > واحد غیرفیزیکی/ساعت (`nonphysical`) > حافظه‌ی دقیق (`vr_decisions.key_hash == group_key`) > `needs_input`.
 - `remember_scope=global` در `review/confirm` در `vr_decisions` upsert می‌کند (بدون embedding) و `catalog_version` را بالا می‌برد؛ `line` فقط در همان گزارش می‌ماند.
 - **مجموع‌ها از مقدار گردنشده‌ی تبدیل‌شده** ساخته می‌شوند (نه جمع اعداد گردشده)؛ سپس ۴ رقم اعشار. مثال: rebar 43.1669.
