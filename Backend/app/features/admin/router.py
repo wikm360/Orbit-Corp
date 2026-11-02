@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,7 +16,8 @@ from app.core.dependencies import (
 from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
 from app.features.admin import service
 from app.features.admin.ocr_inspector_template import OCR_INSPECTOR_HTML
-from app.features.auth.models import UserRole
+from app.features.auth.models import User, UserRole
+from app.features.usage import service as usage_service
 from app.features.auth.schemas import UserRead
 from app.features.documents import service as documents_service
 from app.features.documents.ingestion.parser import IMAGE_EXTENSIONS, render_pdf_page
@@ -50,6 +51,40 @@ class UserCreateRequest(BaseModel):
 
 class AccountingAccessUpdate(BaseModel):
     enabled: bool
+
+
+class TokenLimitUpdate(BaseModel):
+    limit: int | None  # None = unlimited
+
+
+class TokenLimitExtend(BaseModel):
+    add: int
+
+
+@router.put("/users/{user_id}/token-limit", response_model=UserRead)
+async def set_token_limit(user_id: uuid.UUID, payload: TokenLimitUpdate, context: UserContext = Depends(get_current_user_context), db: AsyncSession = Depends(get_db)):
+    """Set (or, with `limit: null`, remove) a user's token limit. Super admins are never limited; only super admins manage an admin's."""
+    return await usage_service.set_limit(db, context.user, user_id, payload.limit)
+
+
+@router.post("/users/{user_id}/token-limit/extend", response_model=UserRead)
+async def extend_token_limit(user_id: uuid.UUID, payload: TokenLimitExtend, context: UserContext = Depends(get_current_user_context), db: AsyncSession = Depends(get_db)):
+    """Raise the limit by `add` tokens; the usage counter is untouched."""
+    return await usage_service.extend_limit(db, context.user, user_id, payload.add)
+
+
+@router.post("/users/{user_id}/token-limit/reset", response_model=UserRead)
+async def reset_token_usage(user_id: uuid.UUID, context: UserContext = Depends(get_current_user_context), db: AsyncSession = Depends(get_db)):
+    """Zero the counter and start a new period; the usage history is kept."""
+    return await usage_service.reset_usage(db, context.user, user_id)
+
+
+@router.get("/users/{user_id}/token-usage")
+async def token_usage(user_id: uuid.UUID, days: int = Query(30, ge=1, le=365), db: AsyncSession = Depends(get_db)):
+    user = await db.get(User, user_id)
+    if user is None:
+        raise NotFoundError("User not found")
+    return await usage_service.usage_report(db, user, days)
 
 
 @router.get("/users", response_model=list[UserRead])

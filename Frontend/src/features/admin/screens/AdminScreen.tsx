@@ -7,6 +7,7 @@ import { Input } from "@/shared/components/ui/Input";
 import { Select } from "@/shared/components/ui/Select";
 import { useAuthStore } from "@/features/auth/hooks/useAuthStore";
 import { UserRole } from "@/shared/types";
+import { TokenQuotaControls } from "../components/TokenQuotaControls";
 import { DocumentAdminTable } from "../components/DocumentAdminTable";
 import { useAdmin } from "../hooks/useAdmin";
 
@@ -16,7 +17,7 @@ const USER_ROLE_OPTIONS = [{ value: "user", label: "کاربر" }, { value: "adm
 
 export function AdminScreen() {
   const currentUser = useAuthStore((state) => state.user);
-  const { users, teams, memberships, documents, isLoading, isMutating, error, refresh, createTeam, assignUserToTeam, removeUserFromTeam, setUserRole, setAccountingAccess } = useAdmin();
+  const { users, teams, memberships, documents, isLoading, isMutating, error, refresh, createTeam, assignUserToTeam, removeUserFromTeam, setUserRole, setAccountingAccess, setTokenLimit, extendTokenLimit, resetTokenUsage } = useAdmin();
   const [newTeamName, setNewTeamName] = useState("");
   const [selectedUser, setSelectedUser] = useState<Record<string, string>>({});
   const [selectedRole, setSelectedRole] = useState<Record<string, "leader" | "member">>({});
@@ -61,6 +62,7 @@ export function AdminScreen() {
     </section>
     <section className="rounded-2xl border border-gray-200 bg-white p-5">
       <h2 className="mb-1 font-semibold text-gray-800">کاربران</h2>
+      <p className="mb-1 text-xs text-gray-500">سقف مصرف توکن: هر کاربر می‌تواند سقف جداگانه داشته باشد؛ با رسیدن به سقف چت و اجرای گزارش حجم او متوقف می‌شود تا تمدید یا ریست شود. مدیر فقط برای کاربران عادی و مدیر ارشد برای همه (جز مدیر ارشد) سقف تعیین می‌کند.</p>
       <p className="mb-4 text-xs text-gray-500">دسترسی مالی: استفاده از ابزار پرس‌وجوی پایگاه داده‌ی حسابداری راهکاران در چت. فقط مدیر ارشد می‌تواند آن را به هر کاربری (با هر نقش) بدهد یا بگیرد؛ مدیر ارشد همیشه دسترسی دارد.</p>
       <div className="space-y-3">{users.map((user) => <div key={user.id} className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 pb-3 text-sm">
         <span className="flex min-w-0 flex-wrap items-center gap-2">
@@ -73,6 +75,8 @@ export function AdminScreen() {
             : <Button type="button" variant="ghost" size="sm" disabled={isMutating} aria-label={`${user.accounting_access ? "لغو" : "اعطای"} دسترسی مالی ${user.email}`} onClick={() => void setAccountingAccess(user.id, !user.accounting_access).catch(() => {})}>{user.accounting_access ? "لغو دسترسی مالی" : "اعطای دسترسی مالی"}</Button>}
           <Select aria-label={`نقش سازمانی ${user.email}`} value={user.role} disabled={isMutating || user.id === currentUser.id} onValueChange={(nextValue) => void setUserRole(user.id, nextValue as UserRole).catch(() => {})} options={USER_ROLE_OPTIONS} className="w-36" />
         </span>}
+        <TokenQuotaControls user={user} busy={isMutating} editable={user.role === "user" || currentUser?.role === "super_admin"}
+          onSetLimit={(limit) => setTokenLimit(user.id, limit)} onExtend={(add) => extendTokenLimit(user.id, add)} onReset={() => resetTokenUsage(user.id)} />
       </div>)}</div>
     </section>
     <section className="rounded-2xl border border-gray-200 bg-white p-5">

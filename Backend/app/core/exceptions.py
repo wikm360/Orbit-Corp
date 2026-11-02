@@ -25,6 +25,13 @@ class ConflictError(HTTPException):
         super().__init__(status_code=status.HTTP_409_CONFLICT, detail=detail)
 
 
+class QuotaExceededError(HTTPException):
+    """The user's token quota is used up (429). Clients key on the detail text."""
+
+    def __init__(self, detail: str = "token_quota_exceeded"):
+        super().__init__(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=detail)
+
+
 class BadRequestError(HTTPException):
     def __init__(self, detail: str = "Invalid request"):
         super().__init__(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)

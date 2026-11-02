@@ -17,6 +17,7 @@ from app.features.chat.models import Conversation, ConversationType, Message, Se
 from app.features.chat.schemas import ConversationCreate, MessageRead
 from app.features.chat.ws import manager as ws_manager
 from app.features.projects.service import get_project
+from app.features.usage.service import is_exhausted
 
 settings = get_settings()
 
@@ -339,9 +340,24 @@ async def post_group_message(
 
     stripped = content.strip()
     if stripped.lower().startswith(settings.ai_trigger_token.lower()):
-        asyncio.create_task(_generate_group_ai_reply(conversation.id, context, message.id))
+        if is_exhausted(context.user):
+            await _post_quota_notice(db, conversation, context, message.id)
+        else:
+            asyncio.create_task(_generate_group_ai_reply(conversation.id, context, message.id))
 
     return message
+
+
+async def _post_quota_notice(db: AsyncSession, conversation: Conversation, context: UserContext, trigger_message_id: uuid.UUID) -> None:
+    """The asking user's token quota is used up: answer in the group with a notice instead of running the model."""
+    notice = Message(
+        conversation_id=conversation.id, sender_type=SenderType.ASSISTANT, reply_to_message_id=trigger_message_id,
+        content="سقف مصرف توکن کاربری که این پرسش را فرستاد به پایان رسیده است؛ برای ادامه با مدیر سیستم تماس بگیرید.",
+    )
+    db.add(notice)
+    await db.commit()
+    await db.refresh(notice)
+    await ws_manager.broadcast(conversation.id, {"event": "message", "message": _serialize_message(notice)})
 
 
 async def _generate_group_ai_reply(

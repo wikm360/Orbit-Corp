@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass
 from typing import Protocol
 
+from app.features.usage.service import usage_purpose
 from app.features.db_connector.hints import load_core_prompt
 from app.providers.llm_provider import get_sql_llm_provider
 
@@ -66,9 +67,10 @@ class LLMSqlGenerator:
     async def generate(self, question: str, hint_blocks: list[str], previous: list[Attempt]) -> str:
         provider = get_sql_llm_provider()
         content = ""
-        async for event in provider.stream_chat(build_messages(question, hint_blocks, previous)):
-            if event["type"] == "content":
-                content += event["delta"]
+        with usage_purpose("sql"):
+            async for event in provider.stream_chat(build_messages(question, hint_blocks, previous)):
+                if event["type"] == "content":
+                    content += event["delta"]
         return extract_sql(content)
 
 

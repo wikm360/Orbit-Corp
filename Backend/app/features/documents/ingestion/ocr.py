@@ -160,6 +160,7 @@ async def _probe_rotation(thumb: Image.Image) -> int | None:
         ]}],
         max_tokens=60,
     )
+    await _meter_vision(getattr(settings, "llm_vision_model", None) or getattr(settings, "llm_model", "gpt-4o"), response)
     return parse_probe_answer(response.choices[0].message.content or "")
 
 
@@ -237,6 +238,15 @@ def _vary_image_for_retry(jpeg_b64: str, retry: int) -> str:
     return base64.b64encode(out.getvalue()).decode("utf-8")
 
 
+async def _meter_vision(model: str, response) -> None:
+    """Record the vision call's tokens for the uploader (`usage_scope` set by the ingestion pipeline); recorded, never limited."""
+    from app.features.usage.service import record_usage
+
+    usage = getattr(response, "usage", None)
+    if usage is not None:
+        await record_usage(model, getattr(usage, "prompt_tokens", 0) or 0, getattr(usage, "completion_tokens", 0) or 0, purpose="ocr")
+
+
 async def _vision_chat(client: AsyncOpenAI, model: str, prompt: str, mime_type: str, b64_img: str, max_tokens: int):
     """One vision request with the shared retry policy: transient errors (`_OCR_ATTEMPTS`) and random content-filter
     refusals (`OCR_CONTENT_FILTER_RETRIES`, own budget; each retry sends a slightly different image and prompt, see
@@ -263,6 +273,7 @@ async def _vision_chat(client: AsyncOpenAI, model: str, prompt: str, mime_type: 
                 ],
                 max_tokens=max_tokens,
             )
+            await _meter_vision(model, response)
             choice = response.choices[0]
             if getattr(choice, "finish_reason", None) == "content_filter" and not (choice.message.content or "").strip():
                 raise _ContentFiltered("finish_reason=content_filter with empty content")

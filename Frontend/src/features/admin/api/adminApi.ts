@@ -12,6 +12,10 @@ export const adminApi = {
   removeUserFromTeam: workspaceApi.removeTeamMember,
   setUserRole: workspaceApi.updateUserRole,
   setAccountingAccess: workspaceApi.setAccountingAccess,
+  setTokenLimit: workspaceApi.setTokenLimit,
+  extendTokenLimit: workspaceApi.extendTokenLimit,
+  resetTokenUsage: workspaceApi.resetTokenUsage,
+  tokenUsage: workspaceApi.tokenUsage,
   listAllDocuments: () => apiRequest<Document[]>("/admin/documents"),
 };
 

@@ -43,7 +43,7 @@ TITLE = "گزارش درآمد پروژه سیرجان قطروئیه در ما�
 def _env(monkeypatch, tmp_path):
     monkeypatch.setattr(get_settings(), "upload_dir", str(tmp_path))
     queued = []
-    monkeypatch.setattr(service, "_enqueue", lambda report_id, mode="full": queued.append(report_id))
+    monkeypatch.setattr(service, "_enqueue", lambda report_id, mode="full", user_id=None: queued.append(report_id))
     from app.features.volume_report import memory
     from tests.conftest import _StubEmbeddingProvider
     monkeypatch.setattr(memory, "get_embedding_provider", lambda: _StubEmbeddingProvider())
@@ -278,3 +278,24 @@ async def test_second_run_request_while_processing_is_rejected(client, tmp_path,
     assert (await client.post(f"{API}/{report['id']}/run", headers=leader)).status_code == 202
     assert (await client.post(f"{API}/{report['id']}/run", headers=leader)).status_code == 409
     assert _env == [uuid.UUID(report["id"])]  # queued exactly once
+
+
+async def test_run_and_continue_are_refused_with_429_when_the_users_token_quota_is_used(client, tmp_path):
+    admin, leader, leader_id, project_id, _ = await _world(client, "quota")
+    doc = await _document(tmp_path, project_id, leader_id)
+    company = await _company(client, leader)
+    report = (await client.post(API, json={"project_id": project_id, "title": "r", "period_type": "month", "period_start": "2026-08-23",
+                                           "period_end": "2026-09-22", "period_label": "شهریور 1405"}, headers=leader)).json()
+    await client.put(f"{API}/{report['id']}/files", json={"files": [{"document_id": doc, "company_id": company}]}, headers=leader)
+    await client.put(f"/api/v1/admin/users/{leader_id}/token-limit", json={"limit": 50}, headers=admin)
+    from app.features.usage.service import record_usage, usage_scope
+
+    with usage_scope(uuid.UUID(leader_id), "chat"):
+        await record_usage("m", 50, 0)
+    for path in ("run", "continue"):
+        refused = await client.post(f"{API}/{report['id']}/{path}", headers=leader)
+        assert refused.status_code == 429 and refused.json()["detail"] == "token_quota_exceeded"
+    assert (await client.get(f"{API}/{report['id']}/progress", headers=leader)).json()["status"] == "draft"  # not claimed
+
+    await client.post(f"/api/v1/admin/users/{leader_id}/token-limit/reset", headers=admin)
+    assert (await client.post(f"{API}/{report['id']}/run", headers=leader)).status_code == 202

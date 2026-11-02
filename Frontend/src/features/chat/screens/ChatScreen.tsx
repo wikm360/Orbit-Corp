@@ -17,6 +17,7 @@ import { summarizeBatch, uploadFileBatches, uploadFilename } from "@/features/do
 import { documentsApi } from "@/features/documents/api/documentsApi";
 import { chatApi } from "../api/chatApi";
 import { ChatWindow } from "../components/ChatWindow";
+import { TokenQuotaBanner } from "../components/TokenQuotaBanner";
 import { useChat } from "../hooks/useChat";
 
 export function ChatScreen() {
@@ -210,6 +211,7 @@ export function ChatScreen() {
       </>}
       <span className="mr-auto hidden text-[11px] text-slate-400 sm:block">پاسخ‌های مستند، تصمیم‌های روشن‌تر</span>
     </div>
+    <TokenQuotaBanner />
     {actionError && <p role="alert" className="mx-4 mt-3 rounded-xl bg-red-50 p-3 text-xs text-red-700">{actionError}</p>}
     <div className="min-h-0 flex-1"><ChatWindow key={composerKey} messages={messages} isStreaming={isStreaming} isSending={isSending} isUploadingDocument={isUploadingDocument} isDocumentProcessing={hasProcessingDocuments} isDocumentStatusLoading={isDocumentStatusLoading} conversationDocuments={conversationDocuments} isLoadingConversation={isLoadingConversation || linkingProject} error={error} onSend={(text) => void sendMessage(text, newLinkedProjectId || null)} group={group} senderNames={senderNames} onUpload={handleUpload} availableDocuments={availableDocs} agentActivities={agentActivities} onStop={stopResponse} userName={user?.full_name?.split(" ")[0]} /></div>
     <Modal isOpen={groupModalOpen} onClose={closeGroupModal} title="یک گفتگو برای تیم شما">

@@ -28,6 +28,7 @@
 | `GET /projects/{id}/members` | عضو پروژه | `[{user, permissions}]` |
 | `PUT /projects/{id}/members/{user}/permissions` `{permissions:[…]}` | manager (leader/admin) | عضو با پرمیشن‌های جدید؛ نام ناشناخته 400، غیرعضو 404 |
 | `GET /project-permissions` | لاگین‌شده | نام پرمیشن‌های قابل‌واگذاری |
+| `PUT /admin/users/{id}/token-limit` `{limit\|null}` · `POST …/token-limit/extend {add}` · `POST …/token-limit/reset` · `GET …/token-usage?days=` | admin/super_admin (admin روی admin ✗، super_admin هدف ✗) | `UserRead` با `token_limit/tokens_used/token_period_start`؛ `/auth/me` هم همین فیلدها را دارد |
 | `POST /projects/{id}/members` `{user_id}` · `DELETE …/{user}` | manager | 204 |
 
 ## Documents

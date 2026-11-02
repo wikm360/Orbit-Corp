@@ -211,18 +211,30 @@ def _list_7z(archive: Path) -> list[dict]:
 
 
 def _run_cli_extract(archive: Path, dest: Path) -> None:
-    """Unpacks with the best installed tool. `.rar` prefers `unrar` (Debian's 7-Zip is built without the RAR codec
-    and silently writes empty files for it - caught by the size check in `_extract_7z`); everything else uses `7z`."""
-    if archive.suffix.lower() == ".rar" and shutil.which("unrar"):
-        proc = subprocess.run(
-            ["unrar", "x", "-y", "-idq", "-p-", "-o+", str(archive), f"{dest}{os.sep}"],
-            capture_output=True,
-            stdin=subprocess.DEVNULL,
-            timeout=_SEVENZIP_TIMEOUT_SECONDS,
-        )
-        if proc.returncode != 0:
-            raise ArchiveError("The archive could not be extracted (it may be corrupt or password-protected)")
-        return
+    """Unpacks with the best installed tool. `.rar` prefers `unrar` then `unar` (Debian's 7-Zip is built without
+    the RAR codec and silently writes empty files for it unless p7zip-rar is installed - caught by the size check
+    in `_extract_7z`); everything else uses `7z`."""
+    if archive.suffix.lower() == ".rar":
+        if shutil.which("unrar"):
+            proc = subprocess.run(
+                ["unrar", "x", "-y", "-idq", "-p-", "-o+", str(archive), f"{dest}{os.sep}"],
+                capture_output=True,
+                stdin=subprocess.DEVNULL,
+                timeout=_SEVENZIP_TIMEOUT_SECONDS,
+            )
+            if proc.returncode != 0:
+                raise ArchiveError("The archive could not be extracted (it may be corrupt or password-protected)")
+            return
+        if shutil.which("unar"):
+            proc = subprocess.run(
+                ["unar", "-f", "-D", "-o", str(dest), str(archive)],
+                capture_output=True,
+                stdin=subprocess.DEVNULL,
+                timeout=_SEVENZIP_TIMEOUT_SECONDS,
+            )
+            if proc.returncode != 0:
+                raise ArchiveError("The archive could not be extracted (it may be corrupt or password-protected)")
+            return
     proc = subprocess.run(
         ["7z", "x", "-y", "-bso0", "-bsp0", "-p-", "-sccUTF-8", f"-o{dest}", str(archive)],
         capture_output=True,

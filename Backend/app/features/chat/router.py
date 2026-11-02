@@ -36,6 +36,7 @@ from app.features.documents.schemas import (
 )
 from app.features.projects.models import Project
 from app.features.projects.service import get_user_project_permissions
+from app.features.usage.service import ensure_quota
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 settings = get_settings()
@@ -48,6 +49,7 @@ async def chat(
 ):
     """Personal AI chat: creates/continues a private conversation and streams
     the assistant's answer over SSE."""
+    ensure_quota(context.user)  # 429 before anything is saved or streamed
     return StreamingResponse(
         service.stream_chat_response(context, payload.conversation_id, payload.message),
         media_type="text/event-stream",

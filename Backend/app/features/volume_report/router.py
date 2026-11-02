@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.dependencies import UserContext, get_current_user_context
 from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
+from app.features.usage.service import ensure_quota
 from app.features.volume_report import activity, export, memory, questions, service
 from app.features.volume_report.models import Company, Conversion, Item, Report, ReportStatus, Site
 from app.features.volume_report.schemas import (
@@ -221,14 +222,16 @@ async def put_files(payload: FilesUpdate, report: Report = Depends(get_report_fo
 
 
 @router.post("/{report_id}/run", response_model=ReportRead, status_code=202)
-async def run(report: Report = Depends(get_report_for_member), db: AsyncSession = Depends(get_db)):
-    return await service.request_run(db, report)
+async def run(report: Report = Depends(get_report_for_member), context: UserContext = Depends(get_current_user_context), db: AsyncSession = Depends(get_db)):
+    ensure_quota(context.user)
+    return await service.request_run(db, report, user_id=context.id)
 
 
 @router.post("/{report_id}/continue", response_model=ReportRead, status_code=202)
-async def continue_run(report: Report = Depends(get_report_for_member), db: AsyncSession = Depends(get_db)):
+async def continue_run(report: Report = Depends(get_report_for_member), context: UserContext = Depends(get_current_user_context), db: AsyncSession = Depends(get_db)):
     """Next agent pass after answers (no re-parsing)."""
-    return await service.request_run(db, report, mode="continue")
+    ensure_quota(context.user)
+    return await service.request_run(db, report, mode="continue", user_id=context.id)
 
 
 @router.get("/{report_id}/questions")

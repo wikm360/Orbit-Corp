@@ -14,6 +14,7 @@ from app.core.config import get_settings
 from app.core.text_normalization import words
 from app.features.documents.models import Document, DocumentChunk
 from app.features.retrieval.access_filter import accessible_documents_filter
+from app.features.usage.service import usage_purpose
 from app.providers.llm_provider import LLMProvider, get_rerank_llm_provider
 
 logger = logging.getLogger(__name__)
@@ -339,9 +340,10 @@ class RerankingRetriever(Retriever):
         prompt = _RERANK_PROMPT.format(query=query, listing=listing, top_k=top_k)
         provider = self._provider or get_rerank_llm_provider()
         reply = ""
-        async for event in provider.stream_chat([{"role": "user", "content": prompt}]):
-            if event["type"] == "content":
-                reply += event["delta"]
+        with usage_purpose("rerank"):
+            async for event in provider.stream_chat([{"role": "user", "content": prompt}]):
+                if event["type"] == "content":
+                    reply += event["delta"]
         return parse_rerank_indexes(reply, len(candidates), top_k)
 
 

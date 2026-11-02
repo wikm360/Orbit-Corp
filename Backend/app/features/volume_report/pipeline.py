@@ -21,6 +21,7 @@ from app.features.volume_report.models import (
     Question, QuestionStatus, Report, ReportFile, ReportStatus, Role, Site, SiteKind,
 )
 from app.features.volume_report.seed import ensure_seeded
+from app.features.usage.service import usage_scope
 from app.providers.llm_provider import get_vr_llm_provider
 
 logger = logging.getLogger(__name__)
@@ -221,8 +222,14 @@ def _lock_key(report_id: uuid.UUID) -> int:
     return int.from_bytes(report_id.bytes[:8], "big", signed=True)
 
 
-async def run_report(report_id: uuid.UUID, mode: str = "full") -> None:
-    """One job per report at a time: a session-level advisory lock on its own connection (a duplicate job is skipped)."""
+async def run_report(report_id: uuid.UUID, mode: str = "full", user_id: uuid.UUID | None = None) -> None:
+    """One job per report at a time: a session-level advisory lock on its own connection (a duplicate job is skipped).
+    The agent's model calls are charged to `user_id` (whoever started the run), see features/usage."""
+    with usage_scope(user_id, "vr_agent"):
+        await _run_report_locked_by_advisory(report_id, mode)
+
+
+async def _run_report_locked_by_advisory(report_id: uuid.UUID, mode: str) -> None:
     async with engine.connect() as lock_conn:
         if not await lock_conn.scalar(select(func.pg_try_advisory_lock(_lock_key(report_id)))):
             logger.info("Volume report %s skipped: another job holds the lock", report_id)
@@ -251,6 +258,6 @@ async def _run_locked(report_id: uuid.UUID, mode: str) -> None:
             await activity.log_activity(db, report_id, "done", "پردازش با خطا متوقف شد", kind="error", detail={"error": type(exc).__name__})
 
 
-def run_report_sync(report_id: uuid.UUID, mode: str = "full") -> None:
+def run_report_sync(report_id: uuid.UUID, mode: str = "full", user_id: uuid.UUID | None = None) -> None:
     """RQ entry point."""
-    asyncio.run(run_report(report_id, mode))
+    asyncio.run(run_report(report_id, mode, user_id))

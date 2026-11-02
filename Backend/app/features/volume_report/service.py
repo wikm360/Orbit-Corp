@@ -148,15 +148,15 @@ async def set_files(db: AsyncSession, report: Report, selections: list[FileSelec
     ]
 
 
-def _enqueue(report_id: uuid.UUID, mode: str = "full") -> None:
+def _enqueue(report_id: uuid.UUID, mode: str = "full", user_id: uuid.UUID | None = None) -> None:
     from redis import Redis
     from rq import Queue
 
     queue = Queue(settings.vr_queue_name, connection=Redis.from_url(settings.redis_url))  # lazy: never at import time
-    queue.enqueue("app.features.volume_report.pipeline.run_report_sync", report_id, mode, job_timeout=settings.vr_job_timeout_seconds)
+    queue.enqueue("app.features.volume_report.pipeline.run_report_sync", report_id, mode, user_id, job_timeout=settings.vr_job_timeout_seconds)
 
 
-async def request_run(db: AsyncSession, report: Report, mode: str = "full") -> Report:
+async def request_run(db: AsyncSession, report: Report, mode: str = "full", user_id: uuid.UUID | None = None) -> Report:
     if mode == "continue" and report.status not in (ReportStatus.AWAITING_USER, ReportStatus.NEEDS_REVIEW, ReportStatus.READY):
         raise ConflictError("Nothing to continue: run the report first")
     if not (await db.scalar(select(func.count()).select_from(ReportFile).where(ReportFile.report_id == report.id))):
@@ -177,7 +177,7 @@ async def request_run(db: AsyncSession, report: Report, mode: str = "full") -> R
         raise ConflictError("The report is running or already published")
     await db.commit()
     try:
-        _enqueue(report.id, mode) if mode != "full" else _enqueue(report.id)
+        _enqueue(report.id, mode, user_id)
     except Exception as exc:
         await db.execute(update(Report).where(Report.id == report.id).values(status=ReportStatus.FAILED, error_message="Could not queue the job"))
         await db.commit()

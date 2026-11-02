@@ -12,6 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+from app.features.usage import service as usage
 from app.features.volume_report import activity, questions
 from app.features.volume_report.agent.index import GroupIndex
 from app.features.volume_report.agent.playbook import build_system_prompt
@@ -67,6 +68,10 @@ async def run_pass(db: AsyncSession, report: Report, provider: LLMProvider, lexi
     try:
         for step in range(1, settings.vr_agent_max_steps + 1):
             last = step == settings.vr_agent_max_steps
+            if step > 1 and await usage.quota_exhausted(usage.current_user_id()):
+                # Soft limit, checked between steps: the pass stops here and the remaining groups stay open (agent_incomplete).
+                await activity.log_activity(db, report.id, "agent", "سقف مصرف توکن کاربر تمام شد؛ بررسی هوشمند متوقف شد و گروه‌های باقی‌مانده باز می‌مانند", kind="warn")
+                break
             total_groups = len(index.groups)
             report.progress = {"step": "agent", "done": total_groups - len(index.unresolved()), "total": total_groups,
                                "message": f"گام {step} از {settings.vr_agent_max_steps}", "agent_step": step, "max_steps": settings.vr_agent_max_steps}

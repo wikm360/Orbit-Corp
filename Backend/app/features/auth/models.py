@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String, false, func
+from sqlalchemy import BigInteger, Boolean, DateTime, Enum, ForeignKey, String, false, func, text
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -41,6 +41,15 @@ class User(Base):
         PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     accounting_access_granted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Token quota (see features/usage): `token_limit` NULL = unlimited; `tokens_used` counts the current period, which a
+    # reset restarts (`token_period_start`). Super admins are never limited whatever these say.
+    token_limit: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    tokens_used: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default=text("0"))
+    token_period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    token_limit_set_by: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    token_limit_set_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

@@ -18,6 +18,7 @@ from app.features.chat.financial import FINANCIAL_PLACEHOLDER
 from app.features.chat.models import Conversation, ConversationType, Message, SenderType
 from app.features.documents import service as documents_service
 from app.features.agent.citations import SourcesTagFilter, select_citations, sources_line
+from app.features.usage.service import quota_exhausted, usage_scope
 from app.providers.llm_provider import ChatMessage, get_llm_provider
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,7 @@ settings = get_settings()
 # it must answer with whatever it has learned so far rather than looping forever.
 # browse folders -> search -> (reworded search | read the exact pages) -> answer needs room; the last step caps the cost.
 MAX_STEPS = 8
+_QUOTA_TEXT = "سقف مصرف توکن شما به پایان رسید و پاسخ کامل نشد. برای ادامه با مدیر سیستم تماس بگیرید."
 
 # Shown to the user when the model still has no answer after the tool budget and the answer-only retry.
 _NO_ANSWER_TEXT = (
@@ -141,6 +143,17 @@ class AgentEngine:
         context: UserContext,
         callback: AgentCallback,
     ) -> AgentTurnResult:
+        """Runs the turn with every model call attributed to the asking user (token quota, see features/usage)."""
+        with usage_scope(context.id, "chat", conversation.id):
+            return await self._run_agent_loop(db, conversation, context, callback)
+
+    async def _run_agent_loop(
+        self,
+        db: AsyncSession,
+        conversation: Conversation,
+        context: UserContext,
+        callback: AgentCallback,
+    ) -> AgentTurnResult:
         """Assumes the current turn's user message has already been
         persisted to the `messages` table by the caller, so it's picked up
         here as the last row of history rather than passed separately."""
@@ -169,6 +182,13 @@ class AgentEngine:
         page_images_sent = 0
 
         for step in range(MAX_STEPS):
+            if step > 0 and await quota_exhausted(context.id):
+                # The quota ran out during this turn (soft limit: checked between steps). A fixed message instead of one more
+                # model call to word an answer.
+                logger.warning("[AGENT:QUOTA] Token quota exhausted mid-turn for user %s", context.id)
+                full_response = _QUOTA_TEXT
+                await callback("delta", {"content": full_response})
+                break
             is_last_step = step == MAX_STEPS - 1
             # The last step keeps the same tool list but forbids calling one: dropping `tools` would change the start of
             # the request and throw away the provider's prefix cache for the whole prompt.

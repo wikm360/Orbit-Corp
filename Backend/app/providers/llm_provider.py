@@ -198,6 +198,17 @@ async def _strip_tag_blocks(
         yield buffer
 
 
+async def _meter(model: str, usage) -> None:
+    """Attribute the call to the user of the current `usage_scope` (no-op outside one)."""
+    from app.features.usage.service import record_usage
+
+    details = getattr(usage, "prompt_tokens_details", None)
+    await record_usage(
+        model, getattr(usage, "prompt_tokens", 0) or 0, getattr(usage, "completion_tokens", 0) or 0,
+        (getattr(details, "cached_tokens", 0) or 0) if details is not None else 0,
+    )
+
+
 def _log_usage(model: str, usage) -> None:
     """One line per call: how much of the prompt was served from the provider's prefix cache (cached_tokens)."""
     details = getattr(usage, "prompt_tokens_details", None)
@@ -265,6 +276,7 @@ class OpenAICompatibleLLMProvider(LLMProvider):
         async for chunk in stream:
             if getattr(chunk, "usage", None) is not None:
                 _log_usage(self._model, chunk.usage)
+                await _meter(self._model, chunk.usage)
             if not chunk.choices:
                 continue
             choice = chunk.choices[0]
@@ -349,6 +361,7 @@ class OpenAICompatibleLLMProvider(LLMProvider):
                 await asyncio.sleep(1.5 * attempt)
         if response.usage is not None:
             _log_usage(self._model, response.usage)
+            await _meter(self._model, response.usage)
         message = response.choices[0].message
         text = message.content or ""
         for tag in self._strip_tags:

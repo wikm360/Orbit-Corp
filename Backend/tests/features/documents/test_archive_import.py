@@ -325,3 +325,18 @@ async def test_tool_that_writes_empty_files_for_an_unsupported_method_fails_the_
     state = await _archive_state(client, leader, pid)
     assert state["status"] == "failed" and "compression method" in state["error_message"]
     assert await _tree(client, leader, pid) == {}
+
+
+@pytest.mark.skipif(shutil.which("unrar") is None and shutil.which("unar") is None, reason="RAR extractor not available")
+async def test_rar_archive_is_extracted(client):
+    rar_path = Path("eval/Sohrab/اسناد مناقصه/att2/Section 3 - Schedule of Rates and Prices.rar")
+    if not rar_path.exists():
+        pytest.skip("Test RAR file not found")
+    leader, pid, _, _ = await _leader_with_project(client, "rar")
+    await _run(await _upload_archive(client, leader, pid, "rates.rar", rar_path.read_bytes()))
+
+    state = await _archive_state(client, leader, pid)
+    assert state["status"] == "done"
+    assert state["imported_files"] == 2
+    assert state["failed_files"] == []
+

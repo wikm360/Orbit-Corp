@@ -6,10 +6,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     HOME=/tmp
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN sed -i 's/Components: main/Components: main non-free/' /etc/apt/sources.list.d/debian.sources 2>/dev/null || sed -i 's/main/main non-free/' /etc/apt/sources.list \
+    && apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     poppler-utils \
     p7zip-full \
+    p7zip-rar \
+    unrar \
+    unar \
     libreoffice-core \
     libreoffice-writer \
     libreoffice-calc \

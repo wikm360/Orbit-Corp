@@ -1,5 +1,5 @@
 import { apiRequest } from "./apiClient";
-import type { Project, ProjectMembership, ProjectPermission, Team, TeamMembership, User, UserRole } from "@/shared/types";
+import type { Project, ProjectMembership, ProjectPermission, TokenUsageReport, Team, TeamMembership, User, UserRole } from "@/shared/types";
 
 export const workspaceApi = {
   myTeams: () => apiRequest<Team[]>("/teams/mine"),
@@ -15,6 +15,10 @@ export const workspaceApi = {
   addProjectMember: (projectId: string, userId: string) => apiRequest<void>(`/projects/${projectId}/members`, { method: "POST", body: { user_id: userId } }),
   removeProjectMember: (projectId: string, userId: string) => apiRequest<void>(`/projects/${projectId}/members/${userId}`, { method: "DELETE" }),
   setMemberPermissions: (projectId: string, userId: string, permissions: ProjectPermission[]) => apiRequest<ProjectMembership>(`/projects/${projectId}/members/${userId}/permissions`, { method: "PUT", body: { permissions } }),
+  setTokenLimit: (userId: string, limit: number | null) => apiRequest<User>(`/admin/users/${userId}/token-limit`, { method: "PUT", body: { limit } }),
+  extendTokenLimit: (userId: string, add: number) => apiRequest<User>(`/admin/users/${userId}/token-limit/extend`, { method: "POST", body: { add } }),
+  resetTokenUsage: (userId: string) => apiRequest<User>(`/admin/users/${userId}/token-limit/reset`, { method: "POST" }),
+  tokenUsage: (userId: string) => apiRequest<TokenUsageReport>(`/admin/users/${userId}/token-usage`),
   users: () => apiRequest<User[]>("/admin/users"),
   updateUserRole: (userId: string, role: UserRole) => apiRequest<User>(`/admin/users/${userId}/role`, { method: "PATCH", body: { role } }),
   setAccountingAccess: (userId: string, enabled: boolean) => apiRequest<User>(`/admin/users/${userId}/accounting-access`, { method: "PUT", body: { enabled } }),

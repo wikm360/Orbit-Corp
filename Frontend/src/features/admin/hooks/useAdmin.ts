@@ -58,5 +58,8 @@ export function useAdmin() {
     removeUserFromTeam: (userId: string, teamId: string) => mutate(() => adminApi.removeUserFromTeam(teamId, userId)),
     setUserRole: (userId: string, role: UserRole) => mutate(() => adminApi.setUserRole(userId, role)),
     setAccountingAccess: (userId: string, enabled: boolean) => mutate(() => adminApi.setAccountingAccess(userId, enabled)),
+    setTokenLimit: (userId: string, limit: number | null) => mutate(() => adminApi.setTokenLimit(userId, limit)),
+    extendTokenLimit: (userId: string, add: number) => mutate(() => adminApi.extendTokenLimit(userId, add)),
+    resetTokenUsage: (userId: string) => mutate(() => adminApi.resetTokenUsage(userId)),
   };
 }

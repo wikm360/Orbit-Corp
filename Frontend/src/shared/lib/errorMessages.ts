@@ -10,6 +10,7 @@ export function friendlyErrorMessage(
     if (error.status === 404) return "اطلاعات موردنظر پیدا نشد.";
     if (error.status === 409) return "این مورد از قبل وجود دارد.";
     if (error.status === 413) return "حجم فایل یا مجموعهٔ ارسالی بیشتر از حد مجاز سرور است.";
+    if (error.status === 429 && error.message === "token_quota_exceeded") return "سقف مصرف توکن شما به پایان رسیده است. برای ادامه با مدیر سیستم تماس بگیرید.";
     if (error.status === 429) return "تعداد درخواست‌ها زیاد است؛ کمی بعد دوباره تلاش کنید.";
     if (error.status >= 500) return "سرور موقتاً در دسترس نیست. کمی بعد دوباره تلاش کنید.";
     return error.message || fallback;

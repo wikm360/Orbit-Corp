@@ -25,6 +25,7 @@ from app.features.documents.chunk_paths import PATH_KEY, chunk_search_text, path
 from app.features.documents.ingestion.parser import IMAGE_EXTENSIONS, DocumentPage, parse_document_pages, render_pdf_page
 from app.features.documents.ingestion.reconstructor import save_reconstructed_document
 from app.features.documents.models import Document, DocumentChunk, DocumentStatus
+from app.features.usage.service import usage_scope
 from app.providers.embedding_provider import get_embedding_provider
 
 logger = logging.getLogger(__name__)
@@ -393,7 +394,15 @@ async def _assert_still_processing(db: AsyncSession, document_id: uuid.UUID) -> 
 
 
 async def run_ingestion_pipeline(document_id: uuid.UUID, file_path: str) -> None:
-    """Entry point called by the RQ worker for a single uploaded document."""
+    """Entry point called by the RQ worker for a single uploaded document. OCR/embedding tokens are recorded for the uploader
+    (never limited: stopping half-way would leave the document half-processed)."""
+    async with async_session_factory() as db:
+        uploader = await db.scalar(select(Document.uploaded_by).where(Document.id == document_id))
+    with usage_scope(uploader, "ocr"):
+        await _run_ingestion_pipeline(document_id, file_path)
+
+
+async def _run_ingestion_pipeline(document_id: uuid.UUID, file_path: str) -> None:
     async with async_session_factory() as db:
         document = await db.get(Document, document_id)
         if document is None:

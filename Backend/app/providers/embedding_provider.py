@@ -112,6 +112,9 @@ class BGEM3EmbeddingProvider(EmbeddingProvider):
             response.raise_for_status()
             data = response.json()
             ordered = sorted(data["data"], key=lambda item: item["index"])
+            from app.features.usage.service import record_usage
+
+            await record_usage(self._model, int((data.get("usage") or {}).get("prompt_tokens") or 0), purpose="embedding")
             return [item["embedding"] for item in ordered]
         raise AssertionError("unreachable")  # the loop always returns or raises
 
