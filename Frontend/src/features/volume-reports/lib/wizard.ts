@@ -3,8 +3,10 @@
 import { parseJalaliInput } from "./jalali";
 import type { PeriodType } from "../types";
 
-export const EXCEL_EXTENSIONS = [".xls", ".xlsx", ".xlsm"];
-export const isExcelName = (name: string) => EXCEL_EXTENSIONS.some((ext) => name.toLowerCase().endsWith(ext));
+export const SUPPORTED_EXTENSIONS = [".xls", ".xlsx", ".xlsm", ".pdf"];
+export const EXCEL_EXTENSIONS = SUPPORTED_EXTENSIONS;
+export const isSupportedName = (name: string) => SUPPORTED_EXTENSIONS.some((ext) => name.toLowerCase().endsWith(ext));
+export const isExcelName = isSupportedName;
 
 export interface InfoDraft { title: string; periodType: PeriodType; start: string; end: string; label: string }
 

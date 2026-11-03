@@ -78,7 +78,7 @@ export function FileManager({ projectId, canManage }: { projectId: string; canMa
       </>}
       {volumeModule && (
         <Button type="button" size="sm" variant="ghost" className="text-teal-700" disabled={!selection.document_ids.length}
-          title="فقط فایل‌های اکسل آماده در گزارش لحاظ می‌شوند"
+          title="فقط فایل‌های اکسل و PDF آماده در گزارش لحاظ می‌شوند"
           onClick={() => router.push(`/volume-reports/new?project=${projectId}&docs=${selection.document_ids.join(",")}`)}>
           ساخت گزارش حجم از فایل‌های انتخابی
         </Button>

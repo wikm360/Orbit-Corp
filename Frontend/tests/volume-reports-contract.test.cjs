@@ -212,7 +212,8 @@ test('wizard validation: Jalali dates, order, required fields and company sugges
   assert.deepEqual(Object.keys(bad.errors).sort(), ['label', 'start', 'title']);
   assert.match(wizard.validateInfo({ title: 'x', periodType: 'week', start: '1405/06/10', end: '1405/06/01', label: 'x' }).errors.end, /قبل از شروع/);
   assert.equal(wizard.isExcelName('A.XLSX'), true);
-  assert.equal(wizard.isExcelName('a.pdf'), false);
+  assert.equal(wizard.isExcelName('a.pdf'), true);
+  assert.equal(wizard.isExcelName('a.docx'), false);
   const companies = [{ id: '1', name: 'محورگستر نصر' }, { id: '2', name: 'فراگیر عمران' }];
   assert.equal(wizard.matchSuggestedCompany('شرکت محور گستر نصر', [{ id: '1', name: 'محور گستر نصر' }]), '1');
   assert.equal(wizard.matchSuggestedCompany('شرکت فراگیر عمران نصر', companies), '2');

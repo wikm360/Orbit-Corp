@@ -188,9 +188,9 @@ function NewReportInner() {
       )}
 
       {step === 2 && (
-        <Card title="فایل‌های اکسل پروژه">
+        <Card title="فایل‌های ورودی پروژه (اکسل و PDF)">
           {docsError ? <ErrorBox error={docsError} onRetry={() => void loadDocs()} /> : !docs ? <LoadingBlock /> : docs.length === 0 ? (
-            <EmptyState title="فایل اکسل آماده‌ای در این پروژه نیست" hint="فایل‌های .xls/.xlsx/.xlsm باید در فایل‌منیجر پروژه آپلود و پردازششان تمام شده باشد." action={<Link href="/documents" className="text-sm text-teal-700 underline">رفتن به اسناد</Link>} />
+            <EmptyState title="فایل اکسل یا PDF آماده‌ای در این پروژه نیست" hint="فایل‌های .xls/.xlsx/.xlsm/.pdf باید در فایل‌منیجر پروژه آپلود و پردازششان تمام شده باشد." action={<Link href="/documents" className="text-sm text-teal-700 underline">رفتن به اسناد</Link>} />
           ) : (
             <div className="space-y-3">
               <ul className="divide-y divide-slate-100">
