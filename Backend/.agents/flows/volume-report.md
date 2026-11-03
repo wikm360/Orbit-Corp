@@ -35,7 +35,7 @@
 | ماژول | کار |
 |---|---|
 | `models.py` | جدول‌های `vr_*` (migration `0014_volume_report`؛ seed در migration نیست) |
-| `seed.py` / `seed_data.py` | `ensure_seeded` (lazy، فقط در جدول خالی): ۱۵ آیتم، واژگان، چگالی آسفالت **۲٫۳۵** t/m³ (تصمیم کارفرما؛ پیوست الف سند ۲٫۴ بود) |
+| `seed.py` / `seed_data.py` | `ensure_seeded` (lazy، فقط افزودنی: آیتم/توکنِ seed که در DB نیست اضافه می‌شود و ردیف موجود هرگز دست نمی‌خورد): ۱۶ آیتم (از جمله `pipe_laying` — لوله‌گذاری، متر طول)، واژگان، چگالی آسفالت **۲٫۳۵** t/m³ (تصمیم کارفرما؛ پیوست الف سند ۲٫۴ بود) |
 | `convert.py` | گراف تبدیل واحد (BFS) با Decimal؛ `unit_mismatch` / `no_conversion` (+ `missing_param`) |
 | `compute.py` | resolve + convert + aggregate **خالص** (بدون DB)؛ قاعده‌ی «یک effect برای هر ردیف» |
 | `service.py` | دسترسی، گزارش/فایل، `recompute`، `gate_causes`، review/confirm، results/lines/trace، publish/reopen |

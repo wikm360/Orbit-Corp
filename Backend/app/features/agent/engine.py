@@ -402,7 +402,7 @@ class AgentEngine:
             # After the accounting clause and before the project tree: keeps the stable prefix cache-friendly.
             system_content += (
                 "\n\nFor questions about weekly/monthly physical work volumes (excavation, fill, subbase, base, asphalt, concrete, rebar, "
-                "formwork, prime/tack coat, precast, pile drilling, mining load) use 'get_volume_report'. Quote its figures exactly; "
+                "formwork, prime/tack coat, precast, pile drilling, pipe laying, mining load) use 'get_volume_report'. Quote its figures exactly; "
                 "if no report is published, say so and offer to prepare one; never guess these figures from raw spreadsheets with query_spreadsheet."
             )
 

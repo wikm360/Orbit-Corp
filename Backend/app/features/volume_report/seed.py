@@ -14,18 +14,25 @@ from app.features.volume_report.seed_data import CONVERSIONS_SEED, ITEMS_SEED, L
 
 async def ensure_seeded(db: AsyncSession) -> None:
     changed = False
-    if not await db.scalar(select(func.count()).select_from(Item)):
-        for order, (key, title, dim, unit, decimals, mining_only, desc) in enumerate(ITEMS_SEED, start=1):
-            rollup = ROLLUPS_SEED.get(key)
-            db.add(Item(
-                key=key, title_fa=title, description_fa=desc, dimension=Dimension(dim), output_unit=unit, decimals=decimals,
-                sort_order=order, is_rollup=rollup is not None, rollup_of=rollup or [], mining_only=mining_only,
-            ))
+    # Items/tokens that a newer release added to the seed are inserted into an already-seeded database too (additive only:
+    # existing rows -- possibly edited in the settings API -- are never touched, and items cannot be deleted, only deactivated).
+    existing_keys = set((await db.execute(select(Item.key))).scalars())
+    next_order = int(await db.scalar(select(func.coalesce(func.max(Item.sort_order), 0))) or 0)
+    for order, (key, title, dim, unit, decimals, mining_only, desc) in enumerate(ITEMS_SEED, start=1):
+        if key in existing_keys:
+            continue
+        rollup = ROLLUPS_SEED.get(key)
+        next_order = order if not existing_keys else next_order + 1
+        db.add(Item(
+            key=key, title_fa=title, description_fa=desc, dimension=Dimension(dim), output_unit=unit, decimals=decimals,
+            sort_order=next_order, is_rollup=rollup is not None, rollup_of=rollup or [], mining_only=mining_only,
+        ))
         changed = True
-    if not await db.scalar(select(func.count()).select_from(LexiconEntry)):
-        for token, kind, phrases in LEXICON_SEED:
+    existing_tokens = set((await db.execute(select(LexiconEntry.token))).scalars())
+    for token, kind, phrases in LEXICON_SEED:
+        if token not in existing_tokens:
             db.add(LexiconEntry(token=token, kind=LexiconKind(kind), phrases=phrases))
-        changed = True
+            changed = True
     if changed:
         await db.flush()
     if not await db.scalar(select(func.count()).select_from(Conversion)):

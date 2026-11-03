@@ -1,5 +1,6 @@
 """Chat tool, settings API (catalog/lexicon) and hardening."""
 import uuid
+from decimal import Decimal
 
 from sqlalchemy import select, text
 
@@ -13,7 +14,7 @@ from app.features.volume_report import pipeline
 from app.features.volume_report.agent.playbook import build_system_prompt
 from app.features.volume_report.chat_tool import GetVolumeReportTool
 from tests.features.volume_report.test_api import (  # noqa: F401 - _env is an autouse fixture
-    API, ROWS, _classify_all, _company, _document, _env, _new_report, _register, _world,
+    API, ROWS, _classify_all, _company, _document, _env, _holding, _new_report, _register, _world,
 )
 
 
@@ -148,3 +149,69 @@ async def test_stale_processing_report_can_be_claimed_again(client, tmp_path):
     async with engine.begin() as conn:  # the worker died long ago
         await conn.execute(text("UPDATE vr_reports SET updated_at = now() - interval '5 hours' WHERE id = :i"), {"i": report["id"]})
     assert (await client.post(f"{API}/{report['id']}/run", headers=leader)).status_code == 202
+
+
+# ---- pipe laying (لوله‌گذاری, metres) --------------------------------------------------------------------------
+
+PIPE_ROWS = [
+    (None, "لوله گذاری با لوله های جوشی 1600", "متر طول", 1080),
+    (None, "لوله رانی در هر نوع زمین", "متر", 24),
+    (None, "ریسه کردن لوله 1600 کنار کانال", "عدد", 61),
+    (None, "نوار عایق بندی لوله انقباضی حرارتی", "متر مربع", 143),
+    (None, "لوله کاروگیت با اجرا (به طول 66 متر)", "سری", 1),
+]
+
+
+async def test_pipe_laying_is_in_the_catalog_and_the_lexicon_hints_it():
+    from app.features.volume_report.extraction.normalize import Lexicon, normalize_text
+
+    tokens = Lexicon.from_seed().tokenize(normalize_text("لوله‌گذاری با لوله های جوشی 1600"))
+    assert "PIPE" in tokens
+    assert "PIPE" in Lexicon.from_seed().tokenize(normalize_text("لوله رانی در هر نوع زمین"))
+    assert "PIPE" not in Lexicon.from_seed().tokenize(normalize_text("رنگ عایق داخلی لوله"))  # paint on a pipe is not laying
+
+
+async def test_pipe_laying_counts_metres_and_leaves_non_length_rows_visible(client, tmp_path):
+    admin, leader, leader_id, project_id, _ = await _world(client, "pl")
+    company = await _company(client, leader)
+    rid = await _new_report(client, leader, project_id, await _document(tmp_path, project_id, leader_id, rows=PIPE_ROWS), company)
+    cat = {c["key"]: c for c in (await client.get(f"{API}/catalog", headers=leader)).json()}
+    assert cat["pipe_laying"]["output_unit"] == "m" and cat["pipe_laying"]["dimension"] == "length" and len(cat) == 16
+    groups = {g["description"]: g for g in (await client.get(f"{API}/{rid}/review/groups?state=all", headers=leader)).json()}
+    # unit "عدد" / "سری" are non-physical by the system rule; the m2 insulation row stays open for a human
+    assert groups["ریسه کردن لوله 1600 کنار کانال"]["disposition"] == "nonphysical"
+    assert groups["لوله کاروگیت با اجرا (به طول 66 متر)"]["disposition"] == "nonphysical"
+    assert groups["لوله گذاری با لوله های جوشی 1600"]["disposition"] == "needs_input"
+    pick = lambda d, item, role="execute": {"group_key": groups[d]["group_key"], "item_key": item, "role": role}
+    r = await client.post(f"{API}/{rid}/review/confirm", json={"items": [
+        pick("لوله گذاری با لوله های جوشی 1600", "pipe_laying"), pick("لوله رانی در هر نوع زمین", "pipe_laying")]}, headers=leader)
+    assert r.status_code == 200
+    assert (await _holding(client, leader, rid))["pipe_laying"] == Decimal("1104")
+    # metres into a metre item need no conversion parameter; square metres cannot become metres -> rejected with a reason
+    from app.features.volume_report.convert import find_path
+    assert find_path("m", "m") == [] and find_path("m2", "m") is None
+    other = (await client.get(f"{API}/{rid}/results?include=other", headers=leader)).json()["other"]
+    assert any(o["description"].startswith("نوار عایق") for o in other)
+
+
+async def test_existing_database_gets_the_new_item_and_token_without_touching_edits(client):
+    from sqlalchemy import delete
+
+    from app.features.volume_report.models import Item, LexiconEntry
+    from app.features.volume_report.seed import ensure_seeded
+
+    async with async_session_factory() as db:
+        await ensure_seeded(db)
+        edited = (await db.execute(select(Item).where(Item.key == "base"))).scalar_one()
+        edited.title_fa = "اساس (ویرایش‌شده)"
+        await db.execute(delete(Item).where(Item.key == "pipe_laying"))
+        await db.execute(delete(LexiconEntry).where(LexiconEntry.token == "PIPE"))
+        await db.commit()
+    async with async_session_factory() as db:
+        await ensure_seeded(db)
+        items = {i.key: i for i in (await db.execute(select(Item))).scalars()}
+        assert "pipe_laying" in items and items["pipe_laying"].sort_order > items["mining_load"].sort_order
+        assert items["base"].title_fa == "اساس (ویرایش‌شده)"  # the admin's edit survived
+        assert (await db.execute(select(LexiconEntry).where(LexiconEntry.token == "PIPE"))).scalar_one().phrases
+        await ensure_seeded(db)
+        assert len((await db.execute(select(Item).where(Item.key == "pipe_laying"))).scalars().all()) == 1  # idempotent

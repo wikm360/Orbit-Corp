@@ -41,7 +41,7 @@ function Inner() {
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-lg font-semibold text-slate-900">گزارش حجم عملیات</h1>
-          <p className="text-xs text-slate-500">مجموع حجم فیزیکی ۱۵ آیتم کلیدی به تفکیک کارگاه، شرکت و هولدینگ</p>
+          <p className="text-xs text-slate-500">مجموع حجم فیزیکی آیتم‌های کلیدی (از جمله لوله‌گذاری) به تفکیک کارگاه، شرکت و هولدینگ</p>
         </div>
         <Link href={projectId ? `/volume-reports/new?project=${projectId}` : "/volume-reports/new"} className="inline-flex items-center rounded-xl bg-[#163b48] px-4 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-teal-700">ساخت گزارش جدید</Link>
       </header>

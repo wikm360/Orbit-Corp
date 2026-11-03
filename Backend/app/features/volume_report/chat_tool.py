@@ -43,7 +43,7 @@ class GetVolumeReportTool(BaseTool):
     name = "get_volume_report"
     description = (
         "Weekly/monthly physical work-volume report (excavation, fill, subbase, base, asphalt, concrete, rebar, formwork, prime/tack coat, "
-        "precast, pile drilling, mining load) of the linked project, per site, company or whole holding. Only PUBLISHED reports; figures "
+        "precast, pile drilling, pipe laying, mining load) of the linked project, per site, company or whole holding. Only PUBLISHED reports; figures "
         "are computed by the system - quote them exactly. Read-only: it cannot create or run a report."
     )
     parameters = {
