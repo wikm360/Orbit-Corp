@@ -14,9 +14,9 @@
 | `extraction/units.py` | `normalize_unit` → `unit_norm` ∈ {m3,m2,m,kg,t,m2cm,m3km,hr,lump,series,pct,ea,other} + `unit_dim` |
 | `extraction/normalize.py` | `Lexicon` (توکن‌گذاری روی **کلمه** با طولانی‌ترین عبارت اول؛ «زیر اساس» → `SUBBASE` نه `BASE`)، `role_hint`، `group_key`، `parse_quantity` (Decimal با ۴ رقم اعشار) |
 | `extraction/workbook.py` | `open_workbook`: `.xlsx/.xlsm` با openpyxl (`data_only`, `read_only`)، `.xls` با xlrd و fallback به `converted_copy`، `.pdf` برداری با `pdf_extractor`؛ سقف ۴۰۰×۴۰؛ blocking → فقط در worker/thread |
-| `extraction/pdf_extractor.py` | استخراج جداول PDFهای برداری بر اساس مختصات متنی $(X, Y)$ و تبدیل هر صفحه به یک `SheetData` مجازی بدون نیاز به OCR/LLM |
+| `extraction/pdf_extractor.py` | استخراج جداول PDFهای برداری بر اساس مختصات متنی $(X, Y)$ و تبدیل هر صفحه به یک `SheetData` مجازی بدون نیاز به OCR/LLM. آستانه‌های فاصله‌ی کلمه/ردیف با اندازه‌ی فونت صفحه مقیاس می‌شوند (شیت‌های خیلی عریض که در یک صفحه جمع شده‌اند فونت ریز دارند و برچسب‌هایی مثل «ضریب شکست» و «حجم» در یک سلول ادغام می‌شدند). خط‌های شکسته‌ی شرح (بالا/پایین ردیف کد، یا سرریز به ستون «ضریب شکست»/حجم و «متر 0») با نزدیک‌ترین ردیف کد از نظر Y چسبانده می‌شوند، وگرنه ردیف حجم‌دار بدون شرح حذف می‌شد. ردیف‌های «جمع …» به بعد دست‌نخورده می‌مانند |
 | `extraction/probe.py` | رده‌بندی شیت‌ها (`hidden/planned/expense/income/other`) و `suggest_company` |
-| `extraction/income_parser.py` | پیدا کردن سرتیتر/ستون‌ها با برچسب، توقف روی «جمع»، رد ردیف خالی، carry-forward عنوان بخش، نام کارگاه، `twin_rows`، هشدار ماه |
+| `extraction/income_parser.py` | پیدا کردن سرتیتر/ستون‌ها با برچسب، توقف روی «جمع»، رد ردیف خالی، carry-forward عنوان بخش، نام کارگاه (تاریخ گزارش، «تاریخ : …»، «<ماه> ماه <سال>» و بازه‌ی «از … الی …» از انتهای نام حذف می‌شود تا کارگاه هر گزارش تازه ساخته نشود؛ رقم‌های خودِ نام مثل «قطعه 2» می‌مانند)، `twin_rows`، هشدار ماه |
 | `extraction/runner.py` | `extract_file(path, lexicon, period_label)` → `sheet_log` + شیت‌های parse‌شده + هشدارها |
 
 ### تصمیم‌های ریز (کد درست است)

@@ -5,6 +5,8 @@ Extracts rows and columns based on text coordinates (X, Y) without requiring OCR
 """
 
 import logging
+import re
+import statistics
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -19,16 +21,18 @@ logger = logging.getLogger(__name__)
 # Distance thresholds for horizontal clustering and column separation
 _Y_ROW_TOLERANCE = 2.8  # points
 _X_WORD_DISTANCE = 18.0  # points: adjacent words within this distance belong to the same cell header
+_REFERENCE_FONT = 4.8  # body font size (pt) the two distances above were tuned for; wide sheets are shrunk to fit one page
+_MIN_SCALE, _MAX_SCALE = 0.4, 1.5
 _QTY_TERMS = frozenset({"حجم", "درصد حجم", "حجم درصد", "مقدار", "احجام"})
 
 
-def _cluster_words_into_rows(words: list[tuple[float, float, str]]) -> list[tuple[float, list[tuple[float, str]]]]:
+def _cluster_words_into_rows(words: list[tuple[float, float, str]], tolerance: float = _Y_ROW_TOLERANCE) -> list[tuple[float, list[tuple[float, str]]]]:
     """Groups words into horizontal rows sorted by descending Y (top of page to bottom)."""
     y_buckets: dict[float, list[tuple[float, str]]] = defaultdict(list)
     for x, y, text in words:
         matched_y = None
         for by in y_buckets:
-            if abs(by - y) <= _Y_ROW_TOLERANCE:
+            if abs(by - y) <= tolerance:
                 matched_y = by
                 break
         if matched_y is None:
@@ -39,14 +43,109 @@ def _cluster_words_into_rows(words: list[tuple[float, float, str]]) -> list[tupl
     return [(y, sorted(y_buckets[y], key=lambda w: -w[0])) for y in sorted_ys]
 
 
+_DESC_LABELS = frozenset({"فعالیت", "شرح فعالیت", "شرح عملیات", "شرح کار", "شرح آیتم", "آیتم", "موضوع"})
+_QTY_WITH_TEXT = re.compile(r"^(?P<text>.*?[^\d\s.,\-/٫])\s+(?P<num>\d[\d,.٫]*|-)$")
+_TIE_RATIO = 0.35
+
+
+def _label_index(headers: list[str], labels: frozenset[str]) -> int | None:
+    return next((i for i, h in enumerate(headers) if h in labels), None)
+
+
+def _attach_wrapped_descriptions(grid_body: list[list[Any]], ys: list[float], headers: list[str]) -> list[list[Any]]:
+    """A long description wraps over several PDF lines, vertically centred on the row that carries the code, unit and
+    quantity: the lines above/below land in rows of their own and (on very wide sheets) the text even spills into the
+    neighbouring "ضریب شکست"/quantity columns. Without this a row whose description sits on those lines is dropped
+    (empty description) together with its quantity. Fragments are glued to the nearest code row by Y; a tie goes to the
+    row that still has no text of its own, else to the row above. Rows from the first "جمع …" row on are left alone."""
+    desc_col = _label_index(headers, _DESC_LABELS)
+    qty_col = next((i for i, h in enumerate(headers) if h in _QTY_TERMS), None)
+    unit_col = headers.index("واحد") if "واحد" in headers else None
+    if desc_col is None or qty_col is None or unit_col is None or desc_col == 0 or not (desc_col < qty_col <= unit_col or desc_col < unit_col):
+        return grid_body
+
+    cutoff = next((i for i, row in enumerate(grid_body) if any(isinstance(c, str) and c.strip().startswith("جمع") for c in row[:3])), len(grid_body))
+    body, tail = grid_body[:cutoff], grid_body[cutoff:]
+
+    def text_cells(row: list[Any]) -> list[str]:
+        return [str(row[i]).strip() for i in range(1, min(unit_col, len(row))) if i != qty_col and row[i] not in (None, "")]
+
+    codes: list[int] = []
+    for i, row in enumerate(body):
+        if unit_col < len(row) and row[unit_col] not in (None, ""):
+            codes.append(i)
+    if not codes:
+        return grid_body
+
+    head: dict[int, list[str]] = {c: [] for c in codes}
+    own: dict[int, list[str]] = {c: [] for c in codes}
+    foot: dict[int, list[str]] = {c: [] for c in codes}
+    for c in codes:
+        row = body[c]
+        own[c] = text_cells(row)
+        if isinstance(row[0], str):  # "81 140801 اضافه بها به ردیف های": the description's first words spill into the code cell
+            tokens = row[0].split()
+            keep = 0
+            while keep < len(tokens) and re.fullmatch(r"[\d٠-٩۰-۹.\-]+", tokens[keep]):
+                keep += 1
+            if 0 < keep < len(tokens):
+                row[0] = " ".join(tokens[:keep])
+                head[c].append(" ".join(tokens[keep:]))
+        qty = row[qty_col] if qty_col < len(row) else None
+        if isinstance(qty, str) and (m := _QTY_WITH_TEXT.match(qty.strip())):
+            own[c].append(m.group("text"))  # "متر 0": a wrapped word glued to the quantity
+            row[qty_col] = m.group("num")
+
+    fragments: list[int] = []
+    for i, row in enumerate(body):
+        if i in head:
+            continue
+        if row[0] in (None, "") and not any(c not in (None, "") for c in row[unit_col:]) and text_cells(row):
+            fragments.append(i)
+
+    for f in fragments:
+        above = max((c for c in codes if c < f), default=None)
+        below = min((c for c in codes if c > f), default=None)
+        if above is None or below is None:
+            target = above if below is None else below
+        else:
+            d_above, d_below = abs(ys[above] - ys[f]), abs(ys[below] - ys[f])
+            if abs(d_above - d_below) <= _TIE_RATIO * min(d_above, d_below):
+                has_text = lambda c: bool(own[c] or head[c] or foot[c])  # noqa: E731
+                target = below if (has_text(above) and not has_text(below)) else above
+            else:
+                target = above if d_above < d_below else below
+        (foot if (target is not None and target < f) else head)[target].append(" ".join(text_cells(body[f])))
+
+    fragment_set = set(fragments)
+    result: list[list[Any]] = []
+    for i, row in enumerate(body):
+        if i in fragment_set:
+            continue
+        if i not in head:
+            result.append(row)  # section/title rows and anything that is not a wrapped description line
+            continue
+        pieces = head[i] + own[i] + foot[i]
+        new_row = list(row)
+        new_row[desc_col] = " ".join(pieces) if pieces else None
+        for k in range(1, min(unit_col, len(new_row))):
+            if k not in (desc_col, qty_col):
+                new_row[k] = None
+        result.append(new_row)
+    return result + tail
+
+
 def extract_pdf_page_grid(page: pypdf.PageObject) -> Rows:
     """Extracts a 2D table grid (Rows = list[list[Any]]) from a PDF page."""
     words: list[tuple[float, float, str]] = []
+    font_sizes: list[float] = []
 
     def visitor(text: str, cm: Any, tm: Any, font_dict: Any, font_size: Any) -> None:
         stripped = text.strip()
         if stripped:
             words.append((float(tm[4]), float(tm[5]), stripped))
+            if font_size:
+                font_sizes.append(float(font_size))
 
     try:
         page.extract_text(visitor_text=visitor)
@@ -57,7 +156,12 @@ def extract_pdf_page_grid(page: pypdf.PageObject) -> Rows:
     if not words:
         return []
 
-    rows_by_y = _cluster_words_into_rows(words)
+    # A very wide sheet is shrunk to fit the page, so all distances shrink with the font: scale the thresholds with it,
+    # otherwise neighbouring header labels ("ضریب شکست" / "حجم") merge into one cell and the layout is not recognised.
+    scale = 1.0
+    if font_sizes:
+        scale = min(_MAX_SCALE, max(_MIN_SCALE, statistics.median(font_sizes) / _REFERENCE_FONT))
+    rows_by_y = _cluster_words_into_rows(words, _Y_ROW_TOLERANCE * scale)
     if not rows_by_y:
         return []
 
@@ -79,7 +183,7 @@ def extract_pdf_page_grid(page: pypdf.PageObject) -> Rows:
     col_anchors: list[list[tuple[float, str]]] = []
     current_col = [hw[0]]
     for w in hw[1:]:
-        if abs(w[0] - current_col[-1][0]) < _X_WORD_DISTANCE:
+        if abs(w[0] - current_col[-1][0]) < _X_WORD_DISTANCE * scale:
             current_col.append(w)
         else:
             col_anchors.append(current_col)
@@ -122,7 +226,9 @@ def extract_pdf_page_grid(page: pypdf.PageObject) -> Rows:
 
     # 3. Parse table body rows
     prev_row: list[Any] | None = None
-    for _, row_words in rows_by_y[header_idx + 1:]:
+    body_start = len(grid)
+    body_ys: list[float] = []
+    for row_y, row_words in rows_by_y[header_idx + 1:]:
         row_cells: list[list[tuple[float, str]]] = [[] for _ in range(len(col_defs))]
         for x, text in row_words:
             c_idx = assign_col(x)
@@ -153,9 +259,11 @@ def extract_pdf_page_grid(page: pypdf.PageObject) -> Rows:
             continue
 
         grid.append(row)
+        body_ys.append(row_y)
         prev_row = row
 
-    return grid
+    headers = [str(h) for h in grid[body_start - 1]]
+    return grid[:body_start] + _attach_wrapped_descriptions(grid[body_start:], body_ys, headers)
 
 
 def _detect_pdf_sheet_name(page_num: int, page: pypdf.PageObject) -> str:

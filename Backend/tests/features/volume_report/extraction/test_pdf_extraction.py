@@ -65,3 +65,47 @@ def test_pdf_extract_file():
     assert "آسفالت" in quantities_by_desc
     assert quantities_by_desc["آسفالت"] == ("t", Decimal("1783.0000"))
 
+
+
+def test_wrapped_description_lines_are_glued_to_their_code_row():
+    from app.features.volume_report.extraction.pdf_extractor import _attach_wrapped_descriptions
+
+    headers = ["ردیف فصل", "موضوع", "ضریب شکست", "حجم", "واحد", "قیمت واحد"]
+    body = [
+        ["20 35101", None, "خاکبرداری از قرضه", "5684", "مترمکعب", "100 ریال"],       # y=100: description on the same line
+        [None, "تسطیح و کوبیدن بستر", "با تراکم 95 تا 100", None, None, None],        # y=94: head of the next row
+        ["22 35202", None, None, "1,000", "مترمربع", "50 ریال"],                      # y=88: no text of its own
+        [None, "سانتی متر .", None, None, None, None],                                 # y=82: tail
+        ["81 140801 اضافه بها", "عمق 2", "متر", "متر 0", "مترمکعب", None],            # y=76: code cell + qty cell carry words
+        ["جمع کل", None, None, None, None, None],
+    ]
+    out = _attach_wrapped_descriptions(body, [100.0, 94.0, 88.0, 82.0, 76.0, 70.0], headers)
+    assert [r[1] for r in out[:3]] == ["خاکبرداری از قرضه", "تسطیح و کوبیدن بستر با تراکم 95 تا 100 سانتی متر .", "اضافه بها عمق 2 متر متر"]
+    assert [r[3] for r in out[:3]] == ["5684", "1,000", "0"]
+    assert out[2][0] == "81 140801" and out[2][2] is None
+    assert out[3][0] == "جمع کل"  # rows from the totals row on are untouched
+    assert len(out) == 4
+
+
+def test_wide_sheet_header_labels_are_not_merged():
+    """Sheets shrunk to fit one page have a tiny font; a fixed 18pt distance used to merge "ضریب شکست" and "حجم"."""
+    sample = Path("eval/سیستان و بلوچستان.pdf")
+    if not sample.exists():
+        pytest.skip("Sample PDF not present in eval/")
+    with open_workbook(str(sample)) as wb:
+        sheet = next(s for s in wb.sheets if "میرجاوه" in s.name and s.name.startswith("درآمد"))
+        header = sheet.rows()[2]
+        assert "حجم" in header and "واحد" in header
+        lexicon = Lexicon([])
+        from app.features.volume_report.extraction.income_parser import parse_income_sheet
+        parsed = parse_income_sheet(sheet.name, sheet.rows(), lexicon)
+        assert parsed.status == "ok" and len(parsed.lines) == 6
+
+
+def test_site_name_drops_report_date_and_month():
+    from app.features.volume_report.extraction.income_parser import strip_period_from_name
+
+    assert strip_period_from_name("احداث باند دوم زاهدان خاش 1405/08/11") == "احداث باند دوم زاهدان خاش"
+    assert strip_period_from_name("احداث باند دوم زاهدان میرجاوه قطعه 2 آبان ماه 1405 تاریخ : 1405/08/11") == "احداث باند دوم زاهدان میرجاوه قطعه 2"
+    assert strip_period_from_name("بهسازی محور کرمان-دیهوک از 1405/08/01 الی 1405/08/10") == "بهسازی محور کرمان-دیهوک"
+    assert strip_period_from_name("راه 2") == "راه 2"

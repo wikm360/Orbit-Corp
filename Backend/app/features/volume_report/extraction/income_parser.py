@@ -76,7 +76,7 @@ def find_layout(rows: list[list[Any]]) -> tuple[int, dict[str, int | None]] | No
         activity = next((i for i, label in enumerate(labels) if label == "فعالیت"), None)
         sharh = next((i for i, label in enumerate(labels) if label == "شرح"), None)
         desc_compound = next(
-            (i for i, label in enumerate(labels) if label in {"شرح فعالیت", "شرح عملیات", "شرح کار", "شرح آیتم", "آیتم"}),
+            (i for i, label in enumerate(labels) if label in {"شرح فعالیت", "شرح عملیات", "شرح کار", "شرح آیتم", "آیتم", "موضوع"}),
             None,
         )
         desc = activity if activity is not None else (sharh if sharh is not None else desc_compound)
@@ -87,6 +87,23 @@ def find_layout(rows: list[list[Any]]) -> tuple[int, dict[str, int | None]] | No
             section = 0  # column A carries section titles such as "عملیات آسفالت"; validated per cell below
         return index, {"desc": desc, "section": section, "qty": qty, "unit": unit}
     return None
+
+
+_DATE = r"\d{2,4}\s*[/\-.]\s*\d{1,2}\s*[/\-.]\s*\d{1,4}"
+_MONTHS = "|".join(("فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور", "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند"))
+_PERIOD_TAIL = re.compile(
+    rf"(?:(?:\s+از)?\s*{_DATE}\s+الی\s+{_DATE}|\s*(?:تاریخ\s*[:：]?\s*)?{_DATE}|\s+(?:{_MONTHS})\s*ماه(?:\s+\d{{4}})?|\s+تاریخ\s*[:：]?)\s*$"
+)
+
+
+def strip_period_from_name(name: str) -> str:
+    """A site is the same site every week: drop the report date / month the title carries after the project name
+    ("… زاهدان خاش 1405/08/11", "… قطعه 2 آبان ماه 1405 تاریخ : 1405/08/11"). Digits that are part of the name stay."""
+    previous = None
+    while previous != name:
+        previous = name
+        name = _PERIOD_TAIL.sub("", name).strip(" :-–")
+    return name
 
 
 def extract_site_name(rows: list[list[Any]], sheet_name: str) -> str:
@@ -102,7 +119,7 @@ def extract_site_name(rows: list[list[Any]], sheet_name: str) -> str:
             after = text.split("پروژه", 1)[1]
             after = re.split(r"\s+در\s+ماه\b", after, maxsplit=1)[0]
             name = re.sub(f"[{re.escape(_QUOTES)}]", "", after)
-            name = re.sub(r"\s+", " ", name).strip(" :-–")
+            name = strip_period_from_name(re.sub(r"\s+", " ", name).strip(" :-–"))
             if name:
                 return name
     fallback = re.sub(r"در[آا]مد", "", light_clean(sheet_name))
