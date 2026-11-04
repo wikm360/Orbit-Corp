@@ -18,9 +18,9 @@ from app.core.exceptions import BadRequestError, ConflictError, ForbiddenError, 
 from app.features.documents.models import Document, DocumentStatus
 from app.features.projects.models import Project
 from app.features.volume_report import compute, memory
-from app.features.volume_report.extraction.normalize import Lexicon, LexiconEntry as LexEntry
+from app.features.volume_report.extraction.normalize import Lexicon, LexiconEntry as LexEntry, normalize_text
 from app.features.volume_report.models import (
-    Classification, ClassificationSource, Company, Conversion, Decision, DecisionSource, Disposition, Effect,
+    Classification, ClassificationSource, Company, Conversion, Decision, ItemRule, DecisionSource, Disposition, Effect,
     Dimension, ExcludeReason, Item, Line, LexiconKind, LineResult, Question, QuestionStatus, Report, ReportFile, ReportStatus, Result,
     ResultScope, Role, Site, SiteKind, Snapshot, LexiconEntry,
 )
@@ -210,7 +210,7 @@ async def recompute(db: AsyncSession, report: Report) -> list[dict]:
     item_in = {i.key: compute.ItemIn(i.key, i.output_unit, i.mining_only, i.is_rollup, list(i.rollup_of)) for i in items.values()}
     pairs = await _report_lines(db, report.id)
     lines_in = [
-        compute.LineIn(str(l.id), str(s.id), s.kind.value, l.group_key, l.unit_norm, l.quantity, bool(l.flags.get("negative_qty")))
+        compute.LineIn(str(l.id), str(s.id), s.kind.value, l.group_key, l.unit_norm, l.quantity, bool(l.flags.get("negative_qty")), l.description_norm)
         for l, s in pairs
     ]
     classes: dict[str, compute.ClassIn] = {}
@@ -224,7 +224,12 @@ async def recompute(db: AsyncSession, report: Report) -> list[dict]:
          "site_id": str(p.site_id) if p.site_id else None, "value": p.value}
         for p in (await db.execute(select(Conversion))).scalars()
     ]
-    outs = compute.resolve_lines(lines_in, classes, item_in, params)
+    rules = [
+        compute.RuleIn(str(r.id), items[r.item_id].key, [normalize_text(p) for p in r.phrases], r.source_unit, Decimal(r.factor),
+                       str(r.site_id) if r.site_id else None, r.priority, r.note)
+        for r in (await db.execute(select(ItemRule).where(ItemRule.is_active.is_(True)))).scalars() if r.item_id in items
+    ]
+    outs = compute.resolve_lines(lines_in, classes, item_in, params, rules)
     if (error := compute.check_conservation(lines_in, outs)) is not None:
         raise RuntimeError(error)
     site_company = {str(s.id): str(s.company_id) for _, s in pairs}

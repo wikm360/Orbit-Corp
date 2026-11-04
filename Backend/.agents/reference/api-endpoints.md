@@ -140,7 +140,7 @@
 | `GET /{id}/results?group_by=holding\|company\|site&include=other,problems,nonphysical` · `GET /{id}/lines` · `GET /{id}/trace` | نتایج و drill-down |
 | `POST /{id}/publish` · `POST /{id}/reopen` · `GET /{id}/export?format=xlsx\|csv` | انتشار (قفل strict/warn)، نسخه‌ی جدید، export |
 | `GET /catalog` | آیتم‌های فعال (هر کاربر) |
-| `GET/POST/PUT /settings/{items,lexicon,companies,sites,conversions}` · `GET /settings/decisions[/similar]` · `POST /settings/decisions/{id}/revoke` | تنظیمات (GET برای همه؛ نوشتن و تصمیم‌ها admin/leader) |
+| `GET/POST/PUT /settings/{items,lexicon,companies,sites,conversions}` · `GET/POST /settings/item-rules` · `PUT/DELETE /settings/item-rules/{id}` · `GET /settings/decisions[/similar]` · `POST /settings/decisions/{id}/revoke` | تنظیمات (GET برای همه؛ نوشتن و تصمیم‌ها admin/leader) |
 
 ### artifact چت: `volume_table` (ابزار `get_volume_report`)
 ```json

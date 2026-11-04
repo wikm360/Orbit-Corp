@@ -36,12 +36,14 @@
 |---|---|
 | `models.py` | جدول‌های `vr_*` (migration `0014_volume_report`؛ seed در migration نیست) |
 | `seed.py` / `seed_data.py` | `ensure_seeded` (lazy، فقط افزودنی: آیتم/توکنِ seed که در DB نیست اضافه می‌شود و ردیف موجود هرگز دست نمی‌خورد): ۱۶ آیتم (از جمله `pipe_laying` — لوله‌گذاری، متر طول)، واژگان، چگالی آسفالت **۲٫۳۵** t/m³ (تصمیم کارفرما؛ پیوست الف سند ۲٫۴ بود) |
+| `ItemRule` (`vr_item_rules`) | «قانون زیرمجموعه‌ی آیتم»: اگر شرح ردیف (نرمال‌شده) شامل یکی از `phrases` و واحد ردیف برابر `source_unit` باشد، مقدار `quantity × factor` مستقیم به واحد خروجی آیتم تبدیل می‌شود (مثلاً آبرو دالی: ۱ m2 = ۲ m3 بتن) و گراف `convert.py` دور زده می‌شود. اولویت: قانون کارگاه‌محور > `priority` بالاتر > id. در `note` نتیجه `rule:<id>` ثبت می‌شود. تغییر قانون `catalog_version` را بالا می‌برد؛ گزارش‌های قبلی با recompute به‌روز می‌شوند. مثال: آیتم `concrete`، phrases=[«آبرو دالی»]، source_unit=`m2`، factor=2 |
 | `convert.py` | گراف تبدیل واحد (BFS) با Decimal؛ تبدیل دوطرفه جرم/حجم `m3 <-> t` با `density_t_per_m3` (ضرب برای m3→t، تقسیم برای t→m3؛ `kg <-> m3` مجاز نیست)؛ `unit_mismatch` / `no_conversion` (+ `missing_param`) |
 | `compute.py` | resolve + convert + aggregate **خالص** (بدون DB)؛ قاعده‌ی «یک effect برای هر ردیف» |
 | `service.py` | دسترسی، گزارش/فایل، `recompute`، `gate_causes`، review/confirm، results/lines/trace، publish/reopen |
 | `pipeline.py` | job؛ `run_report_sync` ورودی RQ |
 | `router.py`, `schemas.py`, `export.py` | API (xlsx/csv RTL با محافظ formula-injection) |
 | `workers/volume_report_worker.py` | worker صف جدا؛ compose: سرویس `vr-worker` (با `up` معمولی بالا می‌آید) |
+| فرانت‌اند `Frontend/src/features/volume-reports/screens/PresentationScreen.tsx` | ارائه‌ی مدیریتی ۱۶:۹ از نتایج مجازشده‌ی holding/company/site، آیتم‌ها، هشدارها و شیت‌های مأخذ؛ خروجی PDF از Print مرورگر (Save as PDF) و بدون endpoint جدید |
 
 ### قواعد و تصمیم‌های پیاده‌سازی (کد درست است)
 - **دسترسی:** `check_project_access` = معادل `require_project_access` (عضو پروژه، leader تیم والد، admin). گزارش ناموجود 404، غیرعضو 403. تنظیمات (ساخت/ویرایش شرکت، کارگاه، پارامتر تبدیل) فقط `is_admin` یا `led_team_ids` غیرتهی؛ خواندن برای هر کاربر لاگین‌شده.
@@ -58,7 +60,7 @@
 - `twin_rows` هنوز در اتوماسیون استفاده نمی‌شود (فقط hint در `flags`؛ تصمیم `duplicate` با human/agent).
 
 ### endpointهای فاز ۱ (پیشوند `/api/v1/volume-reports`)
-`POST /` · `GET /?project_id=&status=` · `GET|DELETE /{id}` · `PUT /{id}/files` · `POST /{id}/run` · `POST /{id}/recompute` · `GET /{id}/progress|sources` · `GET /{id}/review/groups?state=` · `POST /{id}/review/confirm` · `GET /{id}/results?group_by=&include=other,problems,nonphysical` · `GET /{id}/lines` · `GET /{id}/trace?item_key=&site_id=` · `POST /{id}/publish|reopen` · `GET /{id}/export?format=` · `GET /catalog` · `GET|POST|PUT /settings/companies` · `GET|PUT /settings/sites` · `GET|PUT /settings/conversions` · `DELETE /settings/conversions/{id}`.
+`POST /` · `GET /?project_id=&status=` · `GET|DELETE /{id}` · `PUT /{id}/files` · `POST /{id}/run` · `POST /{id}/recompute` · `GET /{id}/progress|sources` · `GET /{id}/review/groups?state=` · `POST /{id}/review/confirm` · `GET /{id}/results?group_by=&include=other,problems,nonphysical` · `GET /{id}/lines` · `GET /{id}/trace?item_key=&site_id=` · `POST /{id}/publish|reopen` · `GET /{id}/export?format=` · `GET /catalog` · `GET|POST|PUT /settings/companies` · `GET|PUT /settings/sites` · `GET|PUT /settings/conversions` · `DELETE /settings/conversions/{id}` · `GET|POST /settings/item-rules` · `PUT|DELETE /settings/item-rules/{id}`.
 مقادیر به‌صورت رشته‌ی دسیمال (`"2572.8717"`) و `unit`.
 
 ### تست

@@ -382,6 +382,26 @@ class Conversion(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class ItemRule(Base):
+    """Sub-rule of an item: lines whose description contains a phrase are converted `source_unit -> item output unit`
+    by a fixed factor (e.g. culvert slab: 1 m2 = 2 m3 of concrete). Beats the generic conversion graph."""
+
+    __tablename__ = "vr_item_rules"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    item_id: Mapped[uuid.UUID] = _fk("vr_items", "CASCADE", index=True)
+    site_id: Mapped[uuid.UUID | None] = _fk("vr_sites", "CASCADE", nullable=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    phrases: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    source_unit: Mapped[str] = mapped_column(String(20), nullable=False)
+    factor: Mapped[Decimal] = mapped_column(Numeric(20, 6), nullable=False)
+    priority: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    updated_by: Mapped[uuid.UUID | None] = _fk("users", "SET NULL", nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class Result(Base):
     __tablename__ = "vr_results"
     __table_args__ = (

@@ -1,7 +1,7 @@
 import { API_BASE_URL, ApiError, apiRequest, authorizedFetch, parseErrorMessage } from "@/shared/lib/apiClient";
 
 import type {
-  AnswerPayload, CatalogItem, Company, ConfirmItem, Conversion, DecisionRow, FileSelection, LexiconEntry, LineRow, Question,
+  AnswerPayload, CatalogItem, Company, ConfirmItem, Conversion, DecisionRow, FileSelection, ItemRule, ItemRuleWrite, LexiconEntry, LineRow, Question,
   ReportCreate, ReportDetail, ReportStatus, ReportSummary, ResultScope, ResultsResponse, ReviewGroup, SelectedFile, SettingsItem,
   SettingsItemWrite, Site, SiteKind, SourceInfo, ProgressResponse, GateCause, ActivityResponse,
 } from "../types";
@@ -62,6 +62,10 @@ export const volumeReportApi = {
     saveConversion: (payload: { key: string; item_key?: string | null; site_id?: string | null; value: number; unit: string; note?: string | null }) =>
       send<Conversion>("/settings/conversions", "PUT", payload),
     deleteConversion: (id: string) => send<void>(`/settings/conversions/${id}`, "DELETE"),
+    itemRules: () => apiRequest<ItemRule[]>(`${BASE}/settings/item-rules`),
+    createItemRule: (rule: ItemRuleWrite) => send<ItemRule>("/settings/item-rules", "POST", rule),
+    updateItemRule: (id: string, rule: ItemRuleWrite) => send<ItemRule>(`/settings/item-rules/${id}`, "PUT", rule),
+    deleteItemRule: (id: string) => send<void>(`/settings/item-rules/${id}`, "DELETE"),
     items: () => apiRequest<SettingsItem[]>(`${BASE}/settings/items`),
     createItem: (item: SettingsItemWrite) => send<SettingsItem>("/settings/items", "POST", item),
     updateItem: (item: SettingsItemWrite) => send<SettingsItem>(`/settings/items/${item.key}`, "PUT", item),

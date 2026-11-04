@@ -82,6 +82,26 @@ class ConversionWrite(BaseModel):
     note: str | None = None
 
 
+class ItemRuleWrite(BaseModel):
+    item_key: str
+    site_id: uuid.UUID | None = None
+    name: str = Field(min_length=1, max_length=200)
+    phrases: list[str] = Field(min_length=1, max_length=50)
+    source_unit: str = Field(min_length=1, max_length=20)
+    factor: float = Field(gt=0)
+    priority: int = 0
+    note: str | None = None
+    is_active: bool = True
+
+    @field_validator("phrases")
+    @classmethod
+    def _clean_phrases(cls, v):
+        cleaned = [p.strip() for p in v if p.strip()]
+        if not cleaned or any(len(p) > 80 for p in cleaned):
+            raise ValueError("phrases must be non-empty and at most 80 characters")
+        return cleaned
+
+
 class ItemWrite(BaseModel):
     key: str = Field(pattern=r"^[a-z][a-z0-9_]{1,63}$")
     title_fa: str = Field(min_length=1, max_length=200)

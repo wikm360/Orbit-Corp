@@ -22,6 +22,22 @@ class LineIn:
     unit_norm: str
     quantity: Decimal
     negative: bool = False
+    description_norm: str = ""
+
+
+@dataclass
+class RuleIn:
+    """Item rule: lines of `item_key` whose description contains any phrase (and whose unit is `source_unit`) are
+    converted as `quantity * factor` straight into the item's output unit, bypassing the generic conversion graph."""
+
+    id: str
+    item_key: str
+    phrases: list[str]
+    source_unit: str
+    factor: Decimal
+    site_id: str | None = None
+    priority: int = 0
+    note: str | None = None
 
 
 @dataclass
@@ -79,8 +95,21 @@ def _param_lookup(params: list[dict[str, Any]], site_id: str, item_key: str) -> 
     return {k: v for k, (_, v) in best.items()}
 
 
+def match_rule(rules: list[RuleIn], line: LineIn, item_key: str) -> RuleIn | None:
+    """Best rule for a line: site-specific beats global, then higher priority, then id for determinism."""
+    hits = [
+        r for r in rules
+        if r.item_key == item_key and r.source_unit == line.unit_norm and r.site_id in (None, line.site_id)
+        and any(p and p in line.description_norm for p in r.phrases)
+    ]
+    if not hits:
+        return None
+    return max(hits, key=lambda r: (r.site_id is not None, r.priority, r.id))
+
+
 def resolve_lines(
-    lines: list[LineIn], classes: dict[str, ClassIn], items: dict[str, ItemIn], params: list[dict[str, Any]]
+    lines: list[LineIn], classes: dict[str, ClassIn], items: dict[str, ItemIn], params: list[dict[str, Any]],
+    rules: list[RuleIn] | None = None,
 ) -> list[LineOut]:
     outs: dict[str, LineOut] = {}
     candidates: dict[tuple[str, str], list[tuple[LineIn, ClassIn]]] = defaultdict(list)
@@ -123,6 +152,14 @@ def resolve_lines(
             if cls.role == "supply":
                 effect = "supply_ignored" if has_execution else "supply_only_not_counted"
                 outs[line.id] = LineOut(line.id, effect, item_key, unconfirmed=flag)
+                continue
+            rule = match_rule(rules, line, item_key) if rules else None
+            if rule is not None:
+                exact = line.quantity * rule.factor
+                outs[line.id] = LineOut(
+                    line.id, "counted", item_key, exact.quantize(_Q, ROUND_HALF_UP), item.output_unit,
+                    note=f"rule:{rule.id}", unconfirmed=flag, exact=exact,
+                )
                 continue
             outcome = convert_quantity(line.quantity, line.unit_norm, item.output_unit, _param_lookup(params, site_id, item_key))
             if outcome.status == "ok":

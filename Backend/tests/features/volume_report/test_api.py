@@ -217,6 +217,17 @@ async def test_access_rules(client, tmp_path):
     assert (await client.delete(f"{API}/settings/conversions/{conv_id}", headers=outsider)).status_code == 403
     assert (await client.delete(f"{API}/settings/conversions/{conv_id}", headers=leader)).status_code == 204
     assert (await client.delete(f"{API}/settings/conversions/{conv_id}", headers=leader)).status_code == 404
+    rule = {"item_key": "concrete", "name": "آبرو دالی", "phrases": ["آبرو  دالی", "آبرو دالی"], "source_unit": "m2", "factor": 2}
+    assert (await client.post(f"{API}/settings/item-rules", json=rule, headers=outsider)).status_code == 403
+    r_res = await client.post(f"{API}/settings/item-rules", json=rule, headers=leader)
+    assert r_res.status_code == 201 and r_res.json()["phrases"] == ["آبرو دالی"] and r_res.json()["factor"] == "2.000000"
+    rule_id = r_res.json()["id"]
+    assert (await client.post(f"{API}/settings/item-rules", json={**rule, "item_key": "nope"}, headers=leader)).status_code == 404
+    assert (await client.put(f"{API}/settings/item-rules/{rule_id}", json={**rule, "factor": 3}, headers=leader)).json()["factor"] == "3.000000"
+    assert len((await client.get(f"{API}/settings/item-rules", headers=leader)).json()) == 1
+    assert (await client.delete(f"{API}/settings/item-rules/{rule_id}", headers=outsider)).status_code == 403
+    assert (await client.delete(f"{API}/settings/item-rules/{rule_id}", headers=leader)).status_code == 204
+    assert (await client.delete(f"{API}/settings/item-rules/{rule_id}", headers=leader)).status_code == 404
     assert (await client.get(f"{API}/catalog", headers=outsider)).status_code == 200
 
     # files: other project's document, non-READY, wrong extension, unknown company

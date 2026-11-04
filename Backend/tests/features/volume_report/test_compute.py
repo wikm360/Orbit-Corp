@@ -90,3 +90,37 @@ def test_unconfirmed_flag_propagates_to_aggregates():
     lines = [line("a", "g", "m3", 3)]
     _, outs = run(lines, {"g": ClassIn("counted", "subbase", "execute", False)})
     assert all(r.has_unconfirmed for r in compute.aggregate(lines, outs, ITEMS, {"s1": "c1"}))
+
+
+def _rule(**kw):
+    base = dict(id="r1", item_key="concrete", phrases=["آبرو دالی"], source_unit="m2", factor=Decimal("2"))
+    return compute.RuleIn(**{**base, **kw})
+
+
+def _cline(i, desc, unit="m2", qty=10, site="s1"):
+    return LineIn(i, site, "road", f"g_{i}", unit, Decimal(str(qty)), description_norm=desc)
+
+
+def _run_rules(lines, rules):
+    classes = {l.group_key: ClassIn("counted", "concrete", "execute", confirmed=True) for l in lines}
+    return {o.line_id: o for o in compute.resolve_lines(lines, classes, ITEMS, [], rules)}
+
+
+def test_item_rule_applies_factor_only_to_matching_lines():
+    lines = [_cline("a", "ساخت آبرو دالی به دهانه 3 متر", qty=16), _cline("b", "عملیات احداث رادیه", qty=15)]
+    by = _run_rules(lines, [_rule()])
+    assert by["a"].effect == "counted" and by["a"].output_qty == Decimal("32.0000") and by["a"].output_unit == "m3"
+    assert by["a"].note == "rule:r1"
+    assert by["b"].effect == "no_conversion"  # no generic m2->m3 parameter, and the rule does not match
+
+
+def test_item_rule_respects_unit_site_and_priority():
+    same_unit = _cline("a", "آبرو دالی", unit="m3", qty=5)
+    assert _run_rules([same_unit], [_rule()])["a"].output_qty == Decimal("5.0000")  # m3 line untouched by an m2 rule
+    other_site = _cline("b", "آبرو دالی", site="s2")
+    assert _run_rules([other_site], [_rule(site_id="s1")])["b"].effect == "no_conversion"
+    line_ = _cline("c", "آبرو دالی")
+    by = _run_rules([line_], [_rule(), _rule(id="r2", factor=Decimal("3"), priority=5)])
+    assert by["c"].output_qty == Decimal("30.0000") and by["c"].note == "rule:r2"
+    by = _run_rules([line_], [_rule(), _rule(id="r3", factor=Decimal("4"), site_id="s1")])
+    assert by["c"].note == "rule:r3"  # site-specific beats global

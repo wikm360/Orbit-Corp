@@ -93,6 +93,14 @@ export interface AnswerPayload { choice_keys: string[]; number?: number | null; 
 export interface Company { id: string; name: string; aliases: string[]; is_active: boolean }
 export interface Site { id: string; company_id: string; name: string; kind: SiteKind; kind_confirmed: boolean; aliases: string[]; is_active: boolean }
 export interface Conversion { id: string; key: string; item_key: string | null; site_id: string | null; value: string; unit: string; note: string | null }
+export interface ItemRule {
+  id: string; item_key: string | null; site_id: string | null; name: string; phrases: string[]; source_unit: string; factor: string;
+  priority: number; note: string | null; is_active: boolean;
+}
+export interface ItemRuleWrite {
+  item_key: string; site_id?: string | null; name: string; phrases: string[]; source_unit: string; factor: number;
+  priority?: number; note?: string | null; is_active?: boolean;
+}
 export interface SettingsItem {
   id: string; key: string; title_fa: string; description_fa: string; dimension: string; output_unit: string; decimals: number; sort_order: number;
   is_rollup: boolean; rollup_of: string[]; mining_only: boolean; is_active: boolean;

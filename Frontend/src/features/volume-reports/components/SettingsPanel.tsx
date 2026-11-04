@@ -10,10 +10,10 @@ import { runSoon } from "../lib/defer";
 import { formatJalaliDateTime, toFa } from "../lib/jalali";
 import { ROLE_LABELS, SITE_KIND_LABELS } from "../lib/status";
 import { UNIT_LABELS } from "../lib/format";
-import type { Company, Conversion, DecisionRow, LexiconEntry, SettingsItem, Site, SiteKind } from "../types";
+import type { Company, Conversion, DecisionRow, ItemRule, LexiconEntry, SettingsItem, Site, SiteKind } from "../types";
 import { Card, EmptyState, ErrorBox, fieldClass, LoadingBlock, Tabs } from "./common";
 
-type Section = "items" | "lexicon" | "conversions" | "sites" | "decisions";
+type Section = "items" | "lexicon" | "conversions" | "rules" | "sites" | "decisions";
 
 function useLoad<T>(fn: () => Promise<T>, deps: unknown[]) {
   const [data, setData] = useState<T | null>(null);
@@ -242,6 +242,110 @@ function ConversionsSection({ editable }: { editable: boolean }) {
   );
 }
 
+const RULE_UNITS = ["m2", "m", "m3", "kg", "t"] as const;
+const EMPTY_RULE = { id: "", item_key: "", site_id: "", name: "", phrases: "", source_unit: "m2", factor: "", priority: "0", is_active: true };
+
+function toLatinNumber(text: string): number {
+  return Number(text.replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d))).replace("٫", ".").replace("،", "."));
+}
+
+function RulesSection({ editable }: { editable: boolean }) {
+  const { data, error, reload } = useLoad(async () => ({
+    rules: await volumeReportApi.settings.itemRules(), items: await volumeReportApi.settings.items(), sites: await volumeReportApi.settings.sites(),
+  }), []);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [form, setForm] = useState(EMPTY_RULE);
+  const split = (text: string) => text.split(/[،,\n]/).map((p) => p.trim()).filter(Boolean);
+
+  async function save() {
+    const factor = toLatinNumber(form.factor);
+    if (!Number.isFinite(factor) || factor <= 0) { setNotice("ضریب باید عددی بزرگ‌تر از صفر باشد."); return; }
+    const payload = {
+      item_key: form.item_key, site_id: form.site_id || null, name: form.name.trim(), phrases: split(form.phrases), source_unit: form.source_unit,
+      factor, priority: Number.isFinite(toLatinNumber(form.priority)) ? Math.trunc(toLatinNumber(form.priority)) : 0, is_active: form.is_active,
+    };
+    try {
+      if (form.id) await volumeReportApi.settings.updateItemRule(form.id, payload); else await volumeReportApi.settings.createItemRule(payload);
+      setForm(EMPTY_RULE); setNotice("ذخیره شد؛ با «محاسبه‌ی مجدد» در گزارش‌ها اعمال می‌شود."); reload();
+    } catch (e) { setNotice(friendlyErrorMessage(e, "ذخیره ناموفق بود.")); }
+  }
+  async function remove(r: ItemRule) {
+    if (!window.confirm("این قانون حذف شود؟")) return;
+    try { await volumeReportApi.settings.deleteItemRule(r.id); setNotice("قانون حذف شد؛ با «محاسبه‌ی مجدد» در گزارش‌ها اعمال می‌شود."); reload(); }
+    catch (e) { setNotice(friendlyErrorMessage(e, "حذف ناموفق بود.")); }
+  }
+  function edit(r: ItemRule) {
+    setForm({ id: r.id, item_key: r.item_key ?? "", site_id: r.site_id ?? "", name: r.name, phrases: r.phrases.join("، "), source_unit: r.source_unit,
+      factor: String(Number(r.factor)), priority: String(r.priority), is_active: r.is_active });
+  }
+
+  if (error) return <ErrorBox error={error} onRetry={reload} />;
+  if (!data) return <LoadingBlock />;
+  const title = (key: string | null) => data.items.find((i) => i.key === key)?.title_fa ?? key ?? "—";
+  const outUnit = (key: string) => data.items.find((i) => i.key === key)?.output_unit;
+  const canSave = form.item_key && form.name.trim() && split(form.phrases).length > 0 && form.factor;
+  return (
+    <div className="space-y-3">
+      <Notice message={notice} />
+      <p className="text-xs text-slate-500">
+        اگر شرح ردیفِ یک آیتم شامل یکی از عبارت‌ها باشد و واحدش با «واحد ردیف» برابر باشد، مقدار در ضریب ضرب و مستقیم به واحد خروجی آیتم تبدیل می‌شود
+        (مثلاً هر ۱ مترمربع آبرو دالی = ۲ مترمکعب بتن). ردیف‌هایی که با هیچ قانونی جور نشوند مثل قبل محاسبه می‌شوند.
+      </p>
+      <div className="overflow-x-auto rounded-2xl border border-black/[0.06] bg-white">
+        <table className="w-full min-w-[720px] text-xs">
+          <thead className="bg-slate-50 text-slate-600"><tr>{["نام", "آیتم", "عبارت‌ها", "واحد ردیف", "ضریب", "اولویت", "وضعیت", ...(editable ? ["عملیات"] : [])].map((h, i) => <th key={i} className="px-2 py-2 text-start font-medium">{h}</th>)}</tr></thead>
+          <tbody>
+            {data.rules.length === 0 && <tr><td colSpan={editable ? 8 : 7} className="px-2 py-6 text-center text-slate-400">قانونی ثبت نشده است.</td></tr>}
+            {data.rules.map((r) => (
+              <tr key={r.id} className={`border-t border-slate-100 ${r.is_active ? "" : "opacity-50"}`}>
+                <td className="px-2 py-2">{r.name}{r.site_id ? ` (${data.sites.find((s) => s.id === r.site_id)?.name ?? "کارگاه خاص"})` : ""}</td>
+                <td className="px-2 py-2">{title(r.item_key)}</td>
+                <td className="px-2 py-2">{r.phrases.join("، ")}</td>
+                <td className="px-2 py-2">{UNIT_LABELS[r.source_unit] ?? r.source_unit}</td>
+                <td className="px-2 py-2" dir="ltr">× {toFa(Number(r.factor))} → {r.item_key ? UNIT_LABELS[outUnit(r.item_key) ?? ""] ?? outUnit(r.item_key) : ""}</td>
+                <td className="px-2 py-2">{toFa(r.priority)}</td>
+                <td className="px-2 py-2">{r.is_active ? "فعال" : "غیرفعال"}</td>
+                {editable && (
+                  <td className="px-2 py-2">
+                    <div className="flex items-center gap-1">
+                      <Button size="sm" variant="ghost" onClick={() => edit(r)}>ویرایش</Button>
+                      <Button size="sm" variant="ghost" className="text-red-600 hover:text-red-700" onClick={() => void remove(r)}>حذف</Button>
+                    </div>
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {editable && (
+        <Card title={form.id ? "ویرایش قانون" : "افزودن قانون"}>
+          <div className="grid gap-2 md:grid-cols-4">
+            <input aria-label="نام قانون" placeholder="آبرو دالی" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className={fieldClass} />
+            <select aria-label="آیتم" value={form.item_key} onChange={(e) => setForm({ ...form, item_key: e.target.value })} className={fieldClass}>
+              <option value="">آیتم…</option>{data.items.filter((i) => !i.is_rollup).map((i) => <option key={i.key} value={i.key}>{i.title_fa}</option>)}
+            </select>
+            <select aria-label="واحد ردیف" value={form.source_unit} onChange={(e) => setForm({ ...form, source_unit: e.target.value })} className={fieldClass}>
+              {RULE_UNITS.map((u) => <option key={u} value={u}>{UNIT_LABELS[u]}</option>)}
+            </select>
+            <input aria-label="ضریب" dir="ltr" inputMode="decimal" placeholder="2" value={form.factor} onChange={(e) => setForm({ ...form, factor: e.target.value })} className={fieldClass} />
+            <input aria-label="عبارت‌ها" className={`${fieldClass} md:col-span-2`} placeholder="آبرو دالی، آبرو از نوع دالی" value={form.phrases} onChange={(e) => setForm({ ...form, phrases: e.target.value })} />
+            <select aria-label="کارگاه" value={form.site_id} onChange={(e) => setForm({ ...form, site_id: e.target.value })} className={fieldClass}>
+              <option value="">همه‌ی کارگاه‌ها</option>{data.sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+            <input aria-label="اولویت" dir="ltr" inputMode="numeric" placeholder="0" value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })} className={fieldClass} />
+            <label className="flex items-center gap-1.5 text-xs text-slate-600"><input type="checkbox" checked={form.is_active} onChange={(e) => setForm({ ...form, is_active: e.target.checked })} className="accent-teal-600" /> فعال</label>
+            <div className="flex gap-2 md:col-span-3 md:justify-end">
+              {form.id && <Button variant="ghost" onClick={() => setForm(EMPTY_RULE)}>انصراف</Button>}
+              <Button onClick={() => void save()} disabled={!canSave}>ذخیره</Button>
+            </div>
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+}
+
 function SitesSection({ editable }: { editable: boolean }) {
   const { data, error, reload } = useLoad(async () => ({ companies: await volumeReportApi.settings.companies(), sites: await volumeReportApi.settings.sites() }), []);
   const [notice, setNotice] = useState<string | null>(null);
@@ -347,7 +451,7 @@ function DecisionsSection() {
 export function SettingsPanel({ canEdit }: { canEdit: boolean }) {
   const [section, setSection] = useState<Section>("items");
   const tabs: { id: Section; label: string }[] = [
-    { id: "items", label: "کاتالوگ آیتم‌ها" }, { id: "lexicon", label: "واژگان" }, { id: "conversions", label: "پارامترهای تبدیل" }, { id: "sites", label: "کارگاه‌ها و شرکت‌ها" },
+    { id: "items", label: "کاتالوگ آیتم‌ها" }, { id: "lexicon", label: "واژگان" }, { id: "conversions", label: "پارامترهای تبدیل" }, { id: "rules", label: "قوانین آیتم" }, { id: "sites", label: "کارگاه‌ها و شرکت‌ها" },
     ...(canEdit ? [{ id: "decisions" as const, label: "حافظه‌ی تصمیم‌ها" }] : []),
   ];
   return (
@@ -357,6 +461,7 @@ export function SettingsPanel({ canEdit }: { canEdit: boolean }) {
       {section === "items" && <ItemsSection editable={canEdit} />}
       {section === "lexicon" && <LexiconSection editable={canEdit} />}
       {section === "conversions" && <ConversionsSection editable={canEdit} />}
+      {section === "rules" && <RulesSection editable={canEdit} />}
       {section === "sites" && <SitesSection editable={canEdit} />}
       {section === "decisions" && canEdit && <DecisionsSection />}
     </div>

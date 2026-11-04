@@ -10,10 +10,11 @@ from app.core.dependencies import UserContext, get_current_user_context
 from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.features.usage.service import ensure_quota
 from app.features.volume_report import activity, export, memory, questions, service
-from app.features.volume_report.models import Company, Conversion, Item, Report, ReportStatus, Site
+from app.features.volume_report.models import Company, Conversion, Item, ItemRule, Report, ReportStatus, Site
 from app.features.volume_report.schemas import (
-    CompanyWrite, ConfirmRequest, ConversionWrite, FilesUpdate, ItemWrite, LexiconWrite, ReportCreate, ReportRead, SiteUpdate,
+    CompanyWrite, ConfirmRequest, ConversionWrite, FilesUpdate, ItemRuleWrite, ItemWrite, LexiconWrite, ReportCreate, ReportRead, SiteUpdate,
 )
+from app.features.volume_report.extraction.normalize import normalize_text
 from app.features.volume_report.seed import bump_catalog_version, ensure_seeded
 
 router = APIRouter(prefix="/volume-reports", tags=["volume-reports"])
@@ -184,6 +185,64 @@ async def delete_conversion(
     if c is None:
         raise NotFoundError("Conversion not found")
     await db.delete(c)
+    await bump_catalog_version(db)
+    await db.commit()
+
+
+def _rule_read(r: ItemRule, item_keys: dict) -> dict:
+    return {
+        "id": r.id, "item_key": item_keys.get(r.item_id), "site_id": r.site_id, "name": r.name, "phrases": r.phrases,
+        "source_unit": r.source_unit, "factor": f"{r.factor:f}", "priority": r.priority, "note": r.note, "is_active": r.is_active,
+    }
+
+
+async def _apply_rule(db: AsyncSession, rule: ItemRule, payload: ItemRuleWrite, context: UserContext) -> dict:
+    item = (await db.execute(select(Item).where(Item.key == payload.item_key))).scalar_one_or_none()
+    if item is None or item.is_rollup:
+        raise NotFoundError("Item not found")
+    if payload.site_id and await db.get(Site, payload.site_id) is None:
+        raise NotFoundError("Site not found")
+    phrases = [p for p in dict.fromkeys(normalize_text(p) for p in payload.phrases) if p]
+    if not phrases:
+        raise BadRequestError("phrases must not be empty")
+    rule.item_id, rule.site_id, rule.name, rule.phrases = item.id, payload.site_id, payload.name, phrases
+    rule.source_unit, rule.factor, rule.priority = payload.source_unit.strip().lower(), payload.factor, payload.priority
+    rule.note, rule.is_active, rule.updated_by = payload.note, payload.is_active, context.id
+    db.add(rule)
+    await bump_catalog_version(db)
+    await db.commit()
+    await db.refresh(rule)
+    return _rule_read(rule, {item.id: item.key})
+
+
+@router.get("/settings/item-rules")
+async def list_item_rules(context: UserContext = Depends(get_current_user_context), db: AsyncSession = Depends(get_db)):
+    item_keys = {i.id: i.key for i in (await db.execute(select(Item))).scalars()}
+    return [_rule_read(r, item_keys) for r in (await db.execute(select(ItemRule).order_by(ItemRule.name))).scalars()]
+
+
+@router.post("/settings/item-rules", status_code=201)
+async def create_item_rule(payload: ItemRuleWrite, context: UserContext = Depends(get_current_user_context), db: AsyncSession = Depends(get_db)):
+    service.require_settings_editor(context)
+    return await _apply_rule(db, ItemRule(), payload, context)
+
+
+@router.put("/settings/item-rules/{rule_id}")
+async def update_item_rule(rule_id: uuid.UUID, payload: ItemRuleWrite, context: UserContext = Depends(get_current_user_context), db: AsyncSession = Depends(get_db)):
+    service.require_settings_editor(context)
+    rule = await db.get(ItemRule, rule_id)
+    if rule is None:
+        raise NotFoundError("Rule not found")
+    return await _apply_rule(db, rule, payload, context)
+
+
+@router.delete("/settings/item-rules/{rule_id}", status_code=204)
+async def delete_item_rule(rule_id: uuid.UUID, context: UserContext = Depends(get_current_user_context), db: AsyncSession = Depends(get_db)):
+    service.require_settings_editor(context)
+    rule = await db.get(ItemRule, rule_id)
+    if rule is None:
+        raise NotFoundError("Rule not found")
+    await db.delete(rule)
     await bump_catalog_version(db)
     await db.commit()
 

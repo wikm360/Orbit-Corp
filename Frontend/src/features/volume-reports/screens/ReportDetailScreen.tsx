@@ -121,6 +121,9 @@ export function ReportDetailScreen({ reportId }: { reportId: string }) {
           {report.status === "draft" && report.files.length === 0 && <Link href={`/volume-reports/new?report=${report.id}`} className="inline-flex items-center rounded-xl bg-gray-100 px-4 py-2 text-sm hover:bg-gray-200">انتخاب فایل‌ها</Link>}
           {editable && report.files.length > 0 && <Button size="sm" variant="secondary" isLoading={busy === "run"} onClick={() => void start("run")}>{report.status === "draft" ? "اجرا" : "اجرای مجدد"}</Button>}
           {!processing && report.status !== "draft" && report.status !== "failed" && <>
+            <Link href={`/volume-reports/${report.id}/presentation`} className="inline-flex items-center rounded-xl bg-[#252850] px-4 py-2 text-sm font-medium text-white hover:bg-[#1e2246]">
+              پرزنتیشن مدیریتی
+            </Link>
             <Button size="sm" variant="ghost" isLoading={busy === "export-xlsx"} onClick={() => void download("xlsx")}>Excel</Button>
             <Button size="sm" variant="ghost" isLoading={busy === "export-csv"} onClick={() => void download("csv")}>CSV</Button>
           </>}
