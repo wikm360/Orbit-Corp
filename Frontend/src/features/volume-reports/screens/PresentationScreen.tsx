@@ -12,6 +12,7 @@ import type { CatalogItem, ReportDetail, ResultRow, ResultsResponse, SourceInfo 
 
 /** The slide canvas is 16in x 9in at 96dpi, so it prints 1:1 and is scaled down with CSS on screen (see globals.css). */
 const SLIDE_W = 1536;
+const SLIDE_H = 864;
 const NAVY = "#252850";
 const READY_STATUSES = new Set(["awaiting_user", "needs_review", "ready", "published"]);
 const HERO_KEYS = ["excavation", "fill", "asphalt_total", "concrete"];
@@ -207,11 +208,24 @@ function useSlideScale() {
   return { scale, ref };
 }
 
-/** Waits for every image on the page so the PDF never prints a logo placeholder. */
-async function printWhenImagesReady() {
-  const pending = Array.from(document.images).filter((image) => !image.complete);
-  await Promise.all(pending.map((image) => image.decode().catch(() => undefined)));
-  window.print();
+/** Renders every slide to an image and assembles a real PDF in the browser, then downloads it. */
+async function downloadPdf(fileName: string, onProgress: (done: number, total: number) => void) {
+  const nodes = Array.from(document.querySelectorAll<HTMLElement>(".presentation-page .slide-canvas"));
+  if (!nodes.length) throw new Error("اسلایدی برای خروجی وجود ندارد.");
+  const [{ toJpeg }, { jsPDF }] = await Promise.all([import("html-to-image"), import("jspdf")]);
+  const options = {
+    width: SLIDE_W, height: SLIDE_H, pixelRatio: 2, quality: 0.92, backgroundColor: "#f7f7f5", cacheBust: false,
+    style: { transform: "none", top: "0", left: "0" },
+  };
+  await toJpeg(nodes[0]!, options).catch(() => undefined); // warm-up: the first render can miss fonts and images
+  const pdf = new jsPDF({ orientation: "landscape", unit: "px", format: [SLIDE_W, SLIDE_H], hotfixes: ["px_scaling"], compress: true });
+  for (let index = 0; index < nodes.length; index += 1) {
+    const image = await toJpeg(nodes[index]!, options);
+    if (index > 0) pdf.addPage([SLIDE_W, SLIDE_H], "landscape");
+    pdf.addImage(image, "JPEG", 0, 0, SLIDE_W, SLIDE_H, undefined, "FAST");
+    onProgress(index + 1, nodes.length);
+  }
+  pdf.save(`${fileName}.pdf`);
 }
 
 export function PresentationScreen({ reportId }: { reportId: string }) {
@@ -222,6 +236,8 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
   const [siteRows, setSiteRows] = useState<ResultRow[]>([]);
   const [sources, setSources] = useState<SourceInfo[]>([]);
   const [error, setError] = useState<unknown>(null);
+  const [exporting, setExporting] = useState<{ done: number; total: number } | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
   const { scale, ref: pageRef } = useSlideScale();
 
   const load = useCallback(async () => {
@@ -440,6 +456,19 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
     return result;
   }, [catalog, companyRows, holding, report, siteRows, sources]);
 
+  async function exportPdf() {
+    if (!report || exporting) return;
+    setExportError(null);
+    setExporting({ done: 0, total: slides.length });
+    try {
+      await downloadPdf(report.title.replace(/[\\/:*?"<>|]+/g, " ").trim() || "volume-report", (done, total) => setExporting({ done, total }));
+    } catch (reason) {
+      setExportError(reason instanceof Error ? reason.message : "ساخت PDF ناموفق بود.");
+    } finally {
+      setExporting(null);
+    }
+  }
+
   if (error) return <div className="p-6"><ErrorBox error={error} onRetry={() => void load()} /></div>;
   if (!report || !holding) return <LoadingBlock />;
 
@@ -461,9 +490,12 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
           <h1 className="mt-1 text-base font-bold text-[#252850]">{report.title}</h1>
           <p className="mt-1 text-[11px] text-slate-500">{toFa(slides.length)} اسلاید</p>
         </div>
-        <button type="button" onClick={() => void printWhenImagesReady()} className="rounded-xl bg-[#252850] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[#1e2246]">
-          ذخیره PDF
-        </button>
+        <div className="flex items-center gap-3">
+          {exportError && <span className="text-xs text-red-600">{exportError}</span>}
+          <button type="button" disabled={Boolean(exporting)} onClick={() => void exportPdf()} className="rounded-xl bg-[#252850] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[#1e2246] disabled:opacity-60">
+            {exporting ? `در حال ساخت PDF… ${toFa(exporting.done)} از ${toFa(exporting.total)}` : "دانلود PDF"}
+          </button>
+        </div>
       </div>
       <div ref={pageRef} className="print-only-container mx-auto flex max-w-[1600px] flex-col gap-5" style={{ ["--slide-scale" as string]: scale }}>
         {slides.map((slide, index) => <SlideItem key={slide.key} slide={slide} page={toFa(index + 1)} />)}
