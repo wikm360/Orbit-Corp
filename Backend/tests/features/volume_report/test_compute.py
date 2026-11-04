@@ -50,14 +50,17 @@ def test_kg_to_tonnes_and_unit_in_tonnes_passthrough():
 
 
 def test_unit_mismatch_and_no_conversion_never_silent():
-    lines = [line("a", "g", "kg", 5), line("b", "g2", "m", 50), line("c", "g3", "m", 50)]
+    lines = [line("a", "g", "hr", 5), line("b", "g2", "m", 50), line("c", "g3", "t", 50, kind="mining")]
     classes = {"g": ClassIn("counted", "concrete", "execute", True), "g2": ClassIn("counted", "precast", "execute", True),
-               "g3": ClassIn("counted", "precast", "execute", True)}
+               "g3": ClassIn("counted", "mining_load", "execute", True)}
     by, _ = run(lines, classes)
     assert by["a"].effect == "unit_mismatch"
     assert by["b"].effect == "no_conversion" and by["b"].note == "cross_section_m2"
-    by2, _ = run(lines, classes, [{"key": "cross_section_m2", "item_key": "precast", "site_id": None, "value": "0.5"}])
+    assert by["c"].effect == "no_conversion" and by["c"].note == "density_t_per_m3"
+    by2, _ = run(lines, classes, [{"key": "cross_section_m2", "item_key": "precast", "site_id": None, "value": "0.5"},
+                                  {"key": "density_t_per_m3", "item_key": "mining_load", "site_id": None, "value": "2.0"}])
     assert by2["b"].effect == "counted" and by2["b"].output_qty == Decimal("25")
+    assert by2["c"].effect == "counted" and by2["c"].output_qty == Decimal("25")
 
 
 def test_parameter_priority_site_item_over_global():

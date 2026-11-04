@@ -36,7 +36,7 @@
 |---|---|
 | `models.py` | جدول‌های `vr_*` (migration `0014_volume_report`؛ seed در migration نیست) |
 | `seed.py` / `seed_data.py` | `ensure_seeded` (lazy، فقط افزودنی: آیتم/توکنِ seed که در DB نیست اضافه می‌شود و ردیف موجود هرگز دست نمی‌خورد): ۱۶ آیتم (از جمله `pipe_laying` — لوله‌گذاری، متر طول)، واژگان، چگالی آسفالت **۲٫۳۵** t/m³ (تصمیم کارفرما؛ پیوست الف سند ۲٫۴ بود) |
-| `convert.py` | گراف تبدیل واحد (BFS) با Decimal؛ `unit_mismatch` / `no_conversion` (+ `missing_param`) |
+| `convert.py` | گراف تبدیل واحد (BFS) با Decimal؛ تبدیل دوطرفه جرم/حجم `m3 <-> t` با `density_t_per_m3` (ضرب برای m3→t، تقسیم برای t→m3؛ `kg <-> m3` مجاز نیست)؛ `unit_mismatch` / `no_conversion` (+ `missing_param`) |
 | `compute.py` | resolve + convert + aggregate **خالص** (بدون DB)؛ قاعده‌ی «یک effect برای هر ردیف» |
 | `service.py` | دسترسی، گزارش/فایل، `recompute`، `gate_causes`، review/confirm، results/lines/trace، publish/reopen |
 | `pipeline.py` | job؛ `run_report_sync` ورودی RQ |
@@ -58,7 +58,7 @@
 - `twin_rows` هنوز در اتوماسیون استفاده نمی‌شود (فقط hint در `flags`؛ تصمیم `duplicate` با human/agent).
 
 ### endpointهای فاز ۱ (پیشوند `/api/v1/volume-reports`)
-`POST /` · `GET /?project_id=&status=` · `GET|DELETE /{id}` · `PUT /{id}/files` · `POST /{id}/run` · `POST /{id}/recompute` · `GET /{id}/progress|sources` · `GET /{id}/review/groups?state=` · `POST /{id}/review/confirm` · `GET /{id}/results?group_by=&include=other,problems,nonphysical` · `GET /{id}/lines` · `GET /{id}/trace?item_key=&site_id=` · `POST /{id}/publish|reopen` · `GET /{id}/export?format=` · `GET /catalog` · `GET|POST|PUT /settings/companies` · `GET|PUT /settings/sites` · `GET|PUT /settings/conversions`.
+`POST /` · `GET /?project_id=&status=` · `GET|DELETE /{id}` · `PUT /{id}/files` · `POST /{id}/run` · `POST /{id}/recompute` · `GET /{id}/progress|sources` · `GET /{id}/review/groups?state=` · `POST /{id}/review/confirm` · `GET /{id}/results?group_by=&include=other,problems,nonphysical` · `GET /{id}/lines` · `GET /{id}/trace?item_key=&site_id=` · `POST /{id}/publish|reopen` · `GET /{id}/export?format=` · `GET /catalog` · `GET|POST|PUT /settings/companies` · `GET|PUT /settings/sites` · `GET|PUT /settings/conversions` · `DELETE /settings/conversions/{id}`.
 مقادیر به‌صورت رشته‌ی دسیمال (`"2572.8717"`) و `unit`.
 
 ### تست

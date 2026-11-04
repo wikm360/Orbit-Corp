@@ -173,6 +173,21 @@ async def upsert_conversion(payload: ConversionWrite, context: UserContext = Dep
     return _conversion_read(existing, {i.id: i.key for i in items.values()})
 
 
+@router.delete("/settings/conversions/{conversion_id}", status_code=204)
+async def delete_conversion(
+    conversion_id: uuid.UUID,
+    context: UserContext = Depends(get_current_user_context),
+    db: AsyncSession = Depends(get_db),
+):
+    service.require_settings_editor(context)
+    c = await db.get(Conversion, conversion_id)
+    if c is None:
+        raise NotFoundError("Conversion not found")
+    await db.delete(c)
+    await bump_catalog_version(db)
+    await db.commit()
+
+
 @router.get("/settings/decisions")
 async def list_decisions(q: str | None = None, include_revoked: bool = False, limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0),
                          context: UserContext = Depends(get_current_user_context), db: AsyncSession = Depends(get_db)):

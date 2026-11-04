@@ -211,6 +211,12 @@ async def test_access_rules(client, tmp_path):
     # settings: only admins / team leaders
     assert (await client.post(f"{API}/settings/companies", json={"name": "z"}, headers=outsider)).status_code == 403
     assert (await client.put(f"{API}/settings/conversions", json={"key": "density_t_per_m3", "value": 2.4, "unit": "t/m3"}, headers=outsider)).status_code == 403
+    c_res = await client.put(f"{API}/settings/conversions", json={"key": "thickness_m", "value": 0.1, "unit": "m"}, headers=leader)
+    assert c_res.status_code == 200
+    conv_id = c_res.json()["id"]
+    assert (await client.delete(f"{API}/settings/conversions/{conv_id}", headers=outsider)).status_code == 403
+    assert (await client.delete(f"{API}/settings/conversions/{conv_id}", headers=leader)).status_code == 204
+    assert (await client.delete(f"{API}/settings/conversions/{conv_id}", headers=leader)).status_code == 404
     assert (await client.get(f"{API}/catalog", headers=outsider)).status_code == 200
 
     # files: other project's document, non-READY, wrong extension, unknown company

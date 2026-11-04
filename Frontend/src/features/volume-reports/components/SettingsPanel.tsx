@@ -180,6 +180,22 @@ function ConversionsSection({ editable }: { editable: boolean }) {
     try { await volumeReportApi.settings.saveConversion({ key: form.key, item_key: form.item_key || null, value, unit: param.unit }); setForm({ ...form, value: "" }); setNotice("ذخیره شد؛ با «محاسبه‌ی مجدد» در گزارش‌ها اعمال می‌شود."); reload(); }
     catch (e) { setNotice(friendlyErrorMessage(e, "ذخیره ناموفق بود.")); }
   }
+
+  async function remove(c: Conversion) {
+    if (!window.confirm("این پارامتر تبدیل حذف شود؟")) return;
+    try {
+      await volumeReportApi.settings.deleteConversion(c.id);
+      setNotice("پارامتر تبدیل حذف شد؛ با «محاسبه‌ی مجدد» در گزارش‌ها اعمال می‌شود.");
+      reload();
+    } catch (e) {
+      setNotice(friendlyErrorMessage(e, "حذف ناموفق بود."));
+    }
+  }
+
+  function edit(c: Conversion) {
+    setForm({ key: c.key, item_key: c.item_key ?? "", value: String(c.value) });
+  }
+
   if (error) return <ErrorBox error={error} onRetry={reload} />;
   if (!data) return <LoadingBlock />;
   const title = (key: string | null) => (key ? data.items.find((i) => i.key === key)?.title_fa ?? key : "سراسری");
@@ -188,15 +204,23 @@ function ConversionsSection({ editable }: { editable: boolean }) {
       <Notice message={notice} />
       <div className="overflow-x-auto rounded-2xl border border-black/[0.06] bg-white">
         <table className="w-full min-w-[480px] text-xs">
-          <thead className="bg-slate-50 text-slate-600"><tr>{["پارامتر", "آیتم", "مقدار", "واحد"].map((h) => <th key={h} className="px-2 py-2 text-start font-medium">{h}</th>)}</tr></thead>
+          <thead className="bg-slate-50 text-slate-600"><tr>{["پارامتر", "آیتم", "مقدار", "واحد", ...(editable ? ["عملیات"] : [])].map((h, i) => <th key={i} className="px-2 py-2 text-start font-medium">{h}</th>)}</tr></thead>
           <tbody>
-            {data.conversions.length === 0 && <tr><td colSpan={4} className="px-2 py-6 text-center text-slate-400">پارامتری ثبت نشده است.</td></tr>}
+            {data.conversions.length === 0 && <tr><td colSpan={editable ? 5 : 4} className="px-2 py-6 text-center text-slate-400">پارامتری ثبت نشده است.</td></tr>}
             {data.conversions.map((c: Conversion) => (
               <tr key={c.id} className="border-t border-slate-100">
                 <td className="px-2 py-2">{PARAMS.find((p) => p.key === c.key)?.label ?? c.key}</td>
                 <td className="px-2 py-2">{title(c.item_key)}{c.site_id ? " (کارگاه خاص)" : ""}</td>
                 <td className="px-2 py-2" dir="ltr">{toFa(Number(c.value))}</td>
                 <td className="px-2 py-2" dir="ltr">{c.unit}</td>
+                {editable && (
+                  <td className="px-2 py-2">
+                    <div className="flex items-center gap-1">
+                      <Button size="sm" variant="ghost" onClick={() => edit(c)}>ویرایش</Button>
+                      <Button size="sm" variant="ghost" className="text-red-600 hover:text-red-700" onClick={() => void remove(c)}>حذف</Button>
+                    </div>
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>

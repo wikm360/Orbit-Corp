@@ -61,6 +61,7 @@ export const volumeReportApi = {
     conversions: () => apiRequest<Conversion[]>(`${BASE}/settings/conversions`),
     saveConversion: (payload: { key: string; item_key?: string | null; site_id?: string | null; value: number; unit: string; note?: string | null }) =>
       send<Conversion>("/settings/conversions", "PUT", payload),
+    deleteConversion: (id: string) => send<void>(`/settings/conversions/${id}`, "DELETE"),
     items: () => apiRequest<SettingsItem[]>(`${BASE}/settings/items`),
     createItem: (item: SettingsItemWrite) => send<SettingsItem>("/settings/items", "POST", item),
     updateItem: (item: SettingsItemWrite) => send<SettingsItem>(`/settings/items/${item.key}`, "PUT", item),

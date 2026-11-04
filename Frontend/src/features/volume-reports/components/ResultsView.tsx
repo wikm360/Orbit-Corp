@@ -133,7 +133,7 @@ export function ResultsView({ reportId, catalog, refreshKey }: { reportId: strin
                 </div>
                 <div className="mt-2 text-xl font-semibold text-teal-800">{row ? formatQuantityWithUnit(row.qty, row.unit, item.decimals) : "—"}</div>
                 <div className="mt-1 text-[11px] text-slate-500">
-                  {item.key === "asphalt_total" ? "بیندر + توپکا (یک بار شمرده شده)" : row ? `${toFa(row.n_lines)} ردیف · واحد ${unitLabel(item.output_unit)}` : "بدون ردیف"}
+                  {item.key === "asphalt_total" ? "بیندر + توپکا" : row ? `${toFa(row.n_lines)} ردیف · واحد ${unitLabel(item.output_unit)}` : "بدون ردیف"}
                 </div>
               </button>
             );

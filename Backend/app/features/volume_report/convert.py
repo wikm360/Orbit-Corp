@@ -10,12 +10,17 @@ _EDGES: dict[tuple[str, str], tuple[str | None, str]] = {
     ("t", "kg"): (None, "mul1000"),
     ("m2cm", "m3"): (None, "div100"),
     ("m3", "t"): ("density_t_per_m3", "mul"),
+    ("t", "m3"): ("density_t_per_m3", "div"),
     ("m2", "m3"): ("thickness_m", "mul"),
     ("m", "m3"): ("cross_section_m2", "mul"),
 }
 _ADJACENT: dict[str, list[str]] = {}
 for _src, _dst in _EDGES:
     _ADJACENT.setdefault(_src, []).append(_dst)
+
+# Density conversion between mass and volume is valid for t <-> m3 only (e.g. asphalt, mining load).
+# Direct chaining of kg to/from m3 is disallowed (e.g. kg on concrete is an invalid unit, not convertible).
+_DISALLOWED_PATHS: set[tuple[str, str]] = {("kg", "m3"), ("m3", "kg")}
 
 
 @dataclass(frozen=True)
@@ -29,11 +34,13 @@ def find_path(source: str, target: str) -> list[tuple[str, str]] | None:
     """Shortest edge path source -> target (BFS), [] when equal, None when unreachable."""
     if source == target:
         return []
+    if (source, target) in _DISALLOWED_PATHS:
+        return None
     seen, queue = {source}, deque([(source, [])])
     while queue:
         node, path = queue.popleft()
         for nxt in _ADJACENT.get(node, ()):
-            if nxt in seen:
+            if nxt in seen or (source, nxt) in _DISALLOWED_PATHS:
                 continue
             new_path = path + [(node, nxt)]
             if nxt == target:
@@ -59,6 +66,11 @@ def convert_quantity(quantity: Decimal, source: str, target: str, params: dict[s
             value = value * 1000
         elif op == "div100":
             value = value / 100
+        elif op == "div":
+            param_val = params[key]
+            if not param_val:
+                return ConversionOutcome("no_conversion", missing_param=key)
+            value = value / param_val
         else:
             value = value * params[key]
     return ConversionOutcome("ok", quantity=value)

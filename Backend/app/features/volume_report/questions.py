@@ -299,9 +299,10 @@ async def refresh_system_questions(db: AsyncSession, report: Report) -> None:
             if ("no_conversion", site_id, param, keys_t) in seen:
                 continue
             unit = {"density_t_per_m3": "t/m3", "thickness_m": "m", "cross_section_m2": "m2"}[param]
+            param_label = {"density_t_per_m3": "چگالی", "thickness_m": "ضخامت", "cross_section_m2": "سطح مقطع"}.get(param, param)
             db.add(Question(
                 report_id=report.id, kind=QuestionKind.NUMBER, group_keys=list(keys_t), impact_score=impact_score(index, list(keys_t)),
-                spec={"system": "no_conversion", "kind": "number", "prompt": f"برای تبدیل واحد «{title}» مقدار {param} ({unit}) را وارد کنید.",
+                spec={"system": "no_conversion", "kind": "number", "prompt": f"برای تبدیل واحد «{title}» مقدار {param_label} ({unit}) را وارد کنید.",
                       "site_id": site_id, "item_key": item.key if item else None, "group_ids": [k[:10] for k in keys_t], "options": [],
                       "number": {"param_key": param, "unit": unit, "min": 0, "max": 1_000_000}, "remember_scopes": ["global", "line"], "default_remember": "global"},
             ))
