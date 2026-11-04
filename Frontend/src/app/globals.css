@@ -111,14 +111,11 @@
   .presentation-slide-print {
     page-break-after: always !important;
     break-after: page !important;
+    position: relative !important;
     width: 16in !important;
-    min-width: 16in !important;
     height: 9in !important;
-    min-height: 9in !important;
     margin: 0 !important;
-    box-sizing: border-box !important;
     overflow: hidden !important;
-    border-radius: 0 !important;
     box-shadow: none !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
@@ -126,6 +123,9 @@
   .presentation-slide-print:last-child {
     page-break-after: auto !important;
     break-after: auto !important;
+  }
+  .slide-canvas {
+    transform: none !important;
   }
   .presentation-page,
   .print-only-container {
@@ -145,14 +145,26 @@
     overflow: visible !important;
     flex: none !important;
   }
-  .print-slide-number {
-    display: block !important;
-  }
 }
 
 @media screen {
   .presentation-slide-print {
-    width: min(100%, 1600px);
-    aspect-ratio: 16 / 9;
+    position: relative;
+    width: 100%;
+    height: calc(864px * var(--slide-scale, 1));
+    overflow: hidden;
+    border-radius: 20px;
+    box-shadow: 0 10px 30px rgba(15, 23, 42, 0.18);
   }
+}
+
+.slide-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1536px;
+  height: 864px;
+  overflow: hidden;
+  transform: scale(var(--slide-scale, 1));
+  transform-origin: top left;
 }

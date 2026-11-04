@@ -43,7 +43,7 @@
 | `pipeline.py` | job؛ `run_report_sync` ورودی RQ |
 | `router.py`, `schemas.py`, `export.py` | API (xlsx/csv RTL با محافظ formula-injection) |
 | `workers/volume_report_worker.py` | worker صف جدا؛ compose: سرویس `vr-worker` (با `up` معمولی بالا می‌آید) |
-| فرانت‌اند `Frontend/src/features/volume-reports/screens/PresentationScreen.tsx` | ارائه‌ی مدیریتی ۱۶:۹ از نتایج مجازشده‌ی holding/company/site، آیتم‌ها، هشدارها و شیت‌های مأخذ؛ خروجی PDF از Print مرورگر (Save as PDF) و بدون endpoint جدید |
+| فرانت‌اند `Frontend/src/features/volume-reports/screens/PresentationScreen.tsx` | ارائه‌ی مدیریتی ۱۶:۹ (کانواس ثابت ۱۶in×۹in که روی صفحه scale می‌شود و در Print بدون scale چاپ می‌شود): جلد، نمای کلی، خلاصه‌ی همه‌ی آیتم‌ها، نمودار مقایسه‌ی شرکت‌ها، کارنامه‌ی شرکت‌ها (با ردیف جمع هولدینگ) و اسناد مأخذ؛ بدون کنترل کیفیت و کارنامه‌ی کارگاه‌ها. لوگوها با `<img>` ساده (نه next/image) و قبل از چاپ منتظر load می‌مانند؛ خروجی PDF از Print مرورگر و بدون endpoint جدید |
 
 ### قواعد و تصمیم‌های پیاده‌سازی (کد درست است)
 - **دسترسی:** `check_project_access` = معادل `require_project_access` (عضو پروژه، leader تیم والد، admin). گزارش ناموجود 404، غیرعضو 403. تنظیمات (ساخت/ویرایش شرکت، کارگاه، پارامتر تبدیل) فقط `is_admin` یا `led_team_ids` غیرتهی؛ خواندن برای هر کاربر لاگین‌شده.
