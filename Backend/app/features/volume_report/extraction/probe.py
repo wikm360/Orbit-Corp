@@ -7,6 +7,7 @@ from app.features.volume_report.extraction.normalize import normalize_text
 from app.features.volume_report.extraction.workbook import SheetData, WorkbookData
 
 _INCOME_WORDS = ("درآمد", "درامد")
+_PLAN_WORDS = ("برنامه", "پیش بینی")
 _COMPANY_PATTERN = re.compile(r"شرکت\s+(?:[^\s،,:;()\d]+\s*){1,5}")
 _COMPANY_SCAN_ROWS = 12
 _COMPANY_SCAN_COLS = 12
@@ -16,7 +17,7 @@ _COMPANY_SCAN_COLS = 12
 class SheetProbe:
     sheet: str
     visibility: str
-    kind: str  # income | planned | expense | summary | other | hidden
+    kind: str  # income | planned (income-layout forecast, read) | expense | summary | other | hidden
     used: bool
     reason: str | None
 
@@ -25,8 +26,11 @@ def classify_sheet(sheet: SheetData) -> SheetProbe:
     name = normalize_text(sheet.name)
     if sheet.is_hidden:
         return SheetProbe(sheet.name, sheet.visibility, "hidden", False, "hidden")
-    # Any "برنامه" sheet is a plan, not actuals -- also when the word "درآمد" is missing from its name.
-    if "برنامه" in name:
+    # A plan ("برنامه" / "پیش بینی") is never actuals. An income-layout plan sheet (its name still says "درآمد") is read as
+    # the forecast for the next period; any other plan sheet (e.g. the EVM summary "پیش بینی") is not a quantity table.
+    if any(word in name for word in _PLAN_WORDS):
+        if any(word in name for word in _INCOME_WORDS):
+            return SheetProbe(sheet.name, sheet.visibility, "planned", True, None)
         return SheetProbe(sheet.name, sheet.visibility, "planned", False, "planned_sheet")
     if "هزینه" in name:
         return SheetProbe(sheet.name, sheet.visibility, "expense", False, "expense_sheet")

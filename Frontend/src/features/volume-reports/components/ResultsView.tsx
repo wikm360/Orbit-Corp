@@ -14,7 +14,7 @@ import { Card, EmptyState, ErrorBox, LoadingBlock, UnconfirmedMark } from "./com
 import { DrillDown, type DrillTarget } from "./DrillDown";
 import { ResultsChart } from "./ResultsChart";
 
-const SCOPES: { id: ResultScope; label: string }[] = [{ id: "holding", label: "هولدینگ" }, { id: "company", label: "شرکت" }, { id: "site", label: "کارگاه" }];
+const SCOPES: { id: ResultScope; label: string }[] = [{ id: "holding", label: "هلدینگ" }, { id: "company", label: "شرکت" }, { id: "site", label: "کارگاه" }];
 
 function ProblemTable({ title, hint, lines, tone }: { title: string; hint: string; lines: LineRow[]; tone: "amber" | "red" | "slate" }) {
   const [open, setOpen] = useState(tone !== "slate");

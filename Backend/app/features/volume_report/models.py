@@ -259,6 +259,8 @@ class Line(Base):
     quantity: Mapped[Decimal] = mapped_column(Numeric(20, 4), nullable=False)
     flags: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
     group_key: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    # actual = the report's own period; planned = the forecast sheet, i.e. the period right after `period_end`.
+    basis: Mapped[str] = mapped_column(String(10), nullable=False, default="actual", server_default="actual")
     created_at: Mapped[datetime] = _now()
 
 
@@ -409,6 +411,7 @@ class Result(Base):
             "uq_vr_results_cell",
             "report_id",
             "scope",
+            "basis",
             text(f"coalesce(company_id, '{_NIL_UUID}'::uuid)"),
             text(f"coalesce(site_id, '{_NIL_UUID}'::uuid)"),
             "item_id",
@@ -419,6 +422,7 @@ class Result(Base):
     id: Mapped[uuid.UUID] = _uuid_pk()
     report_id: Mapped[uuid.UUID] = _fk("vr_reports", "CASCADE", index=True)
     scope: Mapped[ResultScope] = mapped_column(_enum(ResultScope, "vr_result_scope"), nullable=False)
+    basis: Mapped[str] = mapped_column(String(10), nullable=False, default="actual", server_default="actual")
     company_id: Mapped[uuid.UUID | None] = _fk("vr_companies", "CASCADE", nullable=True)
     site_id: Mapped[uuid.UUID | None] = _fk("vr_sites", "CASCADE", nullable=True)
     item_id: Mapped[uuid.UUID] = _fk("vr_items", "CASCADE")

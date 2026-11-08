@@ -72,7 +72,9 @@ async def _parse_files(db: AsyncSession, report: Report, lexicon, overrides: dic
         skipped = [e["sheet"] for e in extraction.sheet_log if not e.get("used")]
         await activity.log_activity(
             db, report.id, "parse",
-            f"فایل «{rfile.filename}»: {len(ok_sheets)} شیت درآمد خوانده شد، {len(skipped)} شیت نادیده گرفته شد",
+            f"فایل «{rfile.filename}»: {len(ok_sheets)} شیت درآمد خوانده شد"
+            + (f" ({sum(1 for sh in ok_sheets if sh.basis == 'planned')} شیت برنامه/پیش‌بینی)" if any(sh.basis == "planned" for sh in ok_sheets) else "")
+            + f"، {len(skipped)} شیت نادیده گرفته شد",
             kind="success" if ok_sheets else "warn", detail={"skipped_sheets": skipped[:30], "warnings": len(extraction.warnings)}, commit=False)
         for sheet in extraction.sheets:
             if sheet.status != "ok":
@@ -87,7 +89,7 @@ async def _parse_files(db: AsyncSession, report: Report, lexicon, overrides: dic
                     description_norm=line.description_norm, tokens=line.tokens, unit_raw=line.unit_raw,
                     unit_norm=line.unit_norm, unit_dim=Dimension(line.unit_dim), quantity=line.quantity,
                     flags={**line.flags, "role_hint": line.role_hint},
-                    group_key=group_key(line.description_norm, line.unit_norm, site.kind.value),
+                    group_key=group_key(line.description_norm, line.unit_norm, site.kind.value), basis=sheet.basis,
                 ))
         rfile.status = FileStatus.PARSED
         parsed_ok += 1

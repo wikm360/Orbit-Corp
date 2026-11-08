@@ -12,6 +12,7 @@ import { friendlyErrorMessage } from "@/shared/lib/errorMessages";
 import { volumeReportApi, type ExportFormat } from "../api/volumeReportApi";
 import { Card, ErrorBox, LoadingBlock, ReportStatusBadge, Tabs } from "../components/common";
 import { ActivityPanel } from "../components/ActivityPanel";
+import { PlanPanel } from "../components/PlanPanel";
 import { ProgressCard } from "../components/ProgressCard";
 import { ResultsView } from "../components/ResultsView";
 import { ReviewPanel } from "../components/ReviewPanel";
@@ -23,7 +24,7 @@ import { formatJalaliDate, formatJalaliDateTime, toFa } from "../lib/jalali";
 import { GATE_HINTS, PERIOD_LABELS, gateLabel, parseGateError } from "../lib/status";
 import type { CatalogItem, GateCause, Progress, ReportDetail } from "../types";
 
-type TabId = "results" | "review" | "sources" | "activity";
+type TabId = "results" | "plan" | "review" | "sources" | "activity";
 
 export function ReportDetailScreen({ reportId }: { reportId: string }) {
   const router = useRouter();
@@ -87,7 +88,8 @@ export function ReportDetailScreen({ reportId }: { reportId: string }) {
     if (fresh) router.push(`/volume-reports/${fresh.id}`);
   }
   async function remove() {
-    if (!window.confirm("این گزارش حذف شود؟")) return;
+    const warning = report?.status === "published" ? "این گزارش منتشرشده است. با حذف، گزارش و همه‌ی نتایج و تاریخچه‌ی آن برای همیشه پاک می‌شود و قابل بازگشت نیست. ادامه می‌دهید؟" : "این گزارش برای همیشه حذف شود؟";
+    if (!window.confirm(warning)) return;
     const ok = await act("delete", () => volumeReportApi.remove(reportId).then(() => true));
     if (ok) router.push("/volume-reports");
   }
@@ -129,7 +131,7 @@ export function ReportDetailScreen({ reportId }: { reportId: string }) {
           </>}
           {editable && ["ready", "needs_review", "awaiting_user"].includes(report.status) && <Button size="sm" isLoading={busy === "publish"} onClick={() => void publish()}>انتشار</Button>}
           {published && <Button size="sm" variant="secondary" isLoading={busy === "reopen"} onClick={() => void reopen()}>بازکردن نسخه‌ی جدید</Button>}
-          {(report.status === "draft" || report.status === "failed") && <Button size="sm" variant="danger" isLoading={busy === "delete"} onClick={() => void remove()}>حذف</Button>}
+          {!processing && <Button size="sm" variant="danger" isLoading={busy === "delete"} onClick={() => void remove()}>حذف</Button>}
         </div>
       </header>
 
@@ -145,8 +147,9 @@ export function ReportDetailScreen({ reportId }: { reportId: string }) {
 
       {!processing && report.status !== "draft" && report.status !== "failed" && (
         <>
-          <Tabs<TabId> value={tab} onChange={setTab} tabs={[{ id: "results", label: "نتایج" }, { id: "review", label: "بازبینی", badge: openQuestions }, { id: "sources", label: "منابع و هشدارها" }, { id: "activity", label: "گزارش فعالیت" }]} />
+          <Tabs<TabId> value={tab} onChange={setTab} tabs={[{ id: "results", label: "نتایج" }, { id: "plan", label: "برنامه و پیش‌بینی" }, { id: "review", label: "بازبینی", badge: openQuestions }, { id: "sources", label: "منابع و هشدارها" }, { id: "activity", label: "گزارش فعالیت" }]} />
           {tab === "results" && <ResultsView reportId={reportId} catalog={catalog} refreshKey={refreshKey} />}
+          {tab === "plan" && <PlanPanel reportId={reportId} periodEnd={report.period_end} refreshKey={refreshKey} />}
           {tab === "review" && (
             <ReviewPanel reportId={reportId} catalog={catalog} editable={editable} canContinue={canContinue}
               onChanged={() => void refresh()} onContinue={async () => { await volumeReportApi.continueRun(reportId); await load(); }} />

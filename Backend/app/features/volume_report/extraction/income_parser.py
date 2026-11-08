@@ -50,6 +50,7 @@ class ParsedSheet:
     site_name: str = ""
     site_name_norm: str = ""
     site_kind_guess: str = "road"
+    basis: str = "actual"  # actual | planned (forecast for the period after the report's)
     lines: list[ParsedLine] = field(default_factory=list)
     rows_total: int = 0
     rows_nonzero: int = 0
@@ -122,7 +123,7 @@ def extract_site_name(rows: list[list[Any]], sheet_name: str) -> str:
             name = strip_period_from_name(re.sub(r"\s+", " ", name).strip(" :-–"))
             if name:
                 return name
-    fallback = re.sub(r"در[آا]مد", "", light_clean(sheet_name))
+    fallback = re.sub(r"در[آا]مد|برنامه(?:\s*ای)?|پیش\s*بینی", "", light_clean(sheet_name))
     fallback = re.sub(r"\(صفحه\s*\d+\)", "", fallback)
     return re.sub(r"\s+", " ", fallback).strip(" -_") or sheet_name.strip()
 
@@ -174,19 +175,20 @@ def parse_income_sheet(
     lexicon: Lexicon,
     period_label: str | None = None,
     layout_override: dict[str, Any] | None = None,
+    basis: str = "actual",
 ) -> ParsedSheet:
     layout = layout_from_spec(layout_override) if layout_override else find_layout(rows)
     stop_marker = normalize_text((layout_override or {}).get("stop_marker") or "جمع")
     name = extract_site_name(rows, sheet_name)
     name_norm = normalize_text(name)
-    parsed = ParsedSheet(sheet_name, "ok", site_name=name, site_name_norm=name_norm, site_kind_guess=guess_site_kind(name_norm))
+    parsed = ParsedSheet(sheet_name, "ok", site_name=name, site_name_norm=name_norm, site_kind_guess=guess_site_kind(name_norm), basis=basis)
     if layout is None:
         parsed.status = "layout_unknown"
         return parsed
     header_index, columns = layout
     parsed.header_row = header_index + 1
     parsed.columns = columns
-    if (warning := period_label_warning(rows, period_label)) is not None:
+    if basis == "actual" and (warning := period_label_warning(rows, period_label)) is not None:  # a forecast names the next period
         parsed.warnings.append(warning)
 
     desc_col, section_col, qty_col, unit_col = columns["desc"], columns["section"], columns["qty"], columns["unit"]

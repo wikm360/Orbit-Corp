@@ -20,7 +20,9 @@
 | `extraction/runner.py` | `extract_file(path, lexicon, period_label)` → `sheet_log` + شیت‌های parse‌شده + هشدارها |
 
 ### تصمیم‌های ریز (کد درست است)
-- هر شیت غیرپنهان با «برنامه» در نام `planned` است (حتی بدون «درآمد»)؛ هرگز خوانده نمی‌شود.
+- **برنامه / پیش‌بینی (migration 0019):** شیتی که «برنامه» یا «پیش بینی» در نامش باشد `planned` است. اگر «درآمد» هم در نامش باشد (قالب جدول درآمد، مثل صفحه‌ی «گزارش پیش بینی درآمد پروژه …» در PDF) خوانده می‌شود با `basis="planned"`؛ در غیر این صورت (خلاصه‌ی EVM، «درآمد برنامه ای از ابتدای سال») رد می‌شود (`planned_sheet`). شیت برنامه‌ایِ بدون قالب قابل‌خواندن بی‌سؤال رد می‌شود (`planned_layout_unknown`). **پیش‌بینی مربوط به دوره‌ی بعدِ `period_end` است**، نه همان دوره.
+- `vr_lines.basis` و `vr_results.basis` (`actual|planned`، پیش‌فرض actual). `recompute` هر basis را جدا resolve/aggregate می‌کند تا پیش‌بینی هیچ‌وقت وارد جمع واقعی (یا جفت‌کردن supply/execute) نشود؛ طبقه‌بندی‌ها مشترک است (همان `group_key`) پس ردیف دوبار بازبینی نمی‌شود. `/results`, `/lines`, `/trace` پارامتر `basis` (پیش‌فرض actual) دارند. `GET /{id}/plan-vs-actual?group_by=` پیش‌بینیِ گزارش قبلی (همان پروژه، آخرین `period_end` قبل از شروع این دوره که پیش‌بینی دارد) را با واقعیِ این گزارش مقایسه می‌کند (`planned, actual, variance, achievement_pct`) و `next_plan` (پیش‌بینی خودِ این گزارش) را هم برمی‌گرداند. snapshot کلید `planned_results` دارد.
+- PDF: کلمه‌ها با NFKC (presentation form → حروف ساده) و `ي/ك` یکسان می‌شوند؛ اگر `cm` صفحه وارونه باشد (d منفی) محور Y برگردانده می‌شود؛ مرز ستون «فعالیت» (متن راست‌چین) به ستون بعدی نزدیک‌تر است (`_DESC_BOUNDARY_SHARE`).
 - `twin_rows` (شماره ردیف‌های شیت، نه id) برای ردیف‌های فیزیکی با کمیت **و واحد** یکسان و شرح متفاوت؛ فقط hint، متقارن، و خودکار dedup نمی‌شود.
 - `cached_values_missing` فقط وقتی هشدار می‌دهد که ≥۳ ردیف «واحد دارد، حجم None و عدد دیگری در ردیف هست» و هیچ ردیف غیرصفری نیست.
 - `group_key` به نوع کارگاه وابسته است و نوع بعد از تأیید تغییر می‌کند؛ پس parser آن را نمی‌سازد و فاز ۱ با `group_key()` می‌سازد.
@@ -43,7 +45,7 @@
 | `pipeline.py` | job؛ `run_report_sync` ورودی RQ |
 | `router.py`, `schemas.py`, `export.py` | API (xlsx/csv RTL با محافظ formula-injection) |
 | `workers/volume_report_worker.py` | worker صف جدا؛ compose: سرویس `vr-worker` (با `up` معمولی بالا می‌آید) |
-| فرانت‌اند `Frontend/src/features/volume-reports/screens/PresentationScreen.tsx` | ارائه‌ی مدیریتی ۱۶:۹ (کانواس ثابت ۱۵۳۶×۸۶۴ که روی صفحه scale می‌شود): جلد، نمای کلی، خلاصه‌ی همه‌ی آیتم‌ها، نمودار مقایسه‌ی شرکت‌ها، کارنامه‌ی شرکت‌ها (با ردیف جمع هولدینگ) و اسناد مأخذ؛ بدون کنترل کیفیت و کارنامه‌ی کارگاه‌ها. لوگوها با `<img>` ساده؛ دکمه «دانلود PDF» هر اسلاید را در مرورگر با `html-to-image` به تصویر تبدیل و با `jspdf` یک فایل PDF واقعی می‌سازد و مستقیم دانلود می‌کند (بدون Print و بدون endpoint جدید) |
+| فرانت‌اند `Frontend/src/features/volume-reports/screens/PresentationScreen.tsx` | ارائه‌ی مدیریتی ۱۶:۹ (کانواس ثابت ۱۵۳۶×۸۶۴ که روی صفحه scale می‌شود): جلد، نمای کلی، خلاصه‌ی همه‌ی آیتم‌ها، نمودار مقایسه‌ی شرکت‌ها، کارنامه‌ی شرکت‌ها (با ردیف جمع هلدینگ) و اسناد مأخذ؛ بدون کنترل کیفیت و کارنامه‌ی کارگاه‌ها. لوگوها با `<img>` ساده؛ دکمه «دانلود PDF» هر اسلاید را در مرورگر با `html-to-image` به تصویر تبدیل و با `jspdf` یک فایل PDF واقعی می‌سازد و مستقیم دانلود می‌کند (بدون Print و بدون endpoint جدید) |
 
 ### قواعد و تصمیم‌های پیاده‌سازی (کد درست است)
 - **دسترسی:** `check_project_access` = معادل `require_project_access` (عضو پروژه، leader تیم والد، admin). گزارش ناموجود 404، غیرعضو 403. تنظیمات (ساخت/ویرایش شرکت، کارگاه، پارامتر تبدیل) فقط `is_admin` یا `led_team_ids` غیرتهی؛ خواندن برای هر کاربر لاگین‌شده.
@@ -54,7 +56,7 @@
 - ردیف منفی با item شمرده‌شدنی → `excluded` با note `negative_qty` (هرگز کم نمی‌شود).
 - `role=na` مثل اجرا شمرده می‌شود؛ فقط `supply` کنار اجرا نادیده/تنها نشمرده است. `exclude_reason=duplicate` → effect `duplicate_ignored`.
 - **قفل انتشار (`VR_PUBLISH_GATE`)** علت‌ها: `open_questions`، `unconfirmed_counted`، `needs_input`، `unit_mismatch`، `no_conversion`، `site_kind_unconfirmed`. strict → 409؛ warn → در `snapshot.payload.warnings.gate`.
-- publish یک `vr_snapshots` می‌سازد؛ گزارش منتشرشده تغییرناپذیر است (409 برای files/run/delete/confirm). `reopen` نسخه‌ی `version+1` با `supersedes_id` و کپی فایل‌ها و تصمیم‌های human؛ یک‌بار.
+- publish یک `vr_snapshots` می‌سازد؛ گزارش منتشرشده تغییرناپذیر است (409 برای files/run/confirm)؛ `DELETE /{id}` هر گزارشی را کامل حذف می‌کند (۲۰۴؛ فرزندان cascade، تصمیم‌های حافظه با `source_report_id=NULL` می‌مانند) و فقط برای `processing` ۴۰۹ است. `reopen` نسخه‌ی `version+1` با `supersedes_id` و کپی فایل‌ها و تصمیم‌های human؛ یک‌بار.
 - تغییر `kind` کارگاه، `group_key` ردیف‌های موجود را عوض **نمی‌کند**؛ گزارش را دوباره run کنید. تغییر پارامتر تبدیل: `POST /{id}/recompute`.
 - سؤال‌ها (`vr_questions`) فعلاً فقط جدول و شمارش در gate هستند؛ endpointهایشان فاز ۳.
 - `twin_rows` هنوز در اتوماسیون استفاده نمی‌شود (فقط hint در `flags`؛ تصمیم `duplicate` با human/agent).

@@ -29,6 +29,7 @@ def _log_entry(probe: SheetProbe, parsed: ParsedSheet | None) -> dict[str, Any]:
         entry.update(
             used=parsed.status == "ok",
             reason=None if parsed.status == "ok" else parsed.status,
+            basis=parsed.basis,
             site_name=parsed.site_name,
             rows_total=parsed.rows_total,
             rows_nonzero=parsed.rows_nonzero,
@@ -50,7 +51,17 @@ def extract_file(
         probes = probe_workbook(workbook)
         result.suggested_company = suggest_company(workbook, probes)
         for sheet, probe in zip(workbook.sheets, probes):
-            parsed = parse_income_sheet(sheet.name, sheet.rows(), lexicon, period_label, (layout_overrides or {}).get(sheet.name)) if probe.used else None
+            parsed = parse_income_sheet(
+                sheet.name, sheet.rows(), lexicon, period_label, (layout_overrides or {}).get(sheet.name),
+                "planned" if probe.kind == "planned" else "actual",
+            ) if probe.used else None
+            if parsed is not None and probe.kind == "planned" and parsed.status != "ok":
+                # A forecast sheet we cannot read is never worth a layout question: the actuals do not depend on it.
+                entry = _log_entry(probe, parsed)
+                entry.update(used=False, reason="planned_layout_unknown")
+                entry.pop("layout_unknown", None)
+                result.sheet_log.append(entry)
+                continue
             if parsed is not None:
                 result.sheets.append(parsed)
                 result.warnings.extend({**w, "sheet": sheet.name} for w in parsed.warnings)

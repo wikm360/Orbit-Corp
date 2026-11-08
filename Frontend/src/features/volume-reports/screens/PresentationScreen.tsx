@@ -7,7 +7,7 @@ import { volumeReportApi } from "../api/volumeReportApi";
 import { ErrorBox, LoadingBlock } from "../components/common";
 import { runSoon } from "../lib/defer";
 import { formatQuantity, unitLabel } from "../lib/format";
-import { formatJalaliDate, toFa } from "../lib/jalali";
+import { formatJalaliDate, formatWeekLabel, toFa } from "../lib/jalali";
 import type { CatalogItem, ReportDetail, ResultRow, ResultsResponse, SourceInfo } from "../types";
 
 /** The slide canvas is 16in x 9in at 96dpi, so it prints 1:1 and is scaled down with CSS on screen (see globals.css). */
@@ -15,7 +15,6 @@ const SLIDE_W = 1536;
 const SLIDE_H = 864;
 const NAVY = "#252850";
 const READY_STATUSES = new Set(["awaiting_user", "needs_review", "ready", "published"]);
-const HERO_KEYS = ["excavation", "fill", "asphalt_total", "concrete"];
 const MAX_METRIC_COLUMNS = 11;
 const COMPANY_ROWS_PER_SLIDE = 12;
 const CHART_BARS_MAX = 9;
@@ -76,7 +75,11 @@ interface SlideSpec { key: string; render: (page: string) => ReactNode }
 function Slide({ title, subtitle, page, period, children }: { title: string; subtitle?: string; page: string; period: string; children: ReactNode }) {
   return (
     <section className="presentation-slide-print">
-      <div className="slide-canvas flex flex-col bg-[#f7f7f5] px-14 pb-5 pt-10 text-slate-900">
+      <div
+        className="slide-canvas flex flex-col bg-[#f7f7f5] px-14 pb-5 pt-10 text-slate-900"
+        style={{ backgroundColor: "#f7f7f5", color: "#0f172a" }}
+        data-slide-bg="#f7f7f5"
+      >
         <div className="mb-6 flex shrink-0 items-end justify-between gap-6 border-b-2 border-[#252850]/10 pb-4">
           <div>
             {subtitle && <p className="mb-1 text-[15px] font-semibold text-[#9b7a05]">{subtitle}</p>}
@@ -94,31 +97,27 @@ function Slide({ title, subtitle, page, period, children }: { title: string; sub
   );
 }
 
-function SummaryCard({ item, row, hero }: { item: CatalogItem; row: ResultRow | undefined; hero: boolean }) {
+function SummaryCard({ item, row }: { item: CatalogItem; row: ResultRow | undefined }) {
   const empty = !row;
-  if (hero) {
-    return (
-      <div className="flex flex-col justify-between rounded-3xl bg-[#252850] p-6 text-white">
-        <p className="text-[18px] font-semibold text-white/80">{item.title_fa}</p>
-        <div>
-          <p className="text-[44px] font-black leading-none tabular-nums text-[#fed836]">{row ? formatQuantity(row.qty, item.decimals) : "—"}</p>
-          <p className="mt-2 text-[15px] text-white/60">{unitLabel(item.output_unit)}</p>
-        </div>
-      </div>
-    );
-  }
+  const title = item.key === "asphalt_total" ? "آسفالت" : item.title_fa;
   return (
-    <div className={`flex flex-col justify-between rounded-2xl border border-[#252850]/10 bg-white p-5 ${empty ? "opacity-50" : ""}`}>
-      <p className="text-[17px] font-semibold text-slate-700">{item.title_fa}</p>
-      <div className="flex items-baseline justify-between gap-2">
-        <p className="text-[30px] font-black leading-none tabular-nums text-[#252850]">{row ? formatQuantity(row.qty, item.decimals) : "—"}</p>
-        <p className="text-[14px] text-slate-400">{unitLabel(item.output_unit)}</p>
+    <div className={`flex flex-col justify-between rounded-2xl border border-[#252850]/10 bg-white p-5 shadow-sm ${empty ? "opacity-50" : ""}`}>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[17px] font-bold text-slate-800">{title}</p>
+        {item.key === "asphalt_total" && (
+          <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500">بیندر + توپکا</span>
+        )}
+      </div>
+      <div className="mt-3 flex items-baseline justify-between gap-2">
+        <p className="text-[32px] font-black leading-none tabular-nums text-[#252850]">{row ? formatQuantity(row.qty, item.decimals) : "—"}</p>
+        <p className="text-[14px] font-medium text-slate-400">{unitLabel(item.output_unit)}</p>
       </div>
     </div>
   );
 }
 
 function ChartCard({ item, rows, total }: { item: CatalogItem; rows: ResultRow[]; total: ResultRow | undefined }) {
+  const title = item.key === "asphalt_total" ? "آسفالت" : item.title_fa;
   const entries = groupByCompany(rows.filter((row) => row.item_key === item.key))
     .map((company) => ({ company, row: company.rows.get(item.key)!, value: Number.parseFloat(company.rows.get(item.key)?.qty ?? "0") }))
     .sort((a, b) => b.value - a.value)
@@ -127,7 +126,12 @@ function ChartCard({ item, rows, total }: { item: CatalogItem; rows: ResultRow[]
   return (
     <div className="flex min-h-0 flex-col rounded-3xl border border-[#252850]/10 bg-white p-6">
       <div className="mb-4 flex items-baseline justify-between gap-3">
-        <h3 className="text-[22px] font-black text-[#252850]">{item.title_fa}</h3>
+        <div className="flex items-center gap-2">
+          <h3 className="text-[22px] font-black text-[#252850]">{title}</h3>
+          {item.key === "asphalt_total" && (
+            <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[12px] font-semibold text-slate-500">بیندر + توپکا</span>
+          )}
+        </div>
         <span className="text-[15px] text-slate-500">
           {total ? <><b className="tabular-nums text-[#252850]">{formatQuantity(total.qty, item.decimals)}</b> {unitLabel(item.output_unit)}</> : unitLabel(item.output_unit)}
         </span>
@@ -159,7 +163,7 @@ function CompanyTable({ groups, metrics, holdingMap, showTotal }: { groups: Comp
             <th className="w-[230px] px-4 py-3 text-start text-[17px] font-bold">شرکت</th>
             {metrics.map((item) => (
               <th key={item.key} className="px-2 py-3 text-start text-[15px] font-semibold leading-snug">
-                {item.title_fa}
+                {item.key === "asphalt_total" ? "آسفالت" : item.title_fa}
                 <span className="block text-[12px] font-normal text-white/60">{unitLabel(item.output_unit)}</span>
               </th>
             ))}
@@ -179,7 +183,7 @@ function CompanyTable({ groups, metrics, holdingMap, showTotal }: { groups: Comp
           ))}
           {showTotal && (
             <tr className="h-[52px] border-t-2 border-[#252850] bg-[#fed836]/25">
-              <th scope="row" className="px-4 text-start text-[17px] font-black text-[#252850]">جمع هولدینگ</th>
+              <th scope="row" className="px-4 text-start text-[17px] font-black text-[#252850]">جمع هلدینگ</th>
               {metrics.map((item) => {
                 const row = holdingMap.get(item.key);
                 return <td key={item.key} className="px-2 font-black tabular-nums text-[#252850]">{row ? formatQuantity(row.qty, item.decimals) : <span className="text-slate-300">—</span>}</td>;
@@ -208,19 +212,43 @@ function useSlideScale() {
   return { scale, ref };
 }
 
+function getSlideBackground(node: HTMLElement): string {
+  const attr = node.getAttribute("data-slide-bg");
+  if (attr) return attr;
+  const styleBg = node.style.backgroundColor;
+  if (styleBg && styleBg !== "transparent") return styleBg;
+  const computed = window.getComputedStyle(node).backgroundColor;
+  if (computed && computed !== "rgba(0, 0, 0, 0)" && computed !== "transparent") return computed;
+  return "#f7f7f5";
+}
+
 /** Renders every slide to an image and assembles a real PDF in the browser, then downloads it. */
 async function downloadPdf(fileName: string, onProgress: (done: number, total: number) => void) {
   const nodes = Array.from(document.querySelectorAll<HTMLElement>(".presentation-page .slide-canvas"));
   if (!nodes.length) throw new Error("اسلایدی برای خروجی وجود ندارد.");
   const [{ toJpeg }, { jsPDF }] = await Promise.all([import("html-to-image"), import("jspdf")]);
-  const options = {
-    width: SLIDE_W, height: SLIDE_H, pixelRatio: 2, quality: 0.92, backgroundColor: "#f7f7f5", cacheBust: false,
-    style: { transform: "none", top: "0", left: "0" },
-  };
-  await toJpeg(nodes[0]!, options).catch(() => undefined); // warm-up: the first render can miss fonts and images
+
   const pdf = new jsPDF({ orientation: "landscape", unit: "px", format: [SLIDE_W, SLIDE_H], hotfixes: ["px_scaling"], compress: true });
+
+  const makeOptions = (node: HTMLElement) => {
+    const bg = getSlideBackground(node);
+    return {
+      width: SLIDE_W,
+      height: SLIDE_H,
+      pixelRatio: 2,
+      quality: 0.92,
+      backgroundColor: bg,
+      cacheBust: false,
+      style: { transform: "none", top: "0", left: "0", backgroundColor: bg },
+    };
+  };
+
+  // Warm-up pass using the first slide's correct background options
+  await toJpeg(nodes[0]!, makeOptions(nodes[0]!)).catch(() => undefined);
+
   for (let index = 0; index < nodes.length; index += 1) {
-    const image = await toJpeg(nodes[index]!, options);
+    const node = nodes[index]!;
+    const image = await toJpeg(node, makeOptions(node));
     if (index > 0) pdf.addPage([SLIDE_W, SLIDE_H], "landscape");
     pdf.addImage(image, "JPEG", 0, 0, SLIDE_W, SLIDE_H, undefined, "FAST");
     onProgress(index + 1, nodes.length);
@@ -264,34 +292,80 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
 
   useEffect(() => runSoon(() => void load()), [load]);
 
+  const weekSubtitle = useMemo(() => {
+    if (!report) return "";
+    if (report.period_label && /هفته\s+(اول|دوم|سوم|چهارم|پنجم)/i.test(report.period_label)) {
+      return toFa(report.period_label);
+    }
+    if (report.period_start) {
+      const derived = formatWeekLabel(report.period_start);
+      if (derived) return derived;
+    }
+    if (report.period_label && !report.period_label.includes("تا")) {
+      return toFa(report.period_label);
+    }
+    return "هفته اول آبان ۱۴۰۵";
+  }, [report]);
+
   const slides = useMemo<SlideSpec[]>(() => {
     if (!report || !holding) return [];
-    const visibleItems = catalog.filter((item) => !item.is_rollup || item.key === "asphalt_total");
+    const EXCLUDED_ITEM_KEYS = new Set(["asphalt_binder", "asphalt_topka"]);
+    const visibleItems = catalog.filter((item) => (!item.is_rollup || item.key === "asphalt_total") && !EXCLUDED_ITEM_KEYS.has(item.key));
     const holdingMap = new Map(holding.rows.map((row) => [row.item_key, row]));
     const companies = groupByCompany(companyRows);
     const siteCount = new Set(siteRows.map((row) => row.site_id).filter(Boolean)).size;
-    const period = report.period_label;
+    const period = weekSubtitle || report.period_label;
     const result: SlideSpec[] = [];
 
     result.push({
       key: "cover",
       render: () => (
         <section className="presentation-slide-print">
-          <div className="slide-canvas flex bg-[#252850] text-white">
+          <div
+            className="slide-canvas flex bg-[#252850] text-white"
+            style={{ backgroundColor: NAVY, color: "#ffffff" }}
+            data-slide-bg={NAVY}
+          >
             <div className="absolute inset-y-0 start-0 w-4 bg-[#fed836]" />
             <div className="flex min-w-0 flex-1 flex-col justify-center ps-24 pe-12">
-              <p className="mb-6 text-[22px] font-bold text-[#fed836]">گزارش مدیریتی احجام عملیات اجرایی</p>
-              <h1 className="max-w-[820px] text-[68px] font-black leading-[1.45]">{report.title}</h1>
-              <div className="mt-12 h-1.5 w-32 rounded-full bg-[#fed836]" />
-              <div className="mt-8 flex flex-col gap-2 text-[22px] text-white/80">
-                <span>{period}</span>
+              <div className="mb-4 inline-flex items-center gap-2">
+                <span className="h-2.5 w-2.5 rounded-full bg-[#fed836]" />
+                <span className="text-[20px] font-bold text-[#fed836]">گزارش مدیریتی احجام عملیات اجرایی</span>
+              </div>
+              <h1 className="max-w-[820px] text-[64px] font-black leading-[1.25] text-white">گزارش عملکرد هلدینگ عمرانی</h1>
+              <h2 className="mt-4 text-[32px] font-bold text-[#fed836]">{weekSubtitle}</h2>
+              <div className="mt-8 h-1.5 w-32 rounded-full bg-[#fed836]" />
+              <div className="mt-6 flex flex-col gap-1 text-[20px] text-white/80">
                 <span className="text-[18px] text-white/60">{formatJalaliDate(report.period_start)} تا {formatJalaliDate(report.period_end)}</span>
               </div>
             </div>
-            <div className="flex w-[40%] items-center justify-center pe-16">
-              <div className="rounded-[40px] bg-white p-8 shadow-2xl">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src="/volume-reports/jihad_nasr_kerman.png" alt="لوگوی جهاد نصر کرمان" loading="eager" decoding="sync" width={420} height={385} className="h-[385px] w-[420px] object-contain" />
+            <div className="flex w-[44%] items-center justify-center pe-16">
+              <div className="flex items-center justify-center gap-8 rounded-[40px] bg-white p-8 shadow-2xl">
+                <div className="flex items-center justify-center">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src="/volume-reports/jihad_nasr_kerman.png"
+                    alt="لوگوی جهاد نصر کرمان"
+                    loading="eager"
+                    decoding="sync"
+                    width={210}
+                    height={190}
+                    className="h-[190px] w-[210px] object-contain"
+                  />
+                </div>
+                <div className="h-36 w-px bg-slate-200" />
+                <div className="flex items-center justify-center">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src="/volume-reports/logo_mehvar.png"
+                    alt="لوگوی شرکت محور گستر نصر"
+                    loading="eager"
+                    decoding="sync"
+                    width={210}
+                    height={190}
+                    className="h-[190px] w-[210px] object-contain"
+                  />
+                </div>
               </div>
             </div>
           </div>
@@ -299,19 +373,16 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
       ),
     });
 
-    const activeItems = visibleItems.filter((item) => holdingMap.has(item.key));
     const overviewStats = [
       { label: "شرکت‌های دارای عملکرد", value: toFa(companies.length) },
       { label: "کارگاه‌های دارای عملکرد", value: toFa(siteCount) },
-      { label: "آیتم‌های دارای حجم", value: toFa(activeItems.length) },
-      { label: "فایل‌های مأخذ", value: toFa(report.files.length) },
     ];
     const logoCols = companies.length > 6 ? 4 : 3;
     result.push({
       key: "overview",
       render: (page) => (
         <Slide title="نمای کلی گزارش" subtitle={period} page={page} period={period}>
-          <div className="grid grid-cols-4 gap-5">
+          <div className="grid grid-cols-2 gap-6">
             {overviewStats.map((stat) => (
               <div key={stat.label} className="rounded-3xl border border-[#252850]/10 bg-white p-6">
                 <p className="text-[18px] text-slate-500">{stat.label}</p>
@@ -324,8 +395,7 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
               <div key={company.id} className="flex items-center gap-5 rounded-3xl border border-[#252850]/10 bg-white px-6">
                 <CompanyMark name={company.name} size={72} />
                 <div className="min-w-0">
-                  <p className="text-[22px] font-black leading-snug text-[#252850]">{company.name}</p>
-                  <p className="mt-1 text-[15px] text-slate-500">{toFa(company.rows.size)} آیتم دارای حجم</p>
+                  <p className="text-[24px] font-black leading-snug text-[#252850]">{company.name}</p>
                 </div>
               </div>
             ))}
@@ -334,20 +404,12 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
       ),
     });
 
-    const heroItems = HERO_KEYS.map((key) => visibleItems.find((item) => item.key === key)).filter((item): item is CatalogItem => Boolean(item && holdingMap.has(item.key)));
-    const heroKeys = new Set(heroItems.map((item) => item.key));
-    const otherItems = visibleItems.filter((item) => !heroKeys.has(item.key));
     result.push({
       key: "summary",
       render: (page) => (
-        <Slide title="خلاصه عملکرد هولدینگ" subtitle={period} page={page} period={period}>
-          {heroItems.length > 0 && (
-            <div className="mb-5 grid h-[170px] shrink-0 grid-cols-4 gap-5">
-              {heroItems.map((item) => <SummaryCard key={item.key} item={item} row={holdingMap.get(item.key)} hero />)}
-            </div>
-          )}
+        <Slide title="خلاصه عملکرد هلدینگ" subtitle={period} page={page} period={period}>
           <div className="grid min-h-0 flex-1 grid-cols-4 gap-4" style={{ gridAutoRows: "1fr" }}>
-            {otherItems.map((item) => <SummaryCard key={item.key} item={item} row={holdingMap.get(item.key)} hero={false} />)}
+            {visibleItems.map((item) => <SummaryCard key={item.key} item={item} row={holdingMap.get(item.key)} />)}
           </div>
         </Slide>
       ),
@@ -440,13 +502,36 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
       key: "closing",
       render: () => (
         <section className="presentation-slide-print">
-          <div className="slide-canvas flex flex-col items-center justify-center bg-[#252850] text-center text-white">
+          <div
+            className="slide-canvas flex flex-col items-center justify-center bg-[#252850] text-center text-white"
+            style={{ backgroundColor: NAVY, color: "#ffffff" }}
+            data-slide-bg={NAVY}
+          >
             <div className="absolute inset-y-0 start-0 w-4 bg-[#fed836]" />
-            <div className="rounded-[32px] bg-white p-6 shadow-2xl">
+            <div className="flex items-center justify-center gap-6 rounded-[32px] bg-white px-8 py-6 shadow-2xl">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/volume-reports/jihad_nasr_kerman.png" alt="لوگوی جهاد نصر کرمان" loading="eager" decoding="sync" width={240} height={220} className="h-[220px] w-[240px] object-contain" />
+              <img
+                src="/volume-reports/jihad_nasr_kerman.png"
+                alt="لوگوی جهاد نصر کرمان"
+                loading="eager"
+                decoding="sync"
+                width={160}
+                height={140}
+                className="h-[140px] w-[160px] object-contain"
+              />
+              <div className="h-24 w-px bg-slate-200" />
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/volume-reports/logo_mehvar.png"
+                alt="لوگوی شرکت محور گستر نصر"
+                loading="eager"
+                decoding="sync"
+                width={160}
+                height={140}
+                className="h-[140px] w-[160px] object-contain"
+              />
             </div>
-            <h2 className="mt-10 text-[52px] font-black">{report.title}</h2>
+            <h2 className="mt-10 text-[52px] font-black">گزارش عملکرد هلدینگ عمرانی</h2>
             <div className="mt-6 h-1.5 w-28 rounded-full bg-[#fed836]" />
             <p className="mt-6 text-[22px] text-white/70">{period} · {formatJalaliDate(report.period_end)}</p>
           </div>
@@ -454,7 +539,7 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
       ),
     });
     return result;
-  }, [catalog, companyRows, holding, report, siteRows, sources]);
+  }, [catalog, companyRows, holding, report, siteRows, sources, weekSubtitle]);
 
   async function exportPdf() {
     if (!report || exporting) return;
@@ -487,7 +572,7 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
       <div className="no-print mx-auto mb-4 flex max-w-[1600px] flex-wrap items-center justify-between gap-3 rounded-2xl bg-white p-4 shadow-sm">
         <div>
           <Link href={`/volume-reports/${reportId}`} className="text-xs text-slate-500 hover:text-[#252850]">بازگشت به گزارش</Link>
-          <h1 className="mt-1 text-base font-bold text-[#252850]">{report.title}</h1>
+          <h1 className="mt-1 text-base font-bold text-[#252850]">گزارش عملکرد هلدینگ عمرانی — {weekSubtitle}</h1>
           <p className="mt-1 text-[11px] text-slate-500">{toFa(slides.length)} اسلاید</p>
         </div>
         <div className="flex items-center gap-3">

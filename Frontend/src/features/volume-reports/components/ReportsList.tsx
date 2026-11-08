@@ -13,6 +13,7 @@ import { EmptyState, ErrorBox, fieldClass, LoadingBlock, ReportStatusBadge } fro
 export function ReportsList({ projectId, refreshKey = 0 }: { projectId: string; refreshKey?: number }) {
   const [reports, setReports] = useState<ReportSummary[] | null>(null);
   const [error, setError] = useState<unknown>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
   const [filter, setFilter] = useState<ReportStatus | "">("");
 
   const load = useCallback(async () => {
@@ -20,6 +21,13 @@ export function ReportsList({ projectId, refreshKey = 0 }: { projectId: string; 
     try { setReports(await volumeReportApi.list(projectId, filter || undefined)); } catch (e) { setError(e); }
   }, [projectId, filter]);
   useEffect(() => runSoon(() => { setReports(null); void load(); }), [load, refreshKey]);
+
+  async function remove(r: ReportSummary) {
+    const warning = r.status === "published" ? `«${r.title}» منتشرشده است. با حذف، گزارش و همه‌ی نتایج آن برای همیشه پاک می‌شود. ادامه می‌دهید؟` : `گزارش «${r.title}» برای همیشه حذف شود؟`;
+    if (!window.confirm(warning)) return;
+    setDeleting(r.id);
+    try { await volumeReportApi.remove(r.id); setReports((cur) => cur?.filter((x) => x.id !== r.id) ?? cur); } catch (e) { setError(e); } finally { setDeleting(null); }
+  }
 
   if (error) return <ErrorBox error={error} onRetry={() => void load()} />;
   return (
@@ -36,7 +44,7 @@ export function ReportsList({ projectId, refreshKey = 0 }: { projectId: string; 
       ) : (
         <ul className="grid gap-3 md:grid-cols-2" aria-label="فهرست گزارش‌ها">
           {reports.map((r) => (
-            <li key={r.id}>
+            <li key={r.id} className="relative">
               <Link href={`/volume-reports/${r.id}`} className="block rounded-2xl border border-black/[0.06] bg-white p-4 shadow-sm transition hover:border-teal-400 hover:shadow">
                 <div className="flex items-start justify-between gap-2">
                   <h3 className="text-sm font-semibold text-slate-900">{r.title}</h3>
@@ -47,6 +55,12 @@ export function ReportsList({ projectId, refreshKey = 0 }: { projectId: string; 
                   {formatJalaliDate(r.period_start)} تا {formatJalaliDate(r.period_end)} · نسخه‌ی {toFa(r.version)} · به‌روزرسانی {formatJalaliDateTime(r.updated_at)}
                 </p>
               </Link>
+              {r.status !== "processing" && (
+                <button type="button" aria-label={`حذف ${r.title}`} disabled={deleting === r.id} onClick={() => void remove(r)}
+                  className="absolute bottom-3 left-3 rounded-lg px-2 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-50">
+                  {deleting === r.id ? "در حال حذف…" : "حذف"}
+                </button>
+              )}
             </li>
           ))}
         </ul>

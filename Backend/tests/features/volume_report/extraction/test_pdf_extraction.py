@@ -109,3 +109,24 @@ def test_site_name_drops_report_date_and_month():
     assert strip_period_from_name("احداث باند دوم زاهدان میرجاوه قطعه 2 آبان ماه 1405 تاریخ : 1405/08/11") == "احداث باند دوم زاهدان میرجاوه قطعه 2"
     assert strip_period_from_name("بهسازی محور کرمان-دیهوک از 1405/08/01 الی 1405/08/10") == "بهسازی محور کرمان-دیهوک"
     assert strip_period_from_name("راه 2") == "راه 2"
+
+
+# ---- weekly report with a forecast page (presentation-form glyphs, flipped page) -------------------------------------
+
+_CHANGULEH = Path(__file__).resolve().parents[4] / "eval" / "10-17 آبان چنگوله.pdf"
+
+
+@pytest.mark.skipif(not _CHANGULEH.exists(), reason="eval PDF not available")
+def test_weekly_pdf_reads_actual_page_and_forecast_page_separately():
+    result = extract_file(str(_CHANGULEH), Lexicon.from_seed())
+    assert [(s.basis, s.status) for s in result.sheets] == [("actual", "ok"), ("planned", "ok")]
+    assert result.sheets[0].site_name == result.sheets[1].site_name and "چنگوله" in result.sheets[0].site_name
+
+    def qty(sheet):
+        return {line.description_raw: (line.quantity, line.unit_norm) for line in sheet.lines}
+
+    assert qty(result.sheets[0]) == {
+        "عملیات خاکبرداری": (Decimal("4100"), "m3"), "عملیات خاکریزی": (Decimal("799"), "m3"), "عملیات ساب بیس": (Decimal("350"), "m3"),
+        "قالب بندی": (Decimal("205"), "m2"), "بتن ریزی": (Decimal("137"), "m3"),
+    }
+    assert qty(result.sheets[1])["عملیات خاکبرداری"] == (Decimal("3500"), "m3") and qty(result.sheets[1])["بتن ریزی"] == (Decimal("150"), "m3")

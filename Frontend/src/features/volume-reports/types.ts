@@ -37,7 +37,7 @@ export interface ProgressResponse { status: ReportStatus; progress: Progress; er
 export interface SheetLogEntry {
   sheet: string; visibility: string; kind: string; used: boolean; reason: string | null;
   site_name?: string; rows_total?: number; rows_nonzero?: number; rows_nonphysical?: number; header_row?: number | null;
-  layout_unknown?: boolean;
+  layout_unknown?: boolean; basis?: "actual" | "planned";
 }
 export interface SourceWarning { code: string; sheet?: string; row?: number; found?: string[]; expected?: string[]; rows?: number }
 export interface SourceInfo { id: string; filename: string; status: string; error_message: string | null; suggested_company: string | null; sheet_log: SheetLogEntry[]; warnings: SourceWarning[] }
@@ -53,9 +53,18 @@ export type LineEffect =
 export interface LineRow {
   line_id: string; document_id: string | null; filename: string; sheet: string; row_no: number; site_id: string; site: string; company: string;
   description: string; unit: string; unit_norm: string; quantity: string; effect: LineEffect; item_key: string | null;
-  output_qty: string | null; output_unit: string | null; note: string | null; unconfirmed: boolean; flags: Record<string, unknown>;
+  output_qty: string | null; output_unit: string | null; note: string | null; unconfirmed: boolean; flags: Record<string, unknown>; basis?: "actual" | "planned";
 }
 export interface ResultsResponse { report_id: string; status: ReportStatus; group_by: ResultScope; rows: ResultRow[]; other?: LineRow[]; problems?: LineRow[]; nonphysical?: LineRow[] }
+
+export interface PlanVsActualRow {
+  company: string | null; site: string | null; item_key: string; item: string; unit: string; decimals: number;
+  planned: string | null; actual: string | null; variance: string; achievement_pct: string | null;
+}
+export interface PlanVsActual {
+  report_id: string; group_by: ResultScope; rows: PlanVsActualRow[]; next_plan: ResultRow[];
+  previous_report: { id: string; title: string; period_label: string; period_start: string; period_end: string; adjacent: boolean } | null;
+}
 
 export interface CatalogItem {
   key: string; title_fa: string; description_fa: string; dimension: string; output_unit: string; decimals: number; is_rollup: boolean; rollup_of: string[]; mining_only: boolean;
@@ -64,7 +73,7 @@ export interface CatalogItem {
 export type Role = "supply" | "execute" | "combined" | "na";
 export interface ReviewGroup {
   group_key: string; description: string; unit: string; site_kind: SiteKind; n_lines: number; section_headings: string[]; tokens: string[];
-  total_quantity: string; disposition: string | null; item_key: string | null; role: Role | null; exclude_reason: string | null;
+  total_quantity: string; planned_quantity?: string; disposition: string | null; item_key: string | null; role: Role | null; exclude_reason: string | null;
   source: string | null; confirmed: boolean; reason: string | null; confidence: number | null;
 }
 export interface ConfirmItem {

@@ -162,10 +162,13 @@ async def test_full_flow_reference_values_gate_publish_and_reopen(client, tmp_pa
     # immutable
     assert (await client.put(f"{API}/{rid}/files", json={"files": []}, headers=leader)).status_code == 409
     assert (await client.post(f"{API}/{rid}/run", headers=leader)).status_code == 409
-    assert (await client.delete(f"{API}/{rid}", headers=leader)).status_code == 409
     again = await client.post(f"{API}/{rid}/reopen", headers=leader)
     assert again.status_code == 201 and again.json()["version"] == 2 and again.json()["supersedes_id"] == rid
     assert (await client.post(f"{API}/{rid}/reopen", headers=leader)).status_code == 409
+    # a published report can be deleted entirely; the reopened version survives with supersedes_id cleared
+    assert (await client.delete(f"{API}/{rid}", headers=leader)).status_code == 204
+    assert (await client.get(f"{API}/{rid}", headers=leader)).status_code == 404
+    assert (await client.get(f"{API}/{again.json()['id']}", headers=leader)).json()["supersedes_id"] is None
 
 
 async def test_memory_applies_on_a_second_report_without_questions(client, tmp_path):
@@ -316,3 +319,48 @@ async def test_run_and_continue_are_refused_with_429_when_the_users_token_quota_
 
     await client.post(f"/api/v1/admin/users/{leader_id}/token-limit/reset", headers=admin)
     assert (await client.post(f"{API}/{report['id']}/run", headers=leader)).status_code == 202
+
+
+async def _two_sheet_document(tmp_path, project_id, uploader_id, actual_qty, plan_qty=None):
+    wb = Workbook()
+    add_income_sheet(wb, "درآمد", [(None, "بتن ریزی پی", "متر مکعب", actual_qty)], title=TITLE)
+    if plan_qty is not None:
+        add_income_sheet(wb, "درآمد برنامه ای", [(None, "بتن ریزی پی", "متر مکعب", plan_qty)], title=TITLE)
+    path = save(wb, tmp_path, f"{uuid.uuid4().hex}.xlsx")
+    async with async_session_factory() as db:
+        doc = Document(filename="w.xlsx", file_path=path, content_type="application/octet-stream", status=DocumentStatus.READY,
+                       content_hash=uuid.uuid4().hex + uuid.uuid4().hex, project_id=uuid.UUID(project_id), uploaded_by=uuid.UUID(uploader_id))
+        db.add(doc)
+        await db.commit()
+        return str(doc.id)
+
+
+async def _weekly_report(client, headers, project_id, doc_id, company_id, start, end):
+    report = (await client.post(API, json={"project_id": project_id, "title": "w", "period_type": "week", "period_start": start,
+                                           "period_end": end, "period_label": "هفته"}, headers=headers)).json()
+    assert (await client.put(f"{API}/{report['id']}/files", json={"files": [{"document_id": doc_id, "company_id": company_id}]}, headers=headers)).status_code == 200
+    assert (await client.post(f"{API}/{report['id']}/run", headers=headers)).status_code == 202
+    await pipeline.run_report(uuid.UUID(report["id"]))
+    return report["id"]
+
+
+async def test_forecast_sheet_is_stored_separately_and_compared_with_next_reports_actuals(client, tmp_path):
+    _, leader, leader_id, project_id, _ = await _world(client, "plan")
+    company = await _company(client, leader)
+    first = await _weekly_report(client, leader, project_id, await _two_sheet_document(tmp_path, project_id, leader_id, 25, 40), company, "2026-11-01", "2026-11-07")
+    g = await _groups(client, leader, first)
+    assert g["بتن ریزی پی"]["total_quantity"] == "25" or Decimal(g["بتن ریزی پی"]["total_quantity"]) == 25
+    assert Decimal(g["بتن ریزی پی"]["planned_quantity"]) == 40 and g["بتن ریزی پی"]["n_lines"] == 2  # one group, two bases
+    r = await client.post(f"{API}/{first}/review/confirm", json={"items": [_confirm(g["بتن ریزی پی"], "concrete")]}, headers=leader)
+    assert r.status_code == 200, r.text
+
+    actual = {x["item_key"]: Decimal(x["qty"]) for x in (await client.get(f"{API}/{first}/results?group_by=holding", headers=leader)).json()["rows"]}
+    plan = {x["item_key"]: Decimal(x["qty"]) for x in (await client.get(f"{API}/{first}/results?group_by=holding&basis=planned", headers=leader)).json()["rows"]}
+    assert actual["concrete"] == 25 and plan["concrete"] == 40  # the forecast never leaks into the actual total
+    assert (await client.get(f"{API}/{first}/plan-vs-actual", headers=leader)).json()["previous_report"] is None
+
+    second = await _weekly_report(client, leader, project_id, await _two_sheet_document(tmp_path, project_id, leader_id, 30), company, "2026-11-08", "2026-11-14")
+    cmp = (await client.get(f"{API}/{second}/plan-vs-actual?group_by=holding", headers=leader)).json()
+    assert cmp["previous_report"]["id"] == first and cmp["previous_report"]["adjacent"] is True
+    row = next(x for x in cmp["rows"] if x["item_key"] == "concrete")
+    assert Decimal(row["planned"]) == 40 and Decimal(row["actual"]) == 30 and Decimal(row["variance"]) == -10 and Decimal(row["achievement_pct"]) == Decimal("75.0")

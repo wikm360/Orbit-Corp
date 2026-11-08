@@ -364,24 +364,33 @@ async def review_confirm(payload: ConfirmRequest, report: Report = Depends(get_r
 
 @router.get("/{report_id}/results")
 async def results(group_by: str = Query("holding", pattern="^(holding|company|site)$"), include: str = "",
+                  basis: str = Query("actual", pattern="^(actual|planned)$"),
                   report: Report = Depends(get_report_for_member), db: AsyncSession = Depends(get_db)):
-    return await service.get_results(db, report, group_by, {p for p in include.split(",") if p})
+    return await service.get_results(db, report, group_by, {p for p in include.split(",") if p}, basis)
+
+
+@router.get("/{report_id}/plan-vs-actual")
+async def plan_vs_actual(group_by: str = Query("holding", pattern="^(holding|company|site)$"),
+                         report: Report = Depends(get_report_for_member), db: AsyncSession = Depends(get_db)):
+    return await service.plan_vs_actual(db, report, group_by)
 
 
 @router.get("/{report_id}/lines")
 async def lines(site_id: uuid.UUID | None = None, item_key: str | None = None, effect: str | None = None,
                 limit: int = Query(200, ge=1, le=1000), offset: int = Query(0, ge=0),
+                basis: str = Query("actual", pattern="^(actual|planned)$"),
                 report: Report = Depends(get_report_for_member), db: AsyncSession = Depends(get_db)):
     try:
-        return await service.line_rows(db, report, site_id=site_id, item_key=item_key, effect=effect, limit=limit, offset=offset)
+        return await service.line_rows(db, report, site_id=site_id, item_key=item_key, effect=effect, basis=basis, limit=limit, offset=offset)
     except ValueError as exc:
         raise BadRequestError("Unknown effect") from exc
 
 
 @router.get("/{report_id}/trace")
 async def trace(site_id: uuid.UUID | None = None, item_key: str = Query(...),
+                basis: str = Query("actual", pattern="^(actual|planned)$"),
                 report: Report = Depends(get_report_for_member), db: AsyncSession = Depends(get_db)):
-    return await service.line_rows(db, report, site_id=site_id, item_key=item_key, effect="counted", limit=1000)
+    return await service.line_rows(db, report, site_id=site_id, item_key=item_key, effect="counted", basis=basis, limit=1000)
 
 
 @router.post("/{report_id}/publish", response_model=ReportRead)

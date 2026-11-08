@@ -3,7 +3,7 @@ import { API_BASE_URL, ApiError, apiRequest, authorizedFetch, parseErrorMessage 
 import type {
   AnswerPayload, CatalogItem, Company, ConfirmItem, Conversion, DecisionRow, FileSelection, ItemRule, ItemRuleWrite, LexiconEntry, LineRow, Question,
   ReportCreate, ReportDetail, ReportStatus, ReportSummary, ResultScope, ResultsResponse, ReviewGroup, SelectedFile, SettingsItem,
-  SettingsItemWrite, Site, SiteKind, SourceInfo, ProgressResponse, GateCause, ActivityResponse,
+  SettingsItemWrite, Site, SiteKind, SourceInfo, ProgressResponse, GateCause, ActivityResponse, PlanVsActual,
 } from "../types";
 
 const BASE = "/volume-reports";
@@ -33,8 +33,9 @@ export const volumeReportApi = {
   skip: (id: string, questionId: string) => send<Question>(`/${id}/questions/${questionId}/skip`, "POST"),
   groups: (id: string, state: "unconfirmed" | "needs_input" | "all" = "unconfirmed") => apiRequest<ReviewGroup[]>(`${BASE}/${id}/review/groups${qs({ state })}`),
   confirm: (id: string, items: ConfirmItem[]) => send<{ issues: GateCause[] }>(`/${id}/review/confirm`, "POST", { items }),
-  results: (id: string, groupBy: ResultScope, include: string[] = []) =>
-    apiRequest<ResultsResponse>(`${BASE}/${id}/results${qs({ group_by: groupBy, include: include.join(",") })}`),
+  results: (id: string, groupBy: ResultScope, include: string[] = [], basis: "actual" | "planned" = "actual") =>
+    apiRequest<ResultsResponse>(`${BASE}/${id}/results${qs({ group_by: groupBy, include: include.join(","), basis })}`),
+  planVsActual: (id: string, groupBy: ResultScope) => apiRequest<PlanVsActual>(`${BASE}/${id}/plan-vs-actual${qs({ group_by: groupBy })}`),
   lines: (id: string, filter: { site_id?: string; item_key?: string; effect?: string; limit?: number; offset?: number }) =>
     apiRequest<LineRow[]>(`${BASE}/${id}/lines${qs(filter)}`),
   trace: (id: string, itemKey: string, siteId?: string) => apiRequest<LineRow[]>(`${BASE}/${id}/trace${qs({ item_key: itemKey, site_id: siteId })}`),

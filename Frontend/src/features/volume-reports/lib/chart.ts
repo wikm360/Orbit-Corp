@@ -12,7 +12,7 @@ export function unitsPresent(rows: ResultRow[], catalog: CatalogItem[]): string[
   return Array.from(new Set(sorted.map((r) => r.unit)));
 }
 
-const entityLabel = (r: ResultRow, scope: ChartInput["scope"]) => (scope === "site" ? `${r.site ?? ""}` : scope === "company" ? r.company ?? "" : "هولدینگ");
+const entityLabel = (r: ResultRow, scope: ChartInput["scope"]) => (scope === "site" ? `${r.site ?? ""}` : scope === "company" ? r.company ?? "" : "هلدینگ");
 
 /** Bar chart for one unit: x = items with that unit; one series per company/site (a single series for the holding). */
 export function buildBarOption({ rows, unit, scope, catalog }: ChartInput) {

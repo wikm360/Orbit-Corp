@@ -54,6 +54,8 @@ def normalize_unit(raw: object) -> UnitInfo:
     key = _squash(text)
     if not key:
         return UnitInfo("other", UNIT_DIMENSIONS["other"], empty=True)
+    # RTL PDF extraction reverses Latin+digit units: "m3" arrives as "3 m" (squashed "3m"), "m2" as "2m".
+    key = re.sub(r"^(\d)(m|cm)$", r"\2\1", key)
     unit = _EXACT.get(key)
     if unit is None:
         # Compound units come with endless spacing/hyphen variants; match on the squashed key.

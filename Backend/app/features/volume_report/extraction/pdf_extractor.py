@@ -7,6 +7,7 @@ Extracts rows and columns based on text coordinates (X, Y) without requiring OCR
 import logging
 import re
 import statistics
+import unicodedata
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,22 @@ _X_WORD_DISTANCE = 18.0  # points: adjacent words within this distance belong to
 _REFERENCE_FONT = 4.8  # body font size (pt) the two distances above were tuned for; wide sheets are shrunk to fit one page
 _MIN_SCALE, _MAX_SCALE = 0.4, 1.5
 _QTY_TERMS = frozenset({"حجم", "درصد حجم", "حجم درصد", "مقدار", "احجام"})
+
+
+def _clean_word(text: str) -> str:
+    """Some PDFs embed Arabic presentation-form glyphs ("ﺣﺠﻢ", "ﻗ") and Arabic ي/ك; fold them to the plain Persian letters
+    so header labels and descriptions match regardless of the font the sheet was exported with."""
+    return unicodedata.normalize("NFKC", text).replace("ي", "ی").replace("ك", "ک").strip()
+
+
+def _page_y(cm: Any, tm: Any) -> float:
+    """Text Y in the usual bottom-up convention. Some exporters flip the page (`cm` with a negative d), which would
+    otherwise list the table bottom-to-top."""
+    try:
+        flipped = float(cm[3]) < 0
+    except (TypeError, IndexError, ValueError):
+        flipped = False
+    return -float(tm[5]) if flipped else float(tm[5])
 
 
 def _cluster_words_into_rows(words: list[tuple[float, float, str]], tolerance: float = _Y_ROW_TOLERANCE) -> list[tuple[float, list[tuple[float, str]]]]:
@@ -46,6 +63,7 @@ def _cluster_words_into_rows(words: list[tuple[float, float, str]], tolerance: f
 _DESC_LABELS = frozenset({"فعالیت", "شرح فعالیت", "شرح عملیات", "شرح کار", "شرح آیتم", "آیتم", "موضوع"})
 _QTY_WITH_TEXT = re.compile(r"^(?P<text>.*?[^\d\s.,\-/٫])\s+(?P<num>\d[\d,.٫]*|-)$")
 _TIE_RATIO = 0.35
+_DESC_BOUNDARY_SHARE = 0.2  # of the gap between the description header and the next column, measured from the next column
 
 
 def _label_index(headers: list[str], labels: frozenset[str]) -> int | None:
@@ -141,9 +159,9 @@ def extract_pdf_page_grid(page: pypdf.PageObject) -> Rows:
     font_sizes: list[float] = []
 
     def visitor(text: str, cm: Any, tm: Any, font_dict: Any, font_size: Any) -> None:
-        stripped = text.strip()
+        stripped = _clean_word(text)
         if stripped:
-            words.append((float(tm[4]), float(tm[5]), stripped))
+            words.append((float(tm[4]), _page_y(cm, tm), stripped))
             if font_size:
                 font_sizes.append(float(font_size))
 
@@ -201,10 +219,13 @@ def extract_pdf_page_grid(page: pypdf.PageObject) -> Rows:
     col_defs.sort(key=lambda c: -c["center"])
 
     # Column boundary midpoints
-    col_bounds = [
-        (col_defs[i]["center"] + col_defs[i + 1]["center"]) / 2.0
-        for i in range(len(col_defs) - 1)
-    ]
+    # Numeric columns are centred under their header, so the midpoint separates them. A description column is
+    # right-aligned text whose start moves left with its length: its boundary sits close to the next column instead.
+    col_bounds = []
+    for i in range(len(col_defs) - 1):
+        right, left = col_defs[i]["center"], col_defs[i + 1]["center"]
+        share = _DESC_BOUNDARY_SHARE if col_defs[i]["text"] in _DESC_LABELS else 0.5
+        col_bounds.append(left + share * (right - left))
 
     def assign_col(x: float) -> int:
         for idx, bound in enumerate(col_bounds):
@@ -271,9 +292,9 @@ def _detect_pdf_sheet_name(page_num: int, page: pypdf.PageObject) -> str:
     words: list[tuple[float, float, str]] = []
 
     def visitor(text: str, cm: Any, tm: Any, font_dict: Any, font_size: Any) -> None:
-        stripped = text.strip()
+        stripped = _clean_word(text)
         if stripped:
-            words.append((float(tm[4]), float(tm[5]), stripped))
+            words.append((float(tm[4]), _page_y(cm, tm), stripped))
 
     try:
         page.extract_text(visitor_text=visitor)
@@ -295,8 +316,10 @@ def _detect_pdf_sheet_name(page_num: int, page: pypdf.PageObject) -> str:
             break
 
     # Determine kind for probe.py classification
-    if "برنامه" in combined:
-        prefix = "برنامه"
+    if "پیش بینی" in combined and ("درآمد" in combined or "درامد" in combined):
+        prefix = "برنامه درآمد"  # forecast of the next period, same table layout as the income page
+    elif "برنامه" in combined or "پیش بینی" in combined:
+        prefix = "برنامه"  # EVM / budget summary page: not a quantity table
     elif "درآمد" in combined or "درامد" in combined:
         prefix = "درآمد"
     elif "هزینه" in combined or "هزينه" in combined:

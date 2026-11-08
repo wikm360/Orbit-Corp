@@ -36,7 +36,7 @@ export function SourceDetails({ sources, compact = false }: { sources: SourceInf
               <div>
                 <h3 className="mb-1 text-xs font-medium text-emerald-700">شیت‌های خوانده‌شده ({toFa(used.length)})</h3>
                 <ul className="space-y-1 text-xs text-slate-700">
-                  {used.map((s) => <li key={s.sheet}>{s.sheet.trim()} — {s.site_name} <span className="text-slate-400">({toFa(s.rows_nonzero ?? 0)} ردیف دارای حجم)</span></li>)}
+                  {used.map((s) => <li key={s.sheet}>{s.sheet.trim()} — {s.site_name}{s.basis === "planned" && <span className="ms-1 rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] text-indigo-700">برنامه / پیش‌بینی</span>} <span className="text-slate-400">({toFa(s.rows_nonzero ?? 0)} ردیف دارای حجم)</span></li>)}
                   {used.length === 0 && <li className="text-slate-400">هیچ شیتی خوانده نشد.</li>}
                 </ul>
               </div>

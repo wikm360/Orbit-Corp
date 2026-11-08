@@ -130,7 +130,8 @@
 
 | مسیر | شرح |
 |---|---|
-| `POST /` · `GET /?project_id=&status=` · `GET/DELETE /{id}` | ساخت draft، فهرست، جزئیات (+`issues`)، حذف draft/failed |
+| `GET /{id}/plan-vs-actual?group_by=` · `GET /{id}/results?basis=` | مقایسه‌ی پیش‌بینیِ دوره‌ی قبل با واقعیِ این گزارش (+`next_plan`)؛ `basis` = actual یا planned |
+| `POST /` · `GET /?project_id=&status=` · `GET/DELETE /{id}` | ساخت draft، فهرست، جزئیات (+`issues`)، حذف هر گزارش به‌جز processing (409) |
 | `PUT /{id}/files` | `{files:[{document_id, company_id}]}` → `suggested_company` هر فایل |
 | `POST /{id}/run` · `POST /{id}/continue` · `POST /{id}/recompute` · `GET /{id}/progress` | اجرا (202، صف جدا)، دور بعد پس از پاسخ، محاسبه‌ی مجدد، polling |
 | `GET /{id}/activity?after_id=&limit=` | تاریخچه‌ی فعالیت job (قدیمی‌ترین اول) + `status`/`progress`؛ با `after_id` = آخرین `id` دریافتی poll می‌شود |

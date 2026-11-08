@@ -111,6 +111,17 @@ export function jalaliInputFromIso(iso: string): string {
   return j ? `${j.jy}/${pad2(j.jm)}/${pad2(j.jd)}` : "";
 }
 
+const WEEK_ORDINALS = ["اول", "دوم", "سوم", "چهارم", "پنجم"] as const;
+
+export function formatWeekLabel(startIso: string | null | undefined): string {
+  if (!startIso) return "";
+  const start = isoToJalali(startIso);
+  if (!start) return "";
+  const weekIdx = Math.min(Math.floor((start.jd - 1) / 7), 4);
+  const weekOrdinal = WEEK_ORDINALS[weekIdx] || "اول";
+  return `هفته ${weekOrdinal} ${JALALI_MONTHS[start.jm - 1]} ${toFa(start.jy)}`;
+}
+
 /** Suggested label for the period: month periods "شهریور ۱۴۰۵" (month of the end date); weeks "هفته‌ی ۱۴۰۵/۰۶/۱۵ تا ۱۴۰۵/۰۶/۲۱". */
 export function suggestPeriodLabel(type: "week" | "month", startIso: string, endIso: string): string {
   const end = isoToJalali(endIso);

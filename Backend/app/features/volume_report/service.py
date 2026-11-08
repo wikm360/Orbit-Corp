@@ -6,7 +6,7 @@ import json
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
 from sqlalchemy import delete, func, or_, select, update
@@ -86,8 +86,10 @@ async def list_reports(db: AsyncSession, context: UserContext, project_id: uuid.
 
 
 async def delete_report(db: AsyncSession, report: Report) -> None:
-    if report.status not in (ReportStatus.DRAFT, ReportStatus.FAILED):
-        raise ConflictError("Only draft or failed reports can be deleted")
+    """Any report can be deleted (including published ones); children cascade in the DB, and learned decisions survive
+    with `source_report_id` set to NULL. Only a report whose pipeline is running is refused."""
+    if report.status == ReportStatus.PROCESSING:
+        raise ConflictError("A report that is being processed cannot be deleted")
     await db.delete(report)
     await db.commit()
 
@@ -213,6 +215,7 @@ async def recompute(db: AsyncSession, report: Report) -> list[dict]:
         compute.LineIn(str(l.id), str(s.id), s.kind.value, l.group_key, l.unit_norm, l.quantity, bool(l.flags.get("negative_qty")), l.description_norm)
         for l, s in pairs
     ]
+    basis_of = {str(l.id): l.basis for l, _ in pairs}
     classes: dict[str, compute.ClassIn] = {}
     for c in (await db.execute(select(Classification).where(Classification.report_id == report.id))).scalars():
         classes[c.group_key] = compute.ClassIn(
@@ -229,11 +232,20 @@ async def recompute(db: AsyncSession, report: Report) -> list[dict]:
                        str(r.site_id) if r.site_id else None, r.priority, r.note)
         for r in (await db.execute(select(ItemRule).where(ItemRule.is_active.is_(True)))).scalars() if r.item_id in items
     ]
-    outs = compute.resolve_lines(lines_in, classes, item_in, params, rules)
-    if (error := compute.check_conservation(lines_in, outs)) is not None:
-        raise RuntimeError(error)
+    # Actual and planned lines are resolved and aggregated separately: a forecast must never feed the actual pool
+    # (supply/execution pairing, rollups) or the other way round. Classifications are shared (same group keys).
     site_company = {str(s.id): str(s.company_id) for _, s in pairs}
-    results = compute.aggregate(lines_in, outs, item_in, site_company)
+    outs: list[compute.LineOut] = []
+    results: list[tuple[str, compute.ResultOut]] = []
+    for basis in ("actual", "planned"):
+        subset = [l for l in lines_in if basis_of[l.id] == basis]
+        if not subset:
+            continue
+        part = compute.resolve_lines(subset, classes, item_in, params, rules)
+        if (error := compute.check_conservation(subset, part)) is not None:
+            raise RuntimeError(error)
+        outs.extend(part)
+        results.extend((basis, r) for r in compute.aggregate(subset, part, item_in, site_company))
 
     key_to_id = {i.key: i.id for i in items.values()}
     line_ids = [l.id for l, _ in pairs]
@@ -245,9 +257,9 @@ async def recompute(db: AsyncSession, report: Report) -> list[dict]:
             line_id=uuid.UUID(out.line_id), effect=Effect(out.effect), item_id=key_to_id.get(out.item_key),
             output_qty=out.output_qty, output_unit=out.output_unit, note=out.note, unconfirmed=out.unconfirmed,
         ))
-    for r in results:
+    for basis, r in results:
         db.add(Result(
-            report_id=report.id, scope=ResultScope(r.scope), company_id=uuid.UUID(r.company_id) if r.company_id else None,
+            report_id=report.id, basis=basis, scope=ResultScope(r.scope), company_id=uuid.UUID(r.company_id) if r.company_id else None,
             site_id=uuid.UUID(r.site_id) if r.site_id else None, item_id=key_to_id[r.item_key], qty=r.qty, unit=r.unit,
             n_lines=r.n_lines, has_unconfirmed=r.has_unconfirmed,
         ))
@@ -309,10 +321,10 @@ async def list_groups(db: AsyncSession, report: Report, state: str) -> list[dict
         g = groups.setdefault(line.group_key, {
             "group_key": line.group_key, "description": line.description_raw, "unit": line.unit_norm,
             "site_kind": site.kind.value, "n_lines": 0, "section_headings": [], "tokens": line.tokens,
-            "total_quantity": Decimal(0),
+            "total_quantity": Decimal(0), "planned_quantity": Decimal(0),
         })
         g["n_lines"] += 1
-        g["total_quantity"] += line.quantity
+        g["planned_quantity" if line.basis == "planned" else "total_quantity"] += line.quantity
         if line.section_heading and line.section_heading not in g["section_headings"] and len(g["section_headings"]) < 3:
             g["section_headings"].append(line.section_heading)
     out = []
@@ -323,7 +335,7 @@ async def list_groups(db: AsyncSession, report: Report, state: str) -> list[dict
             role=c.role.value if c else None, exclude_reason=c.exclude_reason.value if c and c.exclude_reason else None,
             source=c.source.value if c else None, confirmed=c.confirmed if c else False, reason=c.reason if c else None,
             confidence=c.confidence if c else None,
-            total_quantity=f"{g['total_quantity']:f}",
+            total_quantity=f"{g['total_quantity']:f}", planned_quantity=f"{g['planned_quantity']:f}",
         )
         if state == "all" or (state == "unconfirmed" and not g["confirmed"]) or (
             state == "needs_input" and g["disposition"] in (None, "needs_input")
@@ -398,13 +410,15 @@ async def _names(db: AsyncSession) -> tuple[dict, dict, dict]:
     return items, sites, companies
 
 
-async def line_rows(db: AsyncSession, report: Report, *, site_id=None, item_key=None, effect=None, limit=200, offset=0) -> list[dict]:
+async def line_rows(db: AsyncSession, report: Report, *, site_id=None, item_key=None, effect=None, basis: str | None = None, limit=200, offset=0) -> list[dict]:
     items, sites, companies = await _names(db)
     query = (
         select(Line, LineResult, ReportFile).join(LineResult, LineResult.line_id == Line.id)
         .join(ReportFile, ReportFile.id == Line.report_file_id).where(ReportFile.report_id == report.id)
         .order_by(ReportFile.created_at, Line.sheet_name, Line.row_no).limit(limit).offset(offset)
     )
+    if basis:
+        query = query.where(Line.basis == basis)
     if site_id:
         query = query.where(Line.site_id == site_id)
     if effect:
@@ -418,16 +432,16 @@ async def line_rows(db: AsyncSession, report: Report, *, site_id=None, item_key=
             "line_id": line.id, "document_id": rfile.document_id, "filename": rfile.filename, "sheet": line.sheet_name,
             "row_no": line.row_no, "site_id": line.site_id, "site": sites[line.site_id].name,
             "company": companies[sites[line.site_id].company_id].name, "description": line.description_raw,
-            "unit": line.unit_raw, "unit_norm": line.unit_norm, "quantity": _q(line.quantity), "effect": res.effect.value,
+            "basis": line.basis, "unit": line.unit_raw, "unit_norm": line.unit_norm, "quantity": _q(line.quantity), "effect": res.effect.value,
             "item_key": items[res.item_id].key if res.item_id in items else None, "output_qty": _q(res.output_qty),
             "output_unit": res.output_unit, "note": res.note, "unconfirmed": res.unconfirmed, "flags": line.flags,
         })
     return out
 
 
-async def get_results(db: AsyncSession, report: Report, group_by: str, include: set[str]) -> dict:
+async def get_results(db: AsyncSession, report: Report, group_by: str, include: set[str], basis: str = "actual") -> dict:
     items, sites, companies = await _names(db)
-    rows = (await db.execute(select(Result).where(Result.report_id == report.id, Result.scope == ResultScope(group_by)))).scalars()
+    rows = (await db.execute(select(Result).where(Result.report_id == report.id, Result.scope == ResultScope(group_by), Result.basis == basis))).scalars()
     result_rows = sorted(
         (
             {"scope": r.scope.value, "company_id": r.company_id, "company": companies[r.company_id].name if r.company_id else None,
@@ -438,16 +452,65 @@ async def get_results(db: AsyncSession, report: Report, group_by: str, include: 
         ),
         key=lambda r: (r["company"] or "", r["site"] or "", r["sort"]),
     )
-    body: dict = {"report_id": report.id, "status": report.status.value, "group_by": group_by, "rows": result_rows}
+    body: dict = {"report_id": report.id, "status": report.status.value, "group_by": group_by, "basis": basis, "rows": result_rows}
     if "other" in include:
-        body["other"] = [r for r in await line_rows(db, report, effect="unmatched", limit=1000)] + \
-                        [r for r in await line_rows(db, report, effect="site_kind_mismatch", limit=1000)] + \
-                        [r for r in await line_rows(db, report, effect="needs_input", limit=1000)]
+        body["other"] = [r for r in await line_rows(db, report, effect="unmatched", basis=basis, limit=1000)] + \
+                        [r for r in await line_rows(db, report, effect="site_kind_mismatch", basis=basis, limit=1000)] + \
+                        [r for r in await line_rows(db, report, effect="needs_input", basis=basis, limit=1000)]
     if "problems" in include:
-        body["problems"] = [r for r in await line_rows(db, report, effect="unit_mismatch", limit=1000)] + \
-                           [r for r in await line_rows(db, report, effect="no_conversion", limit=1000)]
+        body["problems"] = [r for r in await line_rows(db, report, effect="unit_mismatch", basis=basis, limit=1000)] + \
+                           [r for r in await line_rows(db, report, effect="no_conversion", basis=basis, limit=1000)]
     if "nonphysical" in include:
-        body["nonphysical"] = await line_rows(db, report, effect="nonphysical", limit=1000)
+        body["nonphysical"] = await line_rows(db, report, effect="nonphysical", basis=basis, limit=1000)
+    return body
+
+
+def _achievement(planned: Decimal | None, actual: Decimal | None) -> str | None:
+    if planned is None or actual is None or planned == 0:
+        return None
+    return f"{(actual / planned * 100).quantize(Decimal('0.1'), rounding=ROUND_HALF_UP):f}"
+
+
+async def _previous_report(db: AsyncSession, report: Report) -> Report | None:
+    """The report whose forecast covers this report's period: same project, latest period that ends before this one
+    starts, that actually carries a forecast (planned results). Drafts that never ran are skipped."""
+    candidates = (await db.execute(
+        select(Report).where(Report.project_id == report.project_id, Report.id != report.id, Report.period_end < report.period_start,
+                             Report.status.notin_((ReportStatus.DRAFT, ReportStatus.FAILED)))
+        .order_by(Report.period_end.desc(), Report.version.desc())
+    )).scalars().all()
+    for cand in candidates:
+        if await db.scalar(select(func.count()).select_from(Result).where(Result.report_id == cand.id, Result.basis == "planned")):
+            return cand
+    return None
+
+
+async def plan_vs_actual(db: AsyncSession, report: Report, group_by: str) -> dict:
+    """Forecast made in the previous report for this period vs this report's actuals, per item (and site/company).
+    `next_plan` is this report's own forecast for the period after it."""
+    previous = await _previous_report(db, report)
+    actual = await get_results(db, report, group_by, set(), "actual")
+    own_plan = await get_results(db, report, group_by, set(), "planned")
+    body: dict = {"report_id": report.id, "group_by": group_by, "previous_report": None, "rows": [], "next_plan": own_plan["rows"]}
+    if previous is None:
+        return body
+    prev_plan = await get_results(db, report=previous, group_by=group_by, include=set(), basis="planned")
+    cell = lambda r: (r["company_id"], r["site_id"], r["item_key"])  # noqa: E731
+    planned_by, actual_by = {cell(r): r for r in prev_plan["rows"]}, {cell(r): r for r in actual["rows"]}
+    rows = []
+    for key in sorted(set(planned_by) | set(actual_by), key=lambda k: ((planned_by.get(k) or actual_by[k])["company"] or "", (planned_by.get(k) or actual_by[k])["site"] or "", (planned_by.get(k) or actual_by[k])["sort"])):
+        p, a = planned_by.get(key), actual_by.get(key)
+        base = p or a
+        pq, aq = (Decimal(p["qty"]) if p else None), (Decimal(a["qty"]) if a else None)
+        rows.append({
+            "company": base["company"], "site": base["site"], "item_key": base["item_key"], "item": base["item"], "unit": base["unit"],
+            "decimals": base["decimals"], "planned": p["qty"] if p else None, "actual": a["qty"] if a else None,
+            "variance": _q((aq or Decimal(0)) - (pq or Decimal(0))), "achievement_pct": _achievement(pq, aq),
+        })
+    body["previous_report"] = {"id": previous.id, "title": previous.title, "period_label": previous.period_label,
+                               "period_start": previous.period_start, "period_end": previous.period_end,
+                               "adjacent": (report.period_start - previous.period_end).days <= 1}
+    body["rows"] = rows
     return body
 
 
@@ -494,6 +557,7 @@ async def publish(db: AsyncSession, context: UserContext, report: Report) -> Rep
     results = await get_results(db, report, "site", {"other", "problems", "nonphysical"})
     company = await get_results(db, report, "company", set())
     holding = await get_results(db, report, "holding", set())
+    planned = {g: (await get_results(db, report, g, set(), "planned"))["rows"] for g in ("site", "company", "holding")}
     classes = await list_groups(db, report, "all")
     items = (await db.execute(select(Item).order_by(Item.sort_order))).scalars().all()
     files = await sources(db, report)
@@ -502,6 +566,7 @@ async def publish(db: AsyncSession, context: UserContext, report: Report) -> Rep
                    "period_label": report.period_label, "period_start": report.period_start, "period_end": report.period_end,
                    "version": report.version, "project_id": report.project_id},
         "results": {"site": results["rows"], "company": company["rows"], "holding": holding["rows"]},
+        "planned_results": planned,
         "other": results["other"], "problems": results["problems"], "nonphysical": results["nonphysical"],
         "classifications": classes, "warnings": {"gate": causes, "files": [{"filename": f["filename"], "warnings": f["warnings"]} for f in files]},
         "catalog": [{"key": i.key, "title_fa": i.title_fa, "output_unit": i.output_unit, "decimals": i.decimals} for i in items],

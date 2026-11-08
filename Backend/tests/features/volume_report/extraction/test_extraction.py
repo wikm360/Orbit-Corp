@@ -29,7 +29,7 @@ def _parse(rows, **kw):
 # ---- normalization ----------------------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("raw,expected", [
-    ("متر مکعب", "m3"), ("مترمکعب", "m3"), ("m3", "m3"), ("m³", "m3"), ("M3", "m3"),
+    ("متر مکعب", "m3"), ("3 m", "m3"), ("2 m", "m2"), ("مترمکعب", "m3"), ("m3", "m3"), ("m³", "m3"), ("M3", "m3"),
     ("متر مربع", "m2"), ("m²", "m2"),
     ("مترمربع سانتی متر", "m2cm"), ("متر مربع\nسانتی‌متر", "m2cm"), ("مترمربع-سانتیمتر", "m2cm"),
     ("متر مکعب-کیلومتر", "m3km"),
@@ -200,11 +200,14 @@ def test_probe_skips_hidden_planned_expense_other_and_logs_reasons(tmp_path):
     summary = wb.create_sheet("EVM M")
     summary["B2"] = "شرکت محورگستر توسعه"
     wb.create_sheet("Chart")
+    wb.create_sheet("پیش بینی")  # EVM-style summary named like a forecast but not an income table: skipped
     result = extract_file(save(wb, tmp_path), LEX)
     log = {e["sheet"]: e for e in result.sheet_log}
-    assert [s.sheet_name for s in result.sheets] == ["درآمد پروژه یک"]
+    # the income-layout plan sheet is read, as the forecast of the next period
+    assert [(s.sheet_name, s.basis) for s in result.sheets] == [("درآمد پروژه یک", "actual"), ("درآمد برنامه ای", "planned")]
+    assert log["درآمد برنامه ای"]["kind"] == "planned" and log["درآمد برنامه ای"]["used"] and log["درآمد برنامه ای"]["basis"] == "planned"
+    assert log["پیش بینی"]["reason"] == "planned_sheet" and not log["پیش بینی"]["used"]
     assert log["درآمد پنهان"]["reason"] == "hidden" and log["درآمد پنهان"]["kind"] == "hidden" and not log["درآمد پنهان"]["used"]
-    assert log["درآمد برنامه ای"]["reason"] == "planned_sheet"
     assert log["هزینه"]["kind"] == "expense" and log["Chart"]["kind"] == "other"
     assert log["درآمد پروژه یک"]["used"] and log["درآمد پروژه یک"]["rows_nonzero"] == 1
     assert result.suggested_company.startswith("شرکت محورگستر")
