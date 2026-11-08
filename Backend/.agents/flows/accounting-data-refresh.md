@@ -46,6 +46,14 @@ job یک‌باره؛ روی هر `docker compose up` اجرا می‌شود و 
 نیاز: فضای دیسک برای دو نسخه هم‌زمان؛ FULL و DIFF از یک زنجیره‌ی backup. روی SQL Server Express محدودیت ۱۰GB هر DB (DB فعلی ~۵GB). آزمایش‌شده با FULL 2026-10-02 + DIFF 2026-10-05 (~۱۰ثانیه روی SSD).
 در compose: سرویس با تصویر backend ساخته می‌شود (entrypoint `python sql/rahkaran/refresh.py`)؛ env: `RAHKARAN_SA_PASSWORD`, `RAHKARAN_AI_PASSWORD`(=`RAHKARAN_DB_PASSWORD`), `RAHKARAN_HOST=mssql`, `RAHKARAN_PORT=1433`, `RAHKARAN_DB`. پوشه‌ی بک‌آپ `${RAHKARAN_BACKUP_DIR:-./data/rahkaran-backups}` در هر دو کانتینر `mssql` و refresh به‌صورت read-only روی `/backups` mount است؛ فایل‌ها باید برای همه خواندنی باشند (`chmod -R a+rX`).
 
+## ریز هزینه‌ی ماشین‌آلات و سطح ۶ (از اکتبر ۲۰۲۶ اضافه شد)
+زنجیره‌ی تفصیلی هزینه (زبان حسابدار): معین (`111780` تعمیر ماشین سنگین، `111781` وسایط سبک، `111755` سوخت) ← سطح ۴ پروژه (`contract_*`) ← سطح ۵ دستگاه (`equipment_*`) ← سطح ۶ نوع مصرف (`expense_item_name`: قطعات، فیلتر، لاستیک، هزینه تعمیر، باطری، سوخت). افزوده‌ها:
+- `ai.ledger_lines`: `expense_item_dl_code/_name` (تفصیلی نوع 27 در سطح ۶ روی ردیف‌های هزینه) و `is_wip_transfer` (اسناد پایان سال انتقال 1117→5111).
+- `ai.cost_lines`: همان‌ها + `contract_name_norm`، `equipment_name_norm` (خط تیره→فاصله، فاصله‌ی تکراری حذف) و `equipment_plate` (پلاک استخراج‌شده با `PATINDEX`؛ ۱۷۹ از ۳۴۲ دستگاه پلاک دارند، بقیه ماشین‌آلات سنگین بدون پلاک‌اند).
+- **view جدید `ai.equipment_project_cost_year`**: سال × قرارداد × دستگاه × معین × طبقه × سطح ۶، بدون اسناد انتقال → برای همه‌ی سال‌ها درست. `ai.equipment_cost_year` روی آن بازنویسی شد (دیگر برای ≤1403 صفر نیست).
+- `ai.petty_cash_balances`: `holder_name_norm`، `balance_side`. `ai.counterparty_balances`: `is_party_account` (0 = ردیف هزینه‌ی 1117).
+- بررسی صحت بعد از هر ریستور: جمع `equipment_project_cost_year` (طبقه‌ی `project_cost_wip`/`project_cost_recognized`) = `contract_financials_year.contract_cost` برای هر سال.
+
 ## ساخت hint ها (`sql/rahkaran/hints/`)
 - `notes.py`: دانش دست‌نویس — `CORE_PROMPT` (قواعد همیشه‌فعال)، `VIEW_HINTS[view]={keywords,use,filters,pitfalls}`، `DOMAIN_NOTES=[(id,title,text,keywords)]`.
 - `../examples/questions.py`: `Q=[(group, سؤال فارسی, SQL)]` — ۶۷+ سؤال نمونه (few-shot و مجموعه‌ی ارزیابی).

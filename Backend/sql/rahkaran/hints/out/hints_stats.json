@@ -1,9 +1,9 @@
 {
- "view": 93,
- "example": 73,
+ "view": 94,
+ "example": 86,
  "glossary": 40,
- "note": 20,
+ "note": 24,
  "taxonomy": 25,
- "total_chars": 157540,
- "max_chunk_chars": 2974
+ "total_chars": 174750,
+ "max_chunk_chars": 3725
 }

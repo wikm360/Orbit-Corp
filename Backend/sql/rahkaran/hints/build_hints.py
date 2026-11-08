@@ -46,12 +46,13 @@ def taxonomy_chunks(cur):
             index.setdefault(stmt, []).append(cat)
             titles = {}
             for a in accs:
-                titles.setdefault(_group_title(a["sl_title"]), []).append(a["sl_code"])
+                # codes that never received a document are marked so the model does not pick them for a question that needs data
+                titles.setdefault(_group_title(a["sl_title"]), []).append(a["sl_code"] if a["has_postings"] else f'{a["sl_code"]}(بدون تراکنش)')
             body.append(f"سرفصل «{stmt}»:\n" + "\n".join(f"- {t}: " + "، ".join(codes) for t, codes in titles.items()))
             kws += [stmt] + list(titles)[:25]
         text = (f"طبقه‌بندی حسابدار - دسته: {cat}\n"
                 f"فیلتر کلی: detail_category = N'{cat}' (در ai.pnl_by_category_year یا ledger_lines/cost_lines)؛ فیلتر جزئی: sl_code IN (...) یا sl_title LIKE N'%...%'.\n"
-                "معین‌ها (عنوان: کدها؛ 1117xx طی سال پروژه‌ها، 5111xx/5112xx بعد از پایان سال، 6213xx اداری):\n" + "\n".join(body))
+                "معین‌ها (عنوان: کدها؛ 1117xx طی سال پروژه‌ها، 5111xx/5112xx بعد از پایان سال، 6213xx اداری؛ «بدون تراکنش» = هرگز سند نخورده):\n" + "\n".join(body))
         chunks.append(dict(id=f"taxonomy:{len(chunks) + 1:03d}", kind="taxonomy", title=f"دسته‌ی {cat}", text=text,
                            views=["pnl_by_category_year", "account_taxonomy"], keywords=kws))
     idx = "\n".join(f"- {stmt}: " + "، ".join(cats) for stmt, cats in sorted(index.items()))

@@ -52,6 +52,11 @@ GO
 -- ALWAYS filter on fiscal_year / voucher_date and is_valid_for_reports = 1 for financial answers. is_valid_for_reports = states 1 (temporary, i.e. entered but not
 -- yet reviewed - the latest 1-2 months are in this state), 4 (reviewed) and 32 (final); state 2 (note/یادداشت) is excluded. Use is_reviewed = 1 for strictly reviewed data;
 -- exclude is_opening / is_closing lines when you want period turnover (use is_regular = 1).
+-- LEVEL 6 (سطح ۶): on repair/fuel cost lines (SL 111780 heavy machinery, 111781 light vehicles, 111755 fuel) the 6th tafsili is the EXPENSE ITEM
+-- (قطعات، فیلتر، لاستیک، هزینه تعمیر، سوخت/روغن ...): expense_item_dl_code / expense_item_name. Order of levels there: 4 = project/contract (66xxxx), 5 = machine, 6 = item.
+-- is_wip_transfer = 1 marks the year-end vouchers that move cost from 1117 (work in progress) to 5111 (recognized cost). They carry NO machine / item /
+-- counterparty, and they make the net of 1117 equal ZERO for closed years: for any breakdown below contract level (machine, item, vendor) in a closed year
+-- filter is_wip_transfer = 0 and read the 1117 lines (pnl_class = 'project_cost_wip'), never the net of 1117 + 5111.
 CREATE OR ALTER VIEW ai.ledger_lines AS
 SELECT i.VoucherItemID AS line_id,
        v.VoucherID AS voucher_id,
@@ -127,6 +132,9 @@ SELECT i.VoucherItemID AS line_id,
        CASE WHEN d4.DLTypeRef = 13 THEN RTRIM(d4.Title) WHEN d5.DLTypeRef = 13 THEN RTRIM(d5.Title) WHEN d6.DLTypeRef = 13 THEN RTRIM(d6.Title) END AS facility_name,
        CASE WHEN d4.DLTypeRef = 27 THEN d4.Code WHEN d5.DLTypeRef = 27 THEN d5.Code WHEN d6.DLTypeRef = 27 THEN d6.Code END AS other_detail_dl_code,
        CASE WHEN d4.DLTypeRef = 27 THEN RTRIM(d4.Title) WHEN d5.DLTypeRef = 27 THEN RTRIM(d5.Title) WHEN d6.DLTypeRef = 27 THEN RTRIM(d6.Title) END AS other_detail_name,
+       CASE WHEN d6.DLTypeRef = 27 AND a.pnl_class IN ('project_cost_wip','project_cost_recognized','machinery_unit_cost','plant_unit_cost','cost_of_goods_sold','operating_expense','admin_expense','financial_expense','other_expense') THEN d6.Code END AS expense_item_dl_code,
+       CASE WHEN d6.DLTypeRef = 27 AND a.pnl_class IN ('project_cost_wip','project_cost_recognized','machinery_unit_cost','plant_unit_cost','cost_of_goods_sold','operating_expense','admin_expense','financial_expense','other_expense') THEN RTRIM(d6.Title) END AS expense_item_name,
+       CASE WHEN a.gl_code IN ('1117','5111') AND v.Description LIKE N'%کار%جریان%بهای تمام%' THEN 1 ELSE 0 END AS is_wip_transfer,
        i.FollowUpNumber AS follow_up_number,
        CAST(i.FollowUpDate AS date) AS follow_up_date
 FROM FIN3.VoucherItem i

@@ -99,6 +99,9 @@ run_accounting_query(db, question, user_id, conversation_id)
 - نظارت (admin با دسترسی مالی): `GET /queries` (فیلتر status, صفحه‌بندی), `GET /queries/stats`. admin: `POST /hints/ingest`, `GET /freshness`.
 - **چه کسی می‌تواند بپرسد:** هر کاربری که `can_use_accounting` دارد (super_admin همیشه؛ دیگران با واگذاری super_admin) و فقط در چت شخصی ← [../03-access-control.md](../03-access-control.md).
 
+## ارزیابی با golden set
+`sql/rahkaran/examples/golden.py` (۲۶ سؤال به سبک حسابدار + SQL مرجع) و `eval_golden.py retrieval|e2e`؛ روال و نتایج: [../ops/accounting-golden-evaluation.md](../ops/accounting-golden-evaluation.md). هر تغییر در view/hint/prompt را با حالت `retrieval` (رایگان و محلی) بسنجید و پیش از انتشار `e2e` را (با LLM واقعی) اجرا کنید.
+
 ## پیکربندی مرتبط
 `RAHKARAN_DB_ENABLED, _HOST, _PORT, _NAME, _USER, _PASSWORD, _QUERY_TIMEOUT_SECONDS, _MAX_ROWS, _ROWS_TO_MODEL`, `RAHKARAN_SQL_MAX_ATTEMPTS`, `RAHKARAN_HINTS_TOP_K`, `RAHKARAN_ARTIFACT_MAX_ROWS`, `RAHKARAN_EXPORT_MAX_ROWS`, `LLM_SQL_MODEL` — ← [../reference/configuration.md](../reference/configuration.md).
 

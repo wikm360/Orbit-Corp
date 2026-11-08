@@ -106,7 +106,55 @@ SELECT jalali_ym, jalali_month_name, total_debit AS money_in, total_credit AS mo
 SELECT tax_period_or_detail, account_role, SUM(debit) AS debit, SUM(credit) AS credit FROM ai.vat_lines WHERE fiscal_year = 1404 GROUP BY tax_period_or_detail, account_role ORDER BY tax_period_or_detail
 ```
 
-نمونه خروجی: tax_period_or_detail=None | account_role=vat_output | debit=15,711,340,944 | credit=0  (54 ردیف)
+نمونه خروجی: tax_period_or_detail=None | account_role=vat_deposit | debit=5,398,717,556 | credit=16,285,231,048  (54 ردیف)
+
+### هزینه حقوق در سال مالی ۱۴۰۴ چقدر است؟
+
+```sql
+SELECT pnl_class, SUM(amount) AS amount FROM ai.pnl_by_category_year WHERE fiscal_year = 1404 AND detail_category = N'حقوق' GROUP BY pnl_class
+```
+
+نمونه خروجی: pnl_class=admin_expense | amount=277,411,857,563  (2 ردیف)
+
+### هزینه‌های سال ۱۴۰۴ به تفکیک دسته (حقوق، سوخت، مواد و مصالح، استهلاک …)
+
+```sql
+SELECT detail_category, SUM(amount) AS amount FROM ai.pnl_by_category_year WHERE fiscal_year = 1404 AND pnl_class NOT IN ('contract_revenue','other_revenue') GROUP BY detail_category ORDER BY amount DESC
+```
+
+نمونه خروجی: detail_category=حقوق | amount=3,853,122,149,857  (18 ردیف)
+
+### هزینه عیدی و پاداش در سال مالی ۱۴۰۴ چقدر بوده؟
+
+```sql
+SELECT sl_code, sl_title, SUM(amount) AS amount FROM ai.cost_lines WHERE fiscal_year = 1404 AND detail_category = N'حقوق' AND sl_title LIKE N'%عیدی%' GROUP BY sl_code, sl_title ORDER BY amount DESC
+```
+
+نمونه خروجی: sl_code=111708 | sl_title=عیدی و پاداش سالیانه | amount=242,657,354,583  (2 ردیف)
+
+### هزینه بیمه سهم کارفرما در سال ۱۴۰۳ به تفکیک پروژه‌ای و اداری
+
+```sql
+SELECT pnl_class, SUM(amount) AS amount FROM ai.cost_lines WHERE fiscal_year = 1403 AND detail_category = N'حقوق' AND sl_title LIKE N'%سهم%کارفرما%' GROUP BY pnl_class
+```
+
+نمونه خروجی: pnl_class=admin_expense | amount=8,127,588,385  (3 ردیف)
+
+### کدام معین‌ها جزو دسته‌ی حقوق هستند؟
+
+```sql
+SELECT sl_code, source_sl_name, pnl_statement FROM ai.account_taxonomy WHERE detail_category = N'حقوق' ORDER BY sl_code
+```
+
+نمونه خروجی: sl_code=111704 | source_sl_name=حقوق و مزایای شغل | pnl_statement=بهای تمام شده درآمد های عملیاتی  (35 ردیف)
+
+### هزینه خرید قیر در سال مالی ۱۴۰۴
+
+```sql
+SELECT sl_code, sl_title, SUM(amount) AS amount FROM ai.cost_lines WHERE fiscal_year = 1404 AND detail_category = N'مواد و مصالح' AND sl_title LIKE N'%قیر%' GROUP BY sl_code, sl_title ORDER BY amount DESC
+```
+
+نمونه خروجی: sl_code=111774 | sl_title=موادومصالح(قیر ام سی دو) | amount=175,021,361,580  (2 ردیف)
 
 
 ## قراردادها و صورت‌وضعیت‌ها
@@ -216,7 +264,7 @@ SELECT counterparty_name, receivable_balance, payable_balance, net_position FROM
 SELECT voucher_date, voucher_number, sl_title, debit, credit, line_description FROM ai.ledger_lines WHERE counterparty_name LIKE N'%جهادنصر%' AND fiscal_year = 1404 AND is_valid_for_reports = 1 ORDER BY voucher_date
 ```
 
-نمونه خروجی: voucher_date=2025-09-23 | voucher_number=1 | sl_title=حسابهای دریافتنی (شرکتهای گروه) | debit=10,392,426,719 | credit=0 | line_description=ثبت بابت سند افتتاحیه  (252 ردیف)
+نمونه خروجی: voucher_date=2025-09-23 | voucher_number=1 | sl_title=ضمانت نامه حسن انجام تعهدات | debit=15,000,000,000 | credit=0 | line_description=ثبت بابت سند افتتاحیه  (252 ردیف)
 
 ### پرداخت‌های انجام‌شده به یک شخص/شرکت از طریق بانک
 
@@ -441,7 +489,7 @@ SELECT COUNT(*) AS employees, AVG(base_pay) AS avg_base_pay, AVG(total_monthly_t
 SELECT employee_code, full_name, department_name, post_title FROM ai.employees WHERE is_active = 1 AND current_cost_center LIKE N'%زرند - سیریز%'
 ```
 
-نمونه خروجی: employee_code=189401 | full_name=نظر هاشم زهی چاه قنبر | department_name=نگهداری و تعمیرات | post_title=مکانیک ماشین آلات سنگین  (113 ردیف)
+نمونه خروجی: employee_code=890521 | full_name=علی صمدی سیمین پور | department_name=وسائل نقلیه | post_title=راننده خودروهای سبک  (113 ردیف)
 
 ### مدرک تحصیلی کارکنان فعال
 
@@ -533,6 +581,119 @@ SELECT * FROM ai.asset_ledger_reconciliation
 ```
 
 نمونه خروجی: item=بهای تمام‌شده دارایی‌های ثابت (فقط دارای | asset_module_amount=6,357,711,122,688 | ledger_amount=6,353,787,221,359 | difference=-3,923,901,329  (2 ردیف)
+
+### هزینه قطعات خریداری‌شده برای پروژه چنگوله در سال ۱۴۰۴ چقدر است؟
+
+```sql
+SELECT SUM(amount) AS parts_cost FROM ai.equipment_project_cost_year WHERE fiscal_year = 1404 AND contract_name_norm LIKE N'%چنگوله%' AND expense_item_name = N'قطعات'
+```
+
+نمونه خروجی: parts_cost=70,942,165,626  (1 ردیف)
+
+### هزینه‌ی تعمیر ماشین‌آلات سنگین پروژه بارگیری و حمل باطله گل‌گهر در ۱۴۰۴ به تفکیک نوع (قطعات، فیلتر، لاستیک …)
+
+```sql
+SELECT expense_item_name, SUM(amount) AS amount, COUNT(DISTINCT equipment_dl_code) AS machines FROM ai.equipment_project_cost_year WHERE fiscal_year = 1404 AND sl_code = '111780' AND contract_name_norm LIKE N'%حمل باطله%' GROUP BY expense_item_name ORDER BY amount DESC
+```
+
+نمونه خروجی: expense_item_name=قطعات | amount=219,420,377,716 | machines=47  (6 ردیف)
+
+### هزینه فیلتر برای لودر کوماتسو 470 در سال ۱۴۰۴ به تفکیک پروژه
+
+```sql
+SELECT contract_name, SUM(amount) AS filter_cost FROM ai.equipment_project_cost_year WHERE fiscal_year = 1404 AND equipment_name_norm LIKE N'%کوماتسو 470%' AND expense_item_name = N'فیلتر' GROUP BY contract_name ORDER BY filter_cost DESC
+```
+
+نمونه خروجی: contract_name=پروژه بارگیری و حمل باطله معدن 3 گل گهر( | filter_cost=845,000,000  (2 ردیف)
+
+### هزینه باطری و لاستیک ماشین‌آلات در سال ۱۴۰۲ به تفکیک پروژه (سال بسته‌شده)
+
+```sql
+SELECT contract_name, expense_item_name, SUM(amount) AS amount FROM ai.equipment_project_cost_year WHERE fiscal_year = 1402 AND sl_code IN ('111780','111781') AND (expense_item_name LIKE N'%باطری%' OR expense_item_name LIKE N'%لاستیک%') GROUP BY contract_name, expense_item_name ORDER BY amount DESC
+```
+
+نمونه خروجی: contract_name=پروژه بارگیری و حمل باطله معدن 3 گل گهر( | expense_item_name=هزینه تعمیر(لاستیک) | amount=95,448,547,192  (18 ردیف)
+
+### ده دستگاه با بیشترین هزینه‌ی تعمیر در سال ۱۴۰۱
+
+```sql
+SELECT TOP 10 equipment_dl_code, equipment_name, SUM(amount) AS repair_cost FROM ai.equipment_project_cost_year WHERE fiscal_year = 1401 AND sl_code IN ('111780','111781') AND equipment_dl_code IS NOT NULL GROUP BY equipment_dl_code, equipment_name ORDER BY repair_cost DESC
+```
+
+نمونه خروجی: equipment_dl_code=416106 | equipment_name=دامپتراک 35 تن TR35A  سریالRT10381090 | repair_cost=18,762,683,073  (10 ردیف)
+
+### هزینه‌ی تعمیر کامیون با پلاک 776ع61 در سال ۱۴۰۳ به تفکیک نوع هزینه
+
+```sql
+SELECT expense_item_name, SUM(amount) AS amount FROM ai.equipment_project_cost_year WHERE fiscal_year = 1403 AND equipment_plate = N'776ع61' GROUP BY expense_item_name ORDER BY amount DESC
+```
+
+نمونه خروجی: expense_item_name=هزینه تعمیر(لاستیک) | amount=5,164,117,736  (7 ردیف)
+
+### هزینه سوخت بنزین در ۱۴۰۴ به تفکیک دستگاه، ۱۵ تای اول
+
+```sql
+SELECT TOP 15 equipment_dl_code, equipment_name, SUM(amount) AS fuel_cost FROM ai.equipment_project_cost_year WHERE fiscal_year = 1404 AND sl_code = '111755' AND expense_item_name LIKE N'%بنزین%' AND equipment_dl_code IS NOT NULL GROUP BY equipment_dl_code, equipment_name ORDER BY fuel_cost DESC
+```
+
+نمونه خروجی: equipment_dl_code=437362 | equipment_name=وانت دو کابین کاپرا پلاک 669 و 72 ایران  | fuel_cost=350,520,000  (15 ردیف)
+
+### کدام پروژه‌ها در سال ۱۴۰۴ بیشترین هزینه‌ی لاستیک را داشتند؟ (۵ تای اول)
+
+```sql
+SELECT TOP 5 contract_dl_code, contract_name, SUM(amount) AS tyre_cost FROM ai.equipment_project_cost_year WHERE fiscal_year = 1404 AND expense_item_name LIKE N'%لاستیک%' GROUP BY contract_dl_code, contract_name ORDER BY tyre_cost DESC
+```
+
+نمونه خروجی: contract_dl_code=661188 | contract_name=پروژه بارگیری و حمل باطله معدن 3 گل گهر( | tyre_cost=166,836,094,162  (5 ردیف)
+
+### هزینه تعمیر لودر کوماتسو در ۱۴۰۴ (نام چند دستگاه را دارد، پس به تفکیک دستگاه)
+
+```sql
+SELECT equipment_dl_code, equipment_name, SUM(amount) AS repair_cost FROM ai.equipment_project_cost_year WHERE fiscal_year = 1404 AND sl_code IN ('111780','111781') AND equipment_name_norm LIKE N'%لودر%کوماتسو%' GROUP BY equipment_dl_code, equipment_name ORDER BY repair_cost DESC
+```
+
+نمونه خروجی: equipment_dl_code=412121 | equipment_name=لودر چرخ لاستیکی کوماتسو 470 شماره شاسی  | repair_cost=39,858,105,596  (4 ردیف)
+
+
+## قراردادها و صورت‌وضعیت‌ها
+
+### هزینه‌ی پروژه باند دوم سیرجان-قطروئیه در سال بسته ۱۴۰۲ به تفکیک معین (ریز، نه فقط جمع)
+
+```sql
+SELECT sl_code, sl_title, SUM(amount) AS amount FROM ai.equipment_project_cost_year WHERE fiscal_year = 1402 AND contract_name_norm LIKE N'%سیرجان%قطروئیه%' AND pnl_class = 'project_cost_wip' GROUP BY sl_code, sl_title ORDER BY amount DESC
+```
+
+نمونه خروجی: sl_code=111773 | sl_title=موادومصالح(قیر60*70) | amount=285,661,411,587  (47 ردیف)
+
+
+## بانک، تنخواه، ضمانت‌نامه و تسهیلات
+
+### پنج تنخواه‌دار با بیشترین مانده‌ی بدهکار به شرکت
+
+```sql
+SELECT TOP 5 holder_name, balance, balance_side, last_activity_date FROM ai.petty_cash_balances WHERE balance > 0 ORDER BY balance DESC
+```
+
+نمونه خروجی: holder_name=مهدی بحرینی-هجیر الماسی باغ بهزادی | balance=9,496,617,565 | balance_side=دارنده به شرکت بدهکار است | last_activity_date=2026-09-22  (5 ردیف)
+
+### مانده تنخواه آقای بحرینی (ممکن است چند تنخواه‌دار با این نام باشد)
+
+```sql
+SELECT counterparty_dl_code, holder_name, balance, balance_side FROM ai.petty_cash_balances WHERE holder_name_norm LIKE N'%بحرینی%' ORDER BY balance DESC
+```
+
+نمونه خروجی: counterparty_dl_code=201158 | holder_name=مهدی بحرینی-هجیر الماسی باغ بهزادی | balance=9,496,617,565 | balance_side=دارنده به شرکت بدهکار است  (1 ردیف)
+
+
+## مشتریان، تأمین‌کنندگان و طرف‌حساب‌ها
+
+### مانده حساب‌های شرکت نگین پرتو نصر (فقط حساب‌های طرف‌حساب، نه هزینه‌ی کار در جریان)
+
+```sql
+SELECT sl_code, sl_title, account_role, balance_net_debit, balance_side FROM ai.counterparty_balances WHERE counterparty_name LIKE N'%نگین پرتو%' AND is_party_account = 1 AND balance_net_debit <> 0 ORDER BY ABS(balance_net_debit) DESC
+```
+
+نمونه خروجی: sl_code=111402 | sl_title=سپرده بیمه | account_role=insurance_deposit_receivable | balance_net_debit=472,223,976,364 | balance_side=بدهکار  (7 ردیف)
 
 
 ## متا

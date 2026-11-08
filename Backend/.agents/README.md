@@ -34,6 +34,7 @@
 | حافظه‌ی پروژه | [flows/project-memory.md](flows/project-memory.md) |
 | پرسش مالی از دیتابیس راهکاران | [flows/accounting-query.md](flows/accounting-query.md) |
 | آپدیت داده‌ی راهکاران، ساخت view/hint | [flows/accounting-data-refresh.md](flows/accounting-data-refresh.md) + [guides/extend-accounting-layer.md](guides/extend-accounting-layer.md) |
+| ارزیابی Text-to-SQL مالی با سؤال‌های حسابدار (golden set)، نتایج قبل/بعد | [ops/accounting-golden-evaluation.md](ops/accounting-golden-evaluation.md) |
 | کیفیت بازیابی اسناد، نتایج ارزیابی، اجرای دوباره‌ی ارزیابی | [ops/retrieval-evaluation.md](ops/retrieval-evaluation.md) + `../tools/retrieval_eval/` |
 | پیش‌پردازش تصویر OCR (جهت، صفحه‌ی خالی)، مقایسه‌ی مدل‌های vision، اجرای دوباره‌ی ارزیابی | [ops/ocr-preprocessing-evaluation.md](ops/ocr-preprocessing-evaluation.md) + `../tools/ocr_eval/` |
 | لیست endpointها، رویدادهای SSE/WS، شکل artifact | [reference/api-endpoints.md](reference/api-endpoints.md) |

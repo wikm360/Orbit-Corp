@@ -126,16 +126,44 @@ FROM ai.ledger_lines
 WHERE is_valid_for_reports = 1 AND is_regular = 1 AND pnl_class IN ('contract_revenue','other_revenue');
 GO
 
+-- cost_lines extras (names that LIKE can actually match, and the accountant's level 6):
+--   contract_name_norm / equipment_name_norm : hyphen -> space and collapsed repeated spaces ("سیرجان-قطروئیه" -> "سیرجان قطروئیه"); search these with LIKE N'%...%'.
+--   equipment_plate : licence plate extracted from the machine title ("123ع45"), NULL for plate-less heavy machinery (matched by title/serial instead).
+--   expense_item_dl_code / expense_item_name : accountant's LEVEL 6 on repair/fuel lines (قطعات، فیلتر، لاستیک، هزینه تعمیر، سوخت/روغن ...).
+--   is_wip_transfer : year-end 1117 -> 5111 transfer voucher lines. In CLOSED years the net of 1117 is zero because of them, so for machine / item / vendor
+--   breakdowns of a closed year use ai.equipment_project_cost_year (or filter is_wip_transfer = 0 here).
 CREATE OR ALTER VIEW ai.cost_lines AS
-SELECT line_id, voucher_id, voucher_number, fiscal_year, voucher_date, jalali_date, jalali_ym, jalali_month_name, fiscal_month_no,
-       pnl_class, pnl_statement, detail_category, gl_code, gl_title, sl_code, sl_title, cost_nature_key, debit - credit AS amount, debit, credit,
-       contract_dl_code, contract_name, equipment_dl_code, equipment_name, cost_center_dl_code, cost_center_name,
-       project_dl_code, project_name, counterparty_dl_code, counterparty_name, other_detail_name,
-       source_system, voucher_description, line_description
-FROM ai.ledger_lines
-WHERE is_valid_for_reports = 1 AND is_regular = 1
-  AND pnl_class IN ('project_cost_wip','project_cost_recognized','machinery_unit_cost','plant_unit_cost','cost_of_goods_sold',
-                    'operating_expense','admin_expense','financial_expense','other_expense');
+SELECT l.line_id, l.voucher_id, l.voucher_number, l.fiscal_year, l.voucher_date, l.jalali_date, l.jalali_ym, l.jalali_month_name, l.fiscal_month_no,
+       l.pnl_class, l.pnl_statement, l.detail_category, l.gl_code, l.gl_title, l.sl_code, l.sl_title, l.cost_nature_key, l.debit - l.credit AS amount, l.debit, l.credit,
+       l.contract_dl_code, l.contract_name, l.equipment_dl_code, l.equipment_name, l.cost_center_dl_code, l.cost_center_name,
+       l.project_dl_code, l.project_name, l.counterparty_dl_code, l.counterparty_name, l.other_detail_name,
+       l.source_system, l.voucher_description, l.line_description,
+       LTRIM(RTRIM(REPLACE(REPLACE(REPLACE(REPLACE(l.contract_name, N'-', N' '), N'  ', N' '), N'  ', N' '), N'  ', N' '))) AS contract_name_norm,
+       LTRIM(RTRIM(REPLACE(REPLACE(REPLACE(REPLACE(l.equipment_name, N'-', N' '), N'  ', N' '), N'  ', N' '), N'  ', N' '))) AS equipment_name_norm,
+       CASE WHEN pl.p2 > 0 THEN SUBSTRING(l.equipment_name, pl.p2, 6) WHEN pl.p3 > 0 THEN REPLACE(SUBSTRING(l.equipment_name, pl.p3, 8), N' ', N'') END AS equipment_plate,
+       l.expense_item_dl_code, l.expense_item_name, l.is_wip_transfer
+FROM ai.ledger_lines l
+CROSS APPLY (SELECT PATINDEX(N'%[0-9][0-9][0-9][ابپتثجچحخدذرزژسشصضطظعغفقکگلمنوهی][0-9][0-9]%', l.equipment_name) AS p2,
+                    PATINDEX(N'%[0-9][0-9][0-9] [ابپتثجچحخدذرزژسشصضطظعغفقکگلمنوهی] [0-9][0-9]%', l.equipment_name) AS p3) pl
+WHERE l.is_valid_for_reports = 1 AND l.is_regular = 1
+  AND l.pnl_class IN ('project_cost_wip','project_cost_recognized','machinery_unit_cost','plant_unit_cost','cost_of_goods_sold',
+                      'operating_expense','admin_expense','financial_expense','other_expense');
+GO
+
+-- ai.equipment_project_cost_year: THE detail view for "how much did we spend on machine X / item Y in project Z in year W".
+-- One row per fiscal year x contract(project) x machine x SL x cost class x level-6 expense item. Excludes the year-end 1117 -> 5111 transfer vouchers, so it
+-- gives the GROSS operating detail for every year (closed years included); the sum per contract/year equals contract_financials_year.contract_cost
+-- (minus the 5111 recognized lines that exist only as transfers). Amounts in Rial.
+CREATE OR ALTER VIEW ai.equipment_project_cost_year AS
+SELECT c.fiscal_year, c.contract_dl_code, MAX(c.contract_name) AS contract_name, MAX(c.contract_name_norm) AS contract_name_norm,
+       c.equipment_dl_code, MAX(c.equipment_name) AS equipment_name, MAX(c.equipment_name_norm) AS equipment_name_norm, MAX(c.equipment_plate) AS equipment_plate,
+       MAX(e.category) AS equipment_category, c.gl_code, c.sl_code, MAX(c.sl_title) AS sl_title, MAX(c.detail_category) AS detail_category,
+       MAX(c.cost_nature_key) AS cost_nature_key, c.pnl_class, c.expense_item_dl_code, MAX(c.expense_item_name) AS expense_item_name,
+       SUM(c.amount) AS amount, COUNT(*) AS line_count, COUNT(DISTINCT c.voucher_id) AS voucher_count
+FROM ai.cost_lines c
+LEFT JOIN ai.cost_centers e ON e.dl_code = c.equipment_dl_code
+WHERE c.is_wip_transfer = 0
+GROUP BY c.fiscal_year, c.contract_dl_code, c.equipment_dl_code, c.gl_code, c.sl_code, c.pnl_class, c.expense_item_dl_code;
 GO
 
 -- ai.cost_by_nature_year: contract/operating cost per fiscal year by cost nature (حقوق، اجاره، سوخت، پیمانکار …) merging the mirrored
@@ -238,7 +266,9 @@ GROUP BY l.voucher_id, l.voucher_number, l.fiscal_year, l.voucher_date, l.jalali
 HAVING SUM(CASE WHEN l.account_role = 'contract_revenue' THEN l.credit - l.debit ELSE 0 END) <> 0;
 GO
 
--- ai.counterparty_balances: cumulative balance (all history, valid states 1/4/32, incl. opening/closing entries which cancel) per counterparty (person/company
+-- ai.counterparty_balances (is_party_account = 0 marks GL 1117 work-in-progress COST lines that merely carry the person as a tafsili: they are expenses of a
+-- project, not a debt/receivable of that person - always filter is_party_account = 1 or an account_role when asked for a person's balance):
+-- cumulative balance (all history, valid states 1/4/32, incl. opening/closing entries which cancel) per counterparty (person/company
 -- tafsili) and balance-sheet SL. balance_net_debit > 0 = debit (they owe us / we paid in advance), < 0 = credit (we owe them).
 CREATE OR ALTER VIEW ai.counterparty_balances AS
 SELECT l.counterparty_dl_code, MAX(l.counterparty_name) AS counterparty_name, MAX(l.counterparty_party_id) AS party_id,
@@ -246,7 +276,8 @@ SELECT l.counterparty_dl_code, MAX(l.counterparty_name) AS counterparty_name, MA
        SUM(l.debit) AS total_debit, SUM(l.credit) AS total_credit, SUM(l.net_debit) AS balance_net_debit,
        CASE WHEN SUM(l.net_debit) > 0 THEN N'بدهکار' WHEN SUM(l.net_debit) < 0 THEN N'بستانکار' ELSE N'صفر' END AS balance_side,
        MIN(l.voucher_date) AS first_activity_date, MAX(l.voucher_date) AS last_activity_date,
-       COUNT(DISTINCT l.voucher_id) AS voucher_count
+       COUNT(DISTINCT l.voucher_id) AS voucher_count,
+       CASE WHEN l.gl_code = '1117' THEN 0 ELSE 1 END AS is_party_account
 FROM ai.ledger_lines l
 WHERE l.is_valid_for_reports = 1 AND l.counterparty_dl_code IS NOT NULL AND l.statement = 'balance_sheet'
 GROUP BY l.counterparty_dl_code, l.gl_code, l.sl_code;
@@ -374,20 +405,26 @@ GROUP BY l.facility_dl_code, l.sl_code;
 GO
 
 -- ai.equipment_cost_year: operating cost per machine/vehicle (cost centers 41/42/43/44) per fiscal year and cost nature (repairs, fuel, depreciation ...).
+-- TOTAL per machine only - it has NO project axis and NO level-6 item: for "in project X" or "parts / tyres / filters" use ai.equipment_project_cost_year.
+-- Built on that view, so closed years are no longer zero (the year-end WIP transfer vouchers are excluded).
 CREATE OR ALTER VIEW ai.equipment_cost_year AS
-SELECT c.fiscal_year, c.equipment_dl_code, MAX(c.equipment_name) AS equipment_name, e.category AS equipment_category,
-       c.sl_code, MAX(c.sl_title) AS sl_title, c.cost_nature_key, c.pnl_class,
-       SUM(c.amount) AS amount, COUNT(*) AS line_count
-FROM ai.cost_lines c
-LEFT JOIN ai.cost_centers e ON e.dl_code = c.equipment_dl_code
-WHERE c.equipment_dl_code IS NOT NULL
-GROUP BY c.fiscal_year, c.equipment_dl_code, e.category, c.sl_code, c.cost_nature_key, c.pnl_class;
+SELECT p.fiscal_year, p.equipment_dl_code, MAX(p.equipment_name) AS equipment_name, MAX(p.equipment_category) AS equipment_category,
+       p.sl_code, MAX(p.sl_title) AS sl_title, MAX(p.cost_nature_key) AS cost_nature_key, p.pnl_class,
+       SUM(p.amount) AS amount, SUM(p.line_count) AS line_count
+FROM ai.equipment_project_cost_year p
+WHERE p.equipment_dl_code IS NOT NULL
+GROUP BY p.fiscal_year, p.equipment_dl_code, p.sl_code, p.pnl_class;
 GO
 
--- ai.petty_cash_balances: petty-cash (تنخواه) balance per holder (SL 111003).
+-- ai.petty_cash_balances: petty-cash (تنخواه) balance per holder (SL 111003). balance > 0 = the holder still owes the company (advance not yet settled by
+-- invoices); balance < 0 = the company owes the holder (he paid from his own pocket after his account reached zero). The holder tafsili title is often
+-- COMPOSITE ("مدیر - دارنده"), so a name search can return more than one holder; holder_name_norm is the LIKE-friendly form.
 CREATE OR ALTER VIEW ai.petty_cash_balances AS
-SELECT counterparty_dl_code, MAX(counterparty_name) AS holder_name, SUM(debit) AS total_debit, SUM(credit) AS total_credit,
-       SUM(net_debit) AS balance, MAX(voucher_date) AS last_activity_date
+SELECT counterparty_dl_code, MAX(counterparty_name) AS holder_name,
+       LTRIM(RTRIM(REPLACE(REPLACE(REPLACE(REPLACE(MAX(counterparty_name), N'-', N' '), N'  ', N' '), N'  ', N' '), N'  ', N' '))) AS holder_name_norm,
+       SUM(debit) AS total_debit, SUM(credit) AS total_credit, SUM(net_debit) AS balance,
+       CASE WHEN SUM(net_debit) > 0 THEN N'دارنده به شرکت بدهکار است' WHEN SUM(net_debit) < 0 THEN N'شرکت به دارنده بدهکار است' ELSE N'تسویه' END AS balance_side,
+       MAX(voucher_date) AS last_activity_date
 FROM ai.ledger_lines
 WHERE is_valid_for_reports = 1 AND account_role = 'petty_cash'
 GROUP BY counterparty_dl_code;

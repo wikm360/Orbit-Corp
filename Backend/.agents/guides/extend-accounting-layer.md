@@ -26,8 +26,12 @@
 ## تغییر فایل طبقه‌بندی حسابدار
 Excel را در `docs/rahkaran/data/` جایگزین کنید → `python docs/rahkaran/tools/gen_taxonomy.py` (نیاز `RAHKARAN_SA_PASSWORD`؛ `15_taxonomy.sql` را می‌سازد) → `apply.py 15 20 30 40 descr` → `build_hints.py` → ingest. موارد مبهم در `docs/rahkaran/TAXONOMY_REVIEW.md` برای حسابدار.
 
+## golden set
+سؤال‌های سخت واقعی (از حسابدار) در `sql/rahkaran/examples/golden.py` با SQL مرجع؛ `python sql/rahkaran/examples/golden_expected.py` جواب‌های مرجع را از دیتابیس می‌سازد (`golden_expected.json`) و `eval_golden.py` را اجرا کنید. **سؤال golden را هرگز در `questions.py` (few-shot) یا نام‌های اختصاصی آن را در `notes.py` نیاورید** — ارزیابی را بی‌اعتبار می‌کند (تست `test_golden_questions_are_not_few_shot_examples` فقط تکرار عین سؤال را می‌گیرد).
+
 ## چک‌لیست
 - [ ] SQL view + descriptions + MONEY_COLUMNS + VIEW_HINTS
+- [ ] `eval_golden.py retrieval` بدون افت نسبت به قبل (و در صورت تغییر معنایی، `e2e`)
 - [ ] apply + smoke با reader
 - [ ] build_hints + ingest + eval
 - [ ] نمونه‌سؤال و QUESTIONS.md
