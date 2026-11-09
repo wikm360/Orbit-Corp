@@ -129,6 +129,16 @@ async def search_files(
     return await folder_service.search_documents(db, project.id, q)
 
 
+@router.get("/projects/{project_id}/folders", response_model=list[FolderRead])
+async def list_folders(
+    project: Project = Depends(require_project_access),
+    db: AsyncSession = Depends(get_db),
+):
+    """All folders in the project, flat."""
+    folders = await folder_service.load_folders(db, project.id)
+    return sorted(folders.values(), key=lambda f: f.name.lower())
+
+
 @router.post("/projects/{project_id}/folders", response_model=FolderRead, status_code=201)
 async def create_folder(
     body: FolderCreate,

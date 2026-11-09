@@ -29,6 +29,7 @@ export const documentsApi = {
   remove: (projectId: string, documentId: string) => apiRequest<void>(`/projects/${projectId}/documents/${documentId}`, { method: "DELETE" }),
 
   // File manager (project scope)
+  listFolders: (projectId: string) => apiRequest<Folder[]>(`/projects/${projectId}/folders`),
   listFiles: (projectId: string, folderId: string | null) =>
     apiRequest<FolderListing>(`/projects/${projectId}/files${folderId ? `?folder_id=${encodeURIComponent(folderId)}` : ""}`),
   searchFiles: (projectId: string, query: string) =>
