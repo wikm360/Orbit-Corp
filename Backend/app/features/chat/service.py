@@ -199,6 +199,9 @@ async def get_or_create_personal_conversation(
     return conversation
 
 
+_SSE_HEARTBEAT_SECONDS = 10
+
+
 def _sse_event(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
@@ -263,12 +266,20 @@ async def _stream_chat_events(
         return await _agent_engine.run_agent_loop(db, conversation, context, on_agent_event)
 
     engine_task = asyncio.create_task(run_engine())
+    loop = asyncio.get_running_loop()
+    last_sent = loop.time()
     while not engine_task.done():
         try:
             event, data = await asyncio.wait_for(event_queue.get(), timeout=0.08)
             yield _sse_event(event, data)
+            last_sent = loop.time()
         except asyncio.TimeoutError:
-            pass
+            # Heartbeat: tools like ask_accounting_db can be silent for minutes; idle
+            # connections get cut by proxies (Next rewrite, Caddy, browsers). SSE comment
+            # lines are ignored by the client parser.
+            if loop.time() - last_sent >= _SSE_HEARTBEAT_SECONDS:
+                yield ": ping\n\n"
+                last_sent = loop.time()
 
     while not event_queue.empty():
         event, data = event_queue.get_nowait()
