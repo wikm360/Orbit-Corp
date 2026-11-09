@@ -129,3 +129,20 @@ class LexiconWrite(BaseModel):
         if not cleaned or any(len(p) > 80 for p in cleaned):
             raise ValueError("phrases must be non-empty and at most 80 characters")
         return cleaned
+
+
+class CompanyNarrativeEntry(BaseModel):
+    company_name: str | None = None
+    raw_text: str = ""
+    items: list[str] = []
+    updated_at: str | None = None
+
+
+class NarrativesUpdate(BaseModel):
+    narratives: dict[str, CompanyNarrativeEntry]
+
+
+class GenerateNarrativeRequest(BaseModel):
+    company_id: str | None = None
+    company_name: str
+    raw_text: str

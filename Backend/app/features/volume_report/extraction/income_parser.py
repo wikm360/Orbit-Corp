@@ -120,6 +120,7 @@ def extract_site_name(rows: list[list[Any]], sheet_name: str) -> str:
             after = text.split("پروژه", 1)[1]
             after = re.split(r"\s+در\s+ماه\b", after, maxsplit=1)[0]
             name = re.sub(f"[{re.escape(_QUOTES)}]", "", after)
+            name = re.sub(r"^\s*ای\s+", "", name)  # plan sheets are titled "درآمد پروژه ای <name> در ماه …" ("پروژه ای" = "برنامه ای")
             name = strip_period_from_name(re.sub(r"\s+", " ", name).strip(" :-–"))
             if name:
                 return name

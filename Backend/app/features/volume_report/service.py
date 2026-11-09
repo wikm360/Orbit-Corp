@@ -456,7 +456,8 @@ async def get_results(db: AsyncSession, report: Report, group_by: str, include: 
     if "other" in include:
         body["other"] = [r for r in await line_rows(db, report, effect="unmatched", basis=basis, limit=1000)] + \
                         [r for r in await line_rows(db, report, effect="site_kind_mismatch", basis=basis, limit=1000)] + \
-                        [r for r in await line_rows(db, report, effect="needs_input", basis=basis, limit=1000)]
+                        [r for r in await line_rows(db, report, effect="needs_input", basis=basis, limit=1000)] + \
+                        [r for r in await line_rows(db, report, effect="excluded", basis=basis, limit=1000)]  # nothing is hidden: legacy "removed" rows are "other"
     if "problems" in include:
         body["problems"] = [r for r in await line_rows(db, report, effect="unit_mismatch", basis=basis, limit=1000)] + \
                            [r for r in await line_rows(db, report, effect="no_conversion", basis=basis, limit=1000)]
@@ -521,6 +522,7 @@ async def report_detail(db: AsyncSession, report: Report) -> dict:
         "id": report.id, "project_id": report.project_id, "title": report.title, "period_type": report.period_type.value,
         "period_start": report.period_start, "period_end": report.period_end, "period_label": report.period_label,
         "status": report.status.value, "progress": report.progress, "version": report.version,
+        "narratives": report.narratives or {},
         "supersedes_id": report.supersedes_id, "published_at": report.published_at, "error_message": report.error_message,
         "files": [{"id": f.id, "document_id": f.document_id, "filename": f.filename, "company_id": f.company_id,
                    "status": f.status.value, "error_message": f.error_message} for f in files],
@@ -693,3 +695,76 @@ async def upsert_lexicon(db: AsyncSession, payload, token_in_path: str | None = 
     await db.commit()
     await db.refresh(entry)
     return _lexicon_read(entry)
+
+
+async def get_narratives(db: AsyncSession, report: Report) -> dict:
+    return report.narratives or {}
+
+
+async def update_narratives(db: AsyncSession, report: Report, narratives_data: dict) -> dict:
+    cleaned: dict[str, dict] = {}
+    for key, val in narratives_data.items():
+        if isinstance(val, dict):
+            cleaned[key] = val
+        elif hasattr(val, "model_dump"):
+            cleaned[key] = val.model_dump()
+        else:
+            cleaned[key] = dict(val)
+    report.narratives = cleaned
+    await db.commit()
+    await db.refresh(report)
+    return report.narratives
+
+
+async def generate_company_narrative(
+    company_name: str,
+    raw_text: str,
+) -> dict:
+    from app.providers.llm_provider import get_vr_llm_provider
+    provider = get_vr_llm_provider()
+
+    system_prompt = (
+        "شما یک دستیار هوشمند سازمانی برای تدوین «گزارش عملکرد پروژه‌های عمرانی» هلدینگ جهاد نصر کرمان هستید.\n"
+        "وظیفه شما این است که یادداشت‌های خام دریافتی از مدیران پروژه را تمیز، ویرایش و ساختاردهی کنید تا دقیقاً با سبک، لحن و قالب گزارش‌های مدیریتی هلدینگ همخوان باشد.\n\n"
+        "قواعد ساختاری و نگارشی:\n"
+        "۱. خروجی باید فهرستی از بندهای مهم عملکرد (Bullet points) باشد. هر بند باید یک اقدام، رویداد یا پیشرفت کلیدی را بیان کند.\n"
+        "۲. موضوعات مهم شامل موارد زیر است:\n"
+        "   - پروژه‌های اجرایی و پیشرفت احجام و لایه‌ها (مثلاً: اتمام لایه اساس، عملیات خاکریزی/خاکبرداری، لوله‌گذاری، پیشرفت فیزیکی).\n"
+        "   - مناقصات و مزایدات (اخذ اسناد مناقصه، شرکت در مناقصه، ارسال اسناد ارزیابی کیفی، تکمیل پیشنهاد قیمت).\n"
+        "   - تحویل‌ها و قراردادها (تحویل موقت یا قطعی، ابلاغ ماده ۴۸، آزادسازی ضمانت‌نامه‌ها، تنظیم یا ابلاغ قراردادهای جدید).\n"
+        "۳. اگر یک بند دارای چند زیرمجموعه (مثلاً چند فقره مناقصه یا قرارداد) است، از عنوان کلی به همراه شماره‌گذاری ۱، ۲، ۳ در خطوط بعد استفاده کنید. مثال:\n"
+        "اخذ اسناد چهار فقره مناقصه:\n"
+        "۱- گردنه خرمافروشان\n"
+        "۲- نیوجرسی محور زرند بافق\n"
+        "۳- نیوجرسی محور راهور دیهوک\n"
+        "۴- تامین نیوجرسی در ۴ قطعه ۵ کیلومتری در محور زاهدان خاش\n"
+        "۴. لحن باید کاملاً رسمی، مدیریتی، فاقد حواشی، کوتاه، گویا و دقیق باشد.\n"
+        "۵. هیچ توضیح اضافه، مقدمه یا موخره‌ای ننویسید. فقط بندهای متن را بنویسید (بین هر بند اصلی یک خط خالی بگذارید)."
+    )
+
+    user_prompt = f"نام شرکت: {company_name}\n\nیادداشت‌های خام:\n{raw_text}"
+
+    res = await provider.complete([
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ])
+
+    content = (res.get("content") or "").strip()
+    raw_blocks = [b.strip() for b in content.split("\n\n") if b.strip()]
+    items: list[str] = []
+    for block in raw_blocks:
+        lines = block.splitlines()
+        first_line = lines[0].lstrip("-•* ").strip()
+        cleaned_block = "\n".join([first_line, *lines[1:]]).strip()
+        if cleaned_block:
+            items.append(cleaned_block)
+
+    if not items and content:
+        items = [content]
+
+    return {
+        "company_name": company_name,
+        "raw_text": raw_text,
+        "cleaned_text": content,
+        "items": items,
+    }

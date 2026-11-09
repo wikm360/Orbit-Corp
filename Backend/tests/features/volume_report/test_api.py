@@ -364,3 +364,81 @@ async def test_forecast_sheet_is_stored_separately_and_compared_with_next_report
     assert cmp["previous_report"]["id"] == first and cmp["previous_report"]["adjacent"] is True
     row = next(x for x in cmp["rows"] if x["item_key"] == "concrete")
     assert Decimal(row["planned"]) == 40 and Decimal(row["actual"]) == 30 and Decimal(row["variance"]) == -10 and Decimal(row["achievement_pct"]) == Decimal("75.0")
+
+
+async def test_other_is_remembered_across_reports_and_removed_rows_stay_visible(client, tmp_path):
+    _, leader, leader_id, project_id, _ = await _world(client, "other")
+    company = await _company(client, leader)
+    rows = [(None, "بتن ریزی پی", "متر مکعب", 25), (None, "کارهای متفرقه خاص", "متر مکعب", 7)]
+    first = await _new_report(client, leader, project_id, await _document(tmp_path, project_id, leader_id, rows=rows), company)
+    g = await _groups(client, leader, first)
+    # «سایر» with the default (global) memory; same call shape the UI now sends
+    body = {"items": [_confirm(g["بتن ریزی پی"], "concrete"),
+                      {"group_key": g["کارهای متفرقه خاص"]["group_key"], "disposition": "unmatched", "role": "na", "remember_scope": "global"}]}
+    assert (await client.post(f"{API}/{first}/review/confirm", json=body, headers=leader)).status_code == 200
+    other = (await client.get(f"{API}/{first}/results?group_by=holding&include=other", headers=leader)).json()["other"]
+    assert [o["description"] for o in other] == ["کارهای متفرقه خاص"]
+
+    second = await _new_report(client, leader, project_id, await _document(tmp_path, project_id, leader_id, rows=rows, name="b.xlsx"), company)
+    g2 = await _groups(client, leader, second)
+    assert g2["کارهای متفرقه خاص"]["disposition"] == "unmatched" and g2["کارهای متفرقه خاص"]["confirmed"]
+    assert g2["کارهای متفرقه خاص"]["reason"] == "memory_exact"
+
+    # a legacy "excluded" row is never hidden: it is listed with the other rows
+    legacy = {"items": [{"group_key": g2["کارهای متفرقه خاص"]["group_key"], "exclude_reason": "other", "role": "na", "remember_scope": "line"}]}
+    assert (await client.post(f"{API}/{second}/review/confirm", json=legacy, headers=leader)).status_code == 200
+    other2 = (await client.get(f"{API}/{second}/results?group_by=holding&include=other", headers=leader)).json()["other"]
+    assert [(o["description"], o["effect"]) for o in other2] == [("کارهای متفرقه خاص", "excluded")]
+
+
+async def test_narratives_crud_and_generate(client, tmp_path, monkeypatch):
+    _, leader, leader_id, project_id, _ = await _world(client, "narratives")
+    company = await _company(client, leader)
+    report_id = await _new_report(client, leader, project_id, await _document(tmp_path, project_id, leader_id), company)
+
+    # 1. GET narratives initially empty
+    res = await client.get(f"{API}/{report_id}/narratives", headers=leader)
+    assert res.status_code == 200
+    assert res.json() == {}
+
+    # 2. PUT narratives
+    payload = {
+        "narratives": {
+            company: {
+                "company_name": "شرکت محور گستر نصر",
+                "raw_text": "پروژه زاهدان خاش لایه اساس تموم شد",
+                "items": ["پروژه زاهدان خاش ۱۵۰۰ متر طول در مرحله اتمام لایه اساس"],
+            }
+        }
+    }
+    put_res = await client.put(f"{API}/{report_id}/narratives", json=payload, headers=leader)
+    assert put_res.status_code == 200
+    assert company in put_res.json()
+    assert put_res.json()[company]["items"] == ["پروژه زاهدان خاش ۱۵۰۰ متر طول در مرحله اتمام لایه اساس"]
+
+    # 3. GET report detail contains narratives
+    detail_res = await client.get(f"{API}/{report_id}", headers=leader)
+    assert detail_res.status_code == 200
+    assert detail_res.json()["narratives"][company]["items"] == ["پروژه زاهدان خاش ۱۵۰۰ متر طول در مرحله اتمام لایه اساس"]
+
+    # 4. POST generate narrative with mocked provider
+    class _StubProvider:
+        async def complete(self, messages, *args, **kwargs):
+            return {
+                "content": "پروژه زاهدان خاش در مرحله اتمام لایه اساس\n\nاخذ اسناد مناقصه گردنه خرمافروشان",
+                "tool_calls": [],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 20},
+            }
+
+    from app.providers import llm_provider
+    monkeypatch.setattr(llm_provider, "get_vr_llm_provider", lambda: _StubProvider())
+
+    gen_res = await client.post(
+        f"{API}/{report_id}/narratives/generate",
+        json={"company_id": company, "company_name": "شرکت جهاد نصر سیستان", "raw_text": "زاهدان خاش لایه اساس تمام شد"},
+        headers=leader,
+    )
+    assert gen_res.status_code == 200
+    data = gen_res.json()
+    assert len(data["items"]) == 2
+    assert "پروژه زاهدان خاش" in data["items"][0]

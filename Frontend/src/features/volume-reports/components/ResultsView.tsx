@@ -14,7 +14,7 @@ import { Card, EmptyState, ErrorBox, LoadingBlock, UnconfirmedMark } from "./com
 import { DrillDown, type DrillTarget } from "./DrillDown";
 import { ResultsChart } from "./ResultsChart";
 
-const SCOPES: { id: ResultScope; label: string }[] = [{ id: "holding", label: "هلدینگ" }, { id: "company", label: "شرکت" }, { id: "site", label: "کارگاه" }];
+const SCOPES: { id: ResultScope; label: string }[] = [{ id: "holding", label: "هلدینگ" }, { id: "company", label: "شرکت" }, { id: "site", label: "پروژه" }];
 
 function ProblemTable({ title, hint, lines, tone }: { title: string; hint: string; lines: LineRow[]; tone: "amber" | "red" | "slate" }) {
   const [open, setOpen] = useState(tone !== "slate");
@@ -31,7 +31,7 @@ function ProblemTable({ title, hint, lines, tone }: { title: string; hint: strin
         <div className="mt-3 overflow-x-auto rounded-xl bg-white">
           <table className="w-full min-w-[640px] text-xs">
             <thead className="bg-slate-50 text-slate-600">
-              <tr>{["شرح (نام اصلی)", "کارگاه", "مقدار و واحد اصلی", "وضعیت", "منبع"].map((h) => <th key={h} className="px-2 py-2 text-start font-medium">{h}</th>)}</tr>
+              <tr>{["شرح (نام اصلی)", "پروژه", "مقدار و واحد اصلی", "وضعیت", "منبع"].map((h) => <th key={h} className="px-2 py-2 text-start font-medium">{h}</th>)}</tr>
             </thead>
             <tbody>
               {lines.map((l) => (
@@ -144,7 +144,7 @@ export function ResultsView({ reportId, catalog, refreshKey }: { reportId: strin
           <table className="w-full min-w-[720px] text-xs">
             <thead className="bg-slate-50 text-slate-600">
               <tr>
-                <th className="sticky start-0 bg-slate-50 px-3 py-2 text-start font-medium">{scope === "site" ? "کارگاه" : "شرکت"}</th>
+                <th className="sticky start-0 bg-slate-50 px-3 py-2 text-start font-medium">{scope === "site" ? "پروژه" : "شرکت"}</th>
                 {visibleItems.map((i) => <th key={i.key} className="px-2 py-2 text-start font-medium">{i.title_fa}<div className="font-normal text-slate-400">{unitLabel(i.output_unit)}</div></th>)}
               </tr>
             </thead>

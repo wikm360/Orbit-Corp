@@ -254,3 +254,15 @@ def test_legacy_xls_is_read_with_xlrd(tmp_path):
     result = extract_file(str(out / "src.xls"), LEX)
     assert [(l.description_raw, l.quantity) for s in result.sheets for l in s.lines] == [("اجرای اساس", Decimal("563"))]
     assert {e["sheet"]: e["reason"] for e in result.sheet_log}["درآمد پنهان"] == "hidden"
+
+
+def test_plan_sheet_title_with_project_ai_keeps_the_same_site_name_as_the_actual_sheet():
+    wb = Workbook()
+    add_income_sheet(wb, "درآمد معابر", [(None, "اجرای اساس", "متر مکعب", 5)], title="گزارش درآمد پروژه معابر سیرجان در ماه آبان")
+    add_income_sheet(wb, "درآمد برنامه ای معابر", [(None, "اجرای اساس", "متر مکعب", 9)],
+                     title="درآمد پروژه ای  معابر سیرجان در ماه آبان  (ماه آتی نسبت به ماه گزارش)")
+    import tempfile
+    from pathlib import Path
+    with tempfile.TemporaryDirectory() as d:
+        result = extract_file(save(wb, Path(d)), LEX)
+    assert [(s.basis, s.site_name) for s in result.sheets] == [("actual", "معابر سیرجان"), ("planned", "معابر سیرجان")]

@@ -187,17 +187,22 @@ const group = (over = {}) => ({
   disposition: 'counted', item_key: 'base', role: 'execute', exclude_reason: null, source: 'agent', confirmed: false, reason: null, confidence: 0.82, ...over,
 });
 
-test('bulk confirm sends only selected rows that have a decision, mapping exclude/unmatched correctly', () => {
+test('bulk confirm sends only selected rows that have a decision, mapping «سایر»/duplicate correctly (no «remove from report»)', () => {
   const a = group({ group_key: 'a'.repeat(64) });
   const b = group({ group_key: 'b'.repeat(64), disposition: 'excluded', item_key: null, exclude_reason: 'surcharge', role: 'na' });
   const c = group({ group_key: 'c'.repeat(64), disposition: 'needs_input', item_key: null, role: null, source: 'system' });
   const d = group({ group_key: 'd'.repeat(64) });
-  const drafts = { [d.group_key]: { choice: 'unmatched', role: 'na', scope: 'global' } };
-  const { items, skipped } = review.buildBulkPayload([a, b, c, d], drafts, new Set([a.group_key, b.group_key, c.group_key, d.group_key]));
+  const e = group({ group_key: 'e'.repeat(64) });
+  const drafts = { [d.group_key]: { choice: 'unmatched', role: 'na', scope: 'global' }, [e.group_key]: { choice: 'duplicate', role: 'na', scope: 'line' } };
+  const { items, skipped } = review.buildBulkPayload([a, b, c, d, e], drafts, new Set([a.group_key, b.group_key, c.group_key, d.group_key, e.group_key]));
   assert.equal(skipped, 1); // c has no decision yet
   assert.deepEqual(items[0], { group_key: a.group_key, role: 'execute', remember_scope: 'global', item_key: 'base' });
-  assert.deepEqual(items[1], { group_key: b.group_key, role: 'na', remember_scope: 'global', exclude_reason: 'surcharge' });
-  assert.deepEqual(items[2], { group_key: d.group_key, role: 'na', remember_scope: 'line', disposition: 'unmatched' }); // never remembered globally
+  // a legacy "excluded" group now reads as «سایر» and is confirmed as such
+  assert.deepEqual(items[1], { group_key: b.group_key, role: 'na', remember_scope: 'global', disposition: 'unmatched' });
+  // «سایر» follows the memory scope the user picked (it used to be forced to "line")
+  assert.deepEqual(items[2], { group_key: d.group_key, role: 'na', remember_scope: 'global', disposition: 'unmatched' });
+  assert.deepEqual(items[3], { group_key: e.group_key, role: 'na', remember_scope: 'line', exclude_reason: 'duplicate' });
+  assert.equal(review.draftFromGroup(group({ disposition: 'excluded', item_key: null, exclude_reason: 'duplicate' })).choice, 'duplicate');
   assert.deepEqual(review.pendingGroups([a, group({ confirmed: true })]).length, 1);
   assert.equal(review.confidenceLabel(0.824), '82');
   assert.equal(review.confidenceLabel(null), '—');

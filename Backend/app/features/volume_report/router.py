@@ -12,7 +12,8 @@ from app.features.usage.service import ensure_quota
 from app.features.volume_report import activity, export, memory, questions, service
 from app.features.volume_report.models import Company, Conversion, Item, ItemRule, Report, ReportStatus, Site
 from app.features.volume_report.schemas import (
-    CompanyWrite, ConfirmRequest, ConversionWrite, FilesUpdate, ItemRuleWrite, ItemWrite, LexiconWrite, ReportCreate, ReportRead, SiteUpdate,
+    CompanyWrite, ConfirmRequest, ConversionWrite, FilesUpdate, GenerateNarrativeRequest, ItemRuleWrite, ItemWrite,
+    LexiconWrite, NarrativesUpdate, ReportCreate, ReportRead, SiteUpdate,
 )
 from app.features.volume_report.extraction.normalize import normalize_text
 from app.features.volume_report.seed import bump_catalog_version, ensure_seeded
@@ -391,6 +392,24 @@ async def trace(site_id: uuid.UUID | None = None, item_key: str = Query(...),
                 basis: str = Query("actual", pattern="^(actual|planned)$"),
                 report: Report = Depends(get_report_for_member), db: AsyncSession = Depends(get_db)):
     return await service.line_rows(db, report, site_id=site_id, item_key=item_key, effect="counted", basis=basis, limit=1000)
+
+
+@router.get("/{report_id}/narratives")
+async def get_narratives(report: Report = Depends(get_report_for_member), db: AsyncSession = Depends(get_db)):
+    return await service.get_narratives(db, report)
+
+
+@router.put("/{report_id}/narratives")
+async def update_narratives(payload: NarrativesUpdate, report: Report = Depends(get_report_for_member),
+                            db: AsyncSession = Depends(get_db)):
+    return await service.update_narratives(db, report, payload.narratives)
+
+
+@router.post("/{report_id}/narratives/generate")
+async def generate_narrative(payload: GenerateNarrativeRequest, report: Report = Depends(get_report_for_member),
+                             context: UserContext = Depends(get_current_user_context)):
+    ensure_quota(context.user)
+    return await service.generate_company_narrative(payload.company_name, payload.raw_text)
 
 
 @router.post("/{report_id}/publish", response_model=ReportRead)

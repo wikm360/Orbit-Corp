@@ -26,7 +26,17 @@ export interface ReportSummary {
 
 export interface ReportFileInfo { id: string; document_id: string | null; filename: string; company_id: string; status: "pending" | "parsed" | "failed"; error_message: string | null }
 export interface GateCause { code: string; count: number }
-export interface ReportDetail extends Omit<ReportSummary, "created_at" | "updated_at"> { files: ReportFileInfo[]; issues: GateCause[] }
+export interface CompanyNarrative {
+  company_name?: string;
+  raw_text: string;
+  items: string[];
+  updated_at?: string;
+}
+export interface ReportDetail extends Omit<ReportSummary, "created_at" | "updated_at"> {
+  files: ReportFileInfo[];
+  issues: GateCause[];
+  narratives?: Record<string, CompanyNarrative>;
+}
 
 export interface ReportCreate { project_id: string; title: string; period_type: PeriodType; period_start: string; period_end: string; period_label: string }
 export interface FileSelection { document_id: string; company_id: string }

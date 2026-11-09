@@ -8,17 +8,14 @@ import { ErrorBox, LoadingBlock } from "../components/common";
 import { runSoon } from "../lib/defer";
 import { formatQuantity, unitLabel } from "../lib/format";
 import { formatJalaliDate, formatWeekLabel, toFa } from "../lib/jalali";
-import type { CatalogItem, ReportDetail, ResultRow, ResultsResponse, SourceInfo } from "../types";
+import type { CatalogItem, CompanyNarrative, ReportDetail, ResultRow, ResultsResponse } from "../types";
 
 /** The slide canvas is 16in x 9in at 96dpi, so it prints 1:1 and is scaled down with CSS on screen (see globals.css). */
 const SLIDE_W = 1536;
 const SLIDE_H = 864;
 const NAVY = "#252850";
 const READY_STATUSES = new Set(["awaiting_user", "needs_review", "ready", "published"]);
-const MAX_METRIC_COLUMNS = 11;
-const COMPANY_ROWS_PER_SLIDE = 12;
-const CHART_BARS_MAX = 9;
-const SOURCE_ROWS_PER_SLIDE = 12;
+const NARRATIVE_COMPANIES_PER_SLIDE = 2;
 
 const LOGOS: { match: string[]; src: string; label: string }[] = [
   { match: ["فراگیر", "faragir"], src: "/volume-reports/logo_faragir.png", label: "فراگیر عمران نصر" },
@@ -35,22 +32,54 @@ function chunks<T>(items: T[], size: number): T[][] {
   return result;
 }
 
-/** Splits into the fewest, evenly sized groups of at most `max` entries. */
-function balancedChunks<T>(items: T[], max: number): T[][] {
-  if (!items.length) return [];
-  const parts = Math.ceil(items.length / max);
-  return chunks(items, Math.ceil(items.length / parts));
+interface ScorecardRow {
+  id: string;
+  name: string;
+  companyName?: string;
+  rows: Map<string, ResultRow>;
 }
 
-type CompanyGroup = { id: string; name: string; rows: Map<string, ResultRow> };
-
-function groupByCompany(rows: ResultRow[]): CompanyGroup[] {
-  const groups = new Map<string, CompanyGroup>();
+function groupByCompany(rows: ResultRow[], extraRows: ResultRow[] = []): ScorecardRow[] {
+  const groups = new Map<string, ScorecardRow>();
+  for (const row of [...rows, ...extraRows]) {
+    if (!row.company_id) continue;
+    if (!groups.has(row.company_id)) {
+      groups.set(row.company_id, {
+        id: row.company_id,
+        name: row.company ?? "بدون نام",
+        rows: new Map<string, ResultRow>(),
+      });
+    }
+  }
   for (const row of rows) {
     if (!row.company_id) continue;
-    const group = groups.get(row.company_id) ?? { id: row.company_id, name: row.company ?? "بدون نام", rows: new Map<string, ResultRow>() };
-    group.rows.set(row.item_key, row);
-    groups.set(row.company_id, group);
+    groups.get(row.company_id)?.rows.set(row.item_key, row);
+  }
+  return Array.from(groups.values()).sort((a, b) => a.name.localeCompare(b.name, "fa"));
+}
+
+function groupByProject(rows: ResultRow[], extraRows: ResultRow[] = []): ScorecardRow[] {
+  const groups = new Map<string, ScorecardRow>();
+  for (const row of [...rows, ...extraRows]) {
+    const id = row.site_id ?? row.site;
+    if (!id) continue;
+    if (!groups.has(id)) {
+      groups.set(id, {
+        id,
+        name: row.site ?? "بدون نام",
+        companyName: row.company ?? undefined,
+        rows: new Map<string, ResultRow>(),
+      });
+    }
+  }
+  for (const row of rows) {
+    const id = row.site_id ?? row.site;
+    if (!id) continue;
+    const g = groups.get(id);
+    if (g) {
+      g.rows.set(row.item_key, row);
+      if (!g.companyName && row.company) g.companyName = row.company;
+    }
   }
   return Array.from(groups.values()).sort((a, b) => a.name.localeCompare(b.name, "fa"));
 }
@@ -72,23 +101,40 @@ function CompanyMark({ name, size }: { name: string; size: number }) {
 
 interface SlideSpec { key: string; render: (page: string) => ReactNode }
 
-function Slide({ title, subtitle, page, period, children }: { title: string; subtitle?: string; page: string; period: string; children: ReactNode }) {
+function Slide({
+  title,
+  subtitle,
+  headerRight,
+  page,
+  period,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  headerRight?: ReactNode;
+  page: string;
+  period: string;
+  children: ReactNode;
+}) {
   return (
     <section className="presentation-slide-print">
       <div
-        className="slide-canvas flex flex-col bg-[#f7f7f5] px-14 pb-5 pt-10 text-slate-900"
+        className="slide-canvas flex flex-col bg-[#f7f7f5] px-8 pb-4 pt-6 text-slate-900"
         style={{ backgroundColor: "#f7f7f5", color: "#0f172a" }}
         data-slide-bg="#f7f7f5"
       >
-        <div className="mb-6 flex shrink-0 items-end justify-between gap-6 border-b-2 border-[#252850]/10 pb-4">
+        <div className="mb-4 flex shrink-0 items-end justify-between gap-6 border-b-2 border-[#252850]/10 pb-3">
           <div>
-            {subtitle && <p className="mb-1 text-[15px] font-semibold text-[#9b7a05]">{subtitle}</p>}
-            <h2 className="text-[36px] font-black leading-tight text-[#252850]">{title}</h2>
+            {subtitle && <p className="mb-1 text-[14px] font-semibold text-[#9b7a05]">{subtitle}</p>}
+            <h2 className="text-[32px] font-black leading-tight text-[#252850]">{title}</h2>
           </div>
-          <span className="mb-2 h-1.5 w-24 shrink-0 rounded-full bg-[#fed836]" />
+          <div className="mb-1.5 flex items-center gap-4">
+            {headerRight}
+            <span className="h-1.5 w-24 shrink-0 rounded-full bg-[#fed836]" />
+          </div>
         </div>
         <div className="flex min-h-0 flex-1 flex-col">{children}</div>
-        <div className="mt-3 flex shrink-0 items-center justify-between text-[13px] text-slate-400">
+        <div className="mt-2.5 flex shrink-0 items-center justify-between text-[13px] text-slate-400">
           <span>جهاد نصر کرمان · {period}</span>
           <span className="tabular-nums">{page}</span>
         </div>
@@ -116,82 +162,347 @@ function SummaryCard({ item, row }: { item: CatalogItem; row: ResultRow | undefi
   );
 }
 
-function ChartCard({ item, rows, total }: { item: CatalogItem; rows: ResultRow[]; total: ResultRow | undefined }) {
-  const title = item.key === "asphalt_total" ? "آسفالت" : item.title_fa;
-  const entries = groupByCompany(rows.filter((row) => row.item_key === item.key))
-    .map((company) => ({ company, row: company.rows.get(item.key)!, value: Number.parseFloat(company.rows.get(item.key)?.qty ?? "0") }))
-    .sort((a, b) => b.value - a.value)
-    .slice(0, CHART_BARS_MAX);
-  const maxValue = Math.max(0, ...entries.map((entry) => entry.value));
+function ScorecardTable({
+  entityType,
+  groups,
+  metrics,
+  holdingMap,
+  plannedHoldingMap,
+  plannedGroupMap,
+  showTotal,
+}: {
+  entityType: "company" | "project";
+  groups: ScorecardRow[];
+  metrics: CatalogItem[];
+  holdingMap: Map<string, ResultRow>;
+  plannedHoldingMap?: Map<string, ResultRow>;
+  plannedGroupMap?: Map<string, Map<string, ResultRow>>;
+  showTotal: boolean;
+}) {
+  const isCompany = entityType === "company";
   return (
-    <div className="flex min-h-0 flex-col rounded-3xl border border-[#252850]/10 bg-white p-6">
-      <div className="mb-4 flex items-baseline justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <h3 className="text-[22px] font-black text-[#252850]">{title}</h3>
-          {item.key === "asphalt_total" && (
-            <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[12px] font-semibold text-slate-500">بیندر + توپکا</span>
-          )}
-        </div>
-        <span className="text-[15px] text-slate-500">
-          {total ? <><b className="tabular-nums text-[#252850]">{formatQuantity(total.qty, item.decimals)}</b> {unitLabel(item.output_unit)}</> : unitLabel(item.output_unit)}
-        </span>
-      </div>
-      <div className="flex min-h-0 flex-1 flex-col justify-around gap-2">
-        {entries.map(({ company, row, value }, index) => {
-          const width = maxValue > 0 ? Math.max(value > 0 ? 1.5 : 0, (value / maxValue) * 100) : 0;
-          return (
-            <div key={company.id} className="grid grid-cols-[170px_1fr_110px] items-center gap-3 text-[15px]">
-              <span className="truncate font-medium text-slate-700">{company.name}</span>
-              <div className="h-4 overflow-hidden rounded-full bg-[#e7e8f0]">
-                <div className="h-full rounded-full" style={{ width: `${width}%`, backgroundColor: index === 0 ? NAVY : "#8d90b5" }} />
-              </div>
-              <span className="text-end font-bold tabular-nums text-[#252850]">{formatQuantity(row.qty, item.decimals)}</span>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function CompanyTable({ groups, metrics, holdingMap, showTotal }: { groups: CompanyGroup[]; metrics: CatalogItem[]; holdingMap: Map<string, ResultRow>; showTotal: boolean }) {
-  return (
-    <div className="overflow-hidden rounded-2xl border border-[#252850]/10 bg-white">
-      <table className="w-full table-fixed border-collapse text-[16px]">
+    <div className="overflow-hidden rounded-2xl border border-[#252850]/10 bg-white shadow-sm">
+      <table className="w-full table-fixed border-collapse text-[15px]">
         <thead className="bg-[#252850] text-white">
           <tr>
-            <th className="w-[230px] px-4 py-3 text-start text-[17px] font-bold">شرکت</th>
+            <th className="w-[210px] px-3.5 py-3 text-start text-[15px] font-bold">
+              {isCompany ? "شرکت" : "پروژه"}
+            </th>
             {metrics.map((item) => (
-              <th key={item.key} className="px-2 py-3 text-start text-[15px] font-semibold leading-snug">
-                {item.key === "asphalt_total" ? "آسفالت" : item.title_fa}
-                <span className="block text-[12px] font-normal text-white/60">{unitLabel(item.output_unit)}</span>
+              <th key={item.key} className="px-1.5 py-2.5 text-center text-[13.5px] font-semibold leading-snug">
+                <div className="truncate">{item.key === "asphalt_total" ? "آسفالت" : item.title_fa}</div>
+                <span className="block text-[11px] font-normal text-white/60">{unitLabel(item.output_unit)}</span>
               </th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {groups.map((group) => (
-            <tr key={group.id} className="h-[48px] border-t border-slate-100 odd:bg-white even:bg-slate-50">
-              <th scope="row" className="px-4 text-start font-bold text-slate-800">
-                <span className="flex items-center gap-3"><CompanyMark name={group.name} size={28} /><span className="truncate">{group.name}</span></span>
+          {groups.map((group) => {
+            const planGroup = plannedGroupMap?.get(group.id);
+            return (
+              <tr key={group.id} className="h-[46px] border-t border-slate-100 odd:bg-white even:bg-slate-50/70">
+                <th scope="row" className="px-3.5 text-start font-bold text-slate-800">
+                  {isCompany ? (
+                    <span className="flex items-center gap-2.5">
+                      <CompanyMark name={group.name} size={26} />
+                      <span className="truncate text-[14.5px]">{group.name}</span>
+                    </span>
+                  ) : (
+                    <div className="flex flex-col min-w-0">
+                      <span className="truncate text-[14.5px] font-bold text-slate-800">{group.name}</span>
+                      {group.companyName && (
+                        <span className="truncate text-[11.5px] font-normal text-slate-400">{group.companyName}</span>
+                      )}
+                    </div>
+                  )}
+                </th>
+                {metrics.map((item) => {
+                  const row = group.rows.get(item.key);
+                  const planRow = planGroup?.get(item.key);
+                  const hasPlan = planRow && Number.parseFloat(planRow.qty || "0") > 0;
+                  return (
+                    <td key={item.key} className="px-1 py-1 text-center tabular-nums">
+                      <div className="text-[14px] font-bold text-[#252850]">
+                        {row ? formatQuantity(row.qty, item.decimals) : <span className="text-slate-300 font-normal">—</span>}
+                      </div>
+                      {hasPlan && (
+                        <div className="text-[10.5px] font-medium text-slate-500">
+                          برنامه: {formatQuantity(planRow.qty, item.decimals)}
+                        </div>
+                      )}
+                    </td>
+                  );
+                })}
+              </tr>
+            );
+          })}
+          {showTotal && (
+            <tr className="h-[50px] border-t-2 border-[#252850] bg-[#fed836]/25">
+              <th scope="row" className="px-3.5 text-start text-[15.5px] font-black text-[#252850]">
+                جمع هلدینگ
               </th>
               {metrics.map((item) => {
-                const row = group.rows.get(item.key);
-                return <td key={item.key} className="px-2 font-semibold tabular-nums text-[#252850]">{row ? formatQuantity(row.qty, item.decimals) : <span className="text-slate-300">—</span>}</td>;
-              })}
-            </tr>
-          ))}
-          {showTotal && (
-            <tr className="h-[52px] border-t-2 border-[#252850] bg-[#fed836]/25">
-              <th scope="row" className="px-4 text-start text-[17px] font-black text-[#252850]">جمع هلدینگ</th>
-              {metrics.map((item) => {
                 const row = holdingMap.get(item.key);
-                return <td key={item.key} className="px-2 font-black tabular-nums text-[#252850]">{row ? formatQuantity(row.qty, item.decimals) : <span className="text-slate-300">—</span>}</td>;
+                const planRow = plannedHoldingMap?.get(item.key);
+                const hasPlan = planRow && Number.parseFloat(planRow.qty || "0") > 0;
+                return (
+                  <td key={item.key} className="px-1 py-1 text-center tabular-nums">
+                    <div className="text-[14.5px] font-black text-[#252850]">
+                      {row ? formatQuantity(row.qty, item.decimals) : <span className="text-slate-300 font-normal">—</span>}
+                    </div>
+                    {hasPlan && (
+                      <div className="text-[11px] font-bold text-[#9b7a05]">
+                        برنامه: {formatQuantity(planRow.qty, item.decimals)}
+                      </div>
+                    )}
+                  </td>
+                );
               })}
             </tr>
           )}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+interface CompanyContribution {
+  companyId: string;
+  companyName: string;
+  qty: number;
+  pct: number;
+  color: string;
+}
+
+interface ItemShareData {
+  item: CatalogItem;
+  totalQty: number;
+  contributions: CompanyContribution[];
+}
+
+const COMPANY_PALETTE: { match: string[]; color: string; label: string }[] = [
+  { match: ["محورگستر", "محور گستر", "mehvar"], color: "#252850", label: "محور گستر نصر" },
+  { match: ["آبادگران", "abadgaran"], color: "#d97706", label: "آبادگران رفاه نصر" },
+  { match: ["فراگیر", "faragir"], color: "#059669", label: "فراگیر عمران نصر" },
+  { match: ["گلومک", "golomak"], color: "#7c3aed", label: "گلومک سازه نصر" },
+  { match: ["سیستان", "sistan"], color: "#0284c7", label: "جهاد نصر سیستان" },
+  { match: ["تژه", "tezhe"], color: "#e11d48", label: "تژه نصر" },
+];
+
+const FALLBACK_COLORS = ["#252850", "#d97706", "#059669", "#7c3aed", "#0284c7", "#e11d48", "#0891b2", "#ea580c", "#4f46e5", "#16a34a"];
+
+function getCompanyColor(name: string, index = 0): string {
+  const normalized = name.toLocaleLowerCase("fa");
+  const found = COMPANY_PALETTE.find((item) => item.match.some((part) => normalized.includes(part)));
+  return found?.color ?? FALLBACK_COLORS[index % FALLBACK_COLORS.length]!;
+}
+
+function DonutChart({
+  contributions,
+  totalFormatted,
+  unit,
+  size = 146,
+  strokeWidth = 18,
+}: {
+  contributions: CompanyContribution[];
+  totalFormatted: string;
+  unit: string;
+  size?: number;
+  strokeWidth?: number;
+}) {
+  const center = size / 2;
+  const radius = center - strokeWidth / 2 - 2;
+  const circumference = 2 * Math.PI * radius;
+  const hasMultiple = contributions.length > 1;
+  const gap = hasMultiple ? 2.5 : 0;
+
+  const slices: { c: CompanyContribution; strokeLength: number; dashoffset: number }[] = [];
+  let offset = 0;
+  for (const c of contributions) {
+    const sliceLength = (c.pct / 100) * circumference;
+    const strokeLength = Math.max(sliceLength - gap, 1);
+    slices.push({ c, strokeLength, dashoffset: -offset });
+    offset += sliceLength;
+  }
+
+  return (
+    <div className="relative flex items-center justify-center" style={{ width: size, height: size }}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="overflow-visible">
+        {/* Background track */}
+        <circle
+          cx={center}
+          cy={center}
+          r={radius}
+          fill="none"
+          stroke="#f1f5f9"
+          strokeWidth={strokeWidth}
+        />
+
+        {/* Slices */}
+        {slices.map(({ c, strokeLength, dashoffset }) => (
+          <circle
+            key={c.companyId}
+            cx={center}
+            cy={center}
+            r={radius}
+            fill="none"
+            stroke={c.color}
+            strokeWidth={strokeWidth}
+            strokeDasharray={`${strokeLength} ${circumference - strokeLength}`}
+            strokeDashoffset={dashoffset}
+            transform={`rotate(-90 ${center} ${center})`}
+            className="transition-all"
+          >
+            <title>{`${c.companyName}: %${toFa(Math.round(c.pct))}`}</title>
+          </circle>
+        ))}
+      </svg>
+
+      {/* Center content */}
+      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-2 text-center">
+        <span className="text-[10px] font-semibold text-slate-400">جمع کل</span>
+        <span className="text-[15px] font-black leading-tight text-[#252850] tabular-nums">
+          {totalFormatted}
+        </span>
+        <span className="text-[10px] font-bold text-slate-400">{unit}</span>
+      </div>
+    </div>
+  );
+}
+
+function DonutShareCard({ data }: { data: ItemShareData }) {
+  const { item, totalQty, contributions } = data;
+  const title = item.key === "asphalt_total" ? "آسفالت" : item.title_fa;
+  const unit = unitLabel(item.output_unit);
+  const formattedTotal = formatQuantity(totalQty.toString(), item.decimals);
+
+  return (
+    <div className="flex min-h-0 flex-col justify-between rounded-3xl border border-[#252850]/10 bg-white p-4 shadow-sm">
+      {/* Header */}
+      <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+        <div className="flex items-center gap-2">
+          <span className="text-[16px] font-black text-[#252850]">{title}</span>
+          {item.key === "asphalt_total" && (
+            <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[10.5px] font-semibold text-slate-500">
+              بیندر + توپکا
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Donut Chart */}
+      <div className="my-2.5 flex items-center justify-center">
+        <DonutChart
+          contributions={contributions}
+          totalFormatted={formattedTotal}
+          unit={unit}
+          size={146}
+          strokeWidth={18}
+        />
+      </div>
+
+      {/* Company Share Pills */}
+      <div className="flex flex-wrap items-center justify-center gap-1.5 pt-1">
+        {contributions.length === 0 ? (
+          <span className="text-[11.5px] text-slate-400">فاقد عملکرد در این دوره</span>
+        ) : (
+          contributions.map((c) => (
+            <div
+              key={c.companyId}
+              className="flex items-center gap-1.5 rounded-full border border-slate-200/70 bg-slate-50/90 px-2.5 py-0.5 shadow-2xs"
+            >
+              <span
+                className="h-2 w-2 shrink-0 rounded-full"
+                style={{ backgroundColor: c.color }}
+              />
+              <span className="max-w-[110px] truncate text-[11.5px] font-bold text-slate-700">
+                {c.companyName}
+              </span>
+              <span className="text-[12px] font-black tabular-nums" style={{ color: c.color }}>
+                %{toFa(Math.round(c.pct))}
+              </span>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function getCompanyNarrativeItems(narrative?: CompanyNarrative): string[] {
+  if (!narrative) return [];
+  if (Array.isArray(narrative.items) && narrative.items.length > 0) {
+    const cleaned = narrative.items
+      .map((item) => (typeof item === "string" ? item.trim() : ""))
+      .filter(Boolean);
+    if (cleaned.length > 0) return cleaned;
+  }
+  if (typeof narrative.raw_text === "string" && narrative.raw_text.trim()) {
+    return [narrative.raw_text.trim()];
+  }
+  return [];
+}
+
+function CompanyNarrativeCard({
+  company,
+  index,
+  items,
+}: {
+  company: ScorecardRow;
+  index: number;
+  items: string[];
+}) {
+  const accentColor = getCompanyColor(company.name, index);
+
+  return (
+    <div className="flex h-full flex-col overflow-hidden rounded-3xl border border-slate-200/90 bg-white shadow-sm">
+      {/* Top accent bar */}
+      <div className="h-2 w-full shrink-0" style={{ backgroundColor: accentColor }} />
+
+      {/* Card Header */}
+      <div className="flex shrink-0 items-center justify-between border-b border-slate-100 bg-slate-50/60 px-6 py-4">
+        <div className="flex items-center gap-3.5">
+          <CompanyMark name={company.name} size={36} />
+          <div>
+            <h3 className="text-[19px] font-bold text-slate-900 leading-tight">{company.name}</h3>
+            <span className="text-[12px] text-slate-400">گزارش اقدامات و پیشرفت پروژه‌ها</span>
+          </div>
+        </div>
+        <div
+          className="flex h-9 w-9 items-center justify-center rounded-2xl text-[14px] font-black text-white shadow-xs"
+          style={{ backgroundColor: accentColor }}
+        >
+          {toFa(String(index + 1).padStart(2, "0"))}
+        </div>
+      </div>
+
+      {/* Bullets List */}
+      <div className="flex-1 overflow-y-auto p-6 space-y-4">
+        {items.map((item, i) => {
+          const lines = item.split("\n").map((l) => l.trim()).filter(Boolean);
+          const mainTitle = lines[0] ?? "";
+          const subLines = lines.slice(1);
+
+          return (
+            <div key={i} className="flex items-start gap-3 text-[14.5px] leading-relaxed text-slate-700">
+              <span
+                className="mt-2 h-2.5 w-2.5 shrink-0 rounded-full"
+                style={{ backgroundColor: accentColor }}
+              />
+              <div className="flex-1 min-w-0">
+                <p className="font-semibold text-slate-800">{mainTitle}</p>
+                {subLines.length > 0 && (
+                  <div className="mt-1.5 space-y-1 ps-2 text-[13.5px] text-slate-600">
+                    {subLines.map((sub, sIdx) => (
+                      <p key={sIdx} className="leading-normal">{sub}</p>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -262,7 +573,9 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
   const [holding, setHolding] = useState<ResultsResponse | null>(null);
   const [companyRows, setCompanyRows] = useState<ResultRow[]>([]);
   const [siteRows, setSiteRows] = useState<ResultRow[]>([]);
-  const [sources, setSources] = useState<SourceInfo[]>([]);
+  const [holdingPlanned, setHoldingPlanned] = useState<ResultsResponse | null>(null);
+  const [companyPlannedRows, setCompanyPlannedRows] = useState<ResultRow[]>([]);
+  const [sitePlannedRows, setSitePlannedRows] = useState<ResultRow[]>([]);
   const [error, setError] = useState<unknown>(null);
   const [exporting, setExporting] = useState<{ done: number; total: number } | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
@@ -271,20 +584,33 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [detail, items, holdingResult, companyResult, siteResult, sourceFiles] = await Promise.all([
+      const [
+        detail,
+        items,
+        holdingResult,
+        companyResult,
+        siteResult,
+        companyPlannedResult,
+        holdingPlannedResult,
+        sitePlannedResult,
+      ] = await Promise.all([
         volumeReportApi.get(reportId),
         volumeReportApi.catalog(),
         volumeReportApi.results(reportId, "holding"),
         volumeReportApi.results(reportId, "company"),
         volumeReportApi.results(reportId, "site"),
-        volumeReportApi.sources(reportId),
+        volumeReportApi.results(reportId, "company", [], "planned").catch(() => null),
+        volumeReportApi.results(reportId, "holding", [], "planned").catch(() => null),
+        volumeReportApi.results(reportId, "site", [], "planned").catch(() => null),
       ]);
       setReport(detail);
       setCatalog(items);
       setHolding(holdingResult);
       setCompanyRows(companyResult.rows);
       setSiteRows(siteResult.rows);
-      setSources(sourceFiles);
+      setCompanyPlannedRows(companyPlannedResult?.rows ?? []);
+      setHoldingPlanned(holdingPlannedResult ?? null);
+      setSitePlannedRows(sitePlannedResult?.rows ?? []);
     } catch (reason) {
       setError(reason);
     }
@@ -312,9 +638,13 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
     const EXCLUDED_ITEM_KEYS = new Set(["asphalt_binder", "asphalt_topka"]);
     const visibleItems = catalog.filter((item) => (!item.is_rollup || item.key === "asphalt_total") && !EXCLUDED_ITEM_KEYS.has(item.key));
     const holdingMap = new Map(holding.rows.map((row) => [row.item_key, row]));
-    const companies = groupByCompany(companyRows);
-    const siteCount = new Set(siteRows.map((row) => row.site_id).filter(Boolean)).size;
+    const holdingPlannedMap = new Map((holdingPlanned?.rows ?? []).map((row) => [row.item_key, row]));
+    const companies = groupByCompany(companyRows, companyPlannedRows);
+    const projects = groupByProject(siteRows, sitePlannedRows);
     const period = weekSubtitle || report.period_label;
+    const hasAnyReportPlanned =
+      companyPlannedRows.some((r) => Number.parseFloat(r.qty || "0") > 0) ||
+      sitePlannedRows.some((r) => Number.parseFloat(r.qty || "0") > 0);
     const result: SlideSpec[] = [];
 
     result.push({
@@ -327,7 +657,7 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
             data-slide-bg={NAVY}
           >
             <div className="absolute inset-y-0 start-0 w-4 bg-[#fed836]" />
-            <div className="flex min-w-0 flex-1 flex-col justify-center ps-24 pe-12">
+            <div className="flex min-w-0 flex-1 flex-col justify-center ps-14 pe-8">
               <div className="mb-4 inline-flex items-center gap-2">
                 <span className="h-2.5 w-2.5 rounded-full bg-[#fed836]" />
                 <span className="text-[20px] font-bold text-[#fed836]">گزارش مدیریتی احجام عملیات اجرایی</span>
@@ -339,7 +669,7 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
                 <span className="text-[18px] text-white/60">{formatJalaliDate(report.period_start)} تا {formatJalaliDate(report.period_end)}</span>
               </div>
             </div>
-            <div className="flex w-[44%] items-center justify-center pe-16">
+            <div className="flex w-[44%] items-center justify-center pe-10">
               <div className="flex items-center justify-center gap-8 rounded-[40px] bg-white p-8 shadow-2xl">
                 <div className="flex items-center justify-center">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -375,7 +705,7 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
 
     const overviewStats = [
       { label: "شرکت‌های دارای عملکرد", value: toFa(companies.length) },
-      { label: "کارگاه‌های دارای عملکرد", value: toFa(siteCount) },
+      { label: "پروژه‌های دارای عملکرد", value: toFa(projects.length) },
     ];
     const logoCols = companies.length > 6 ? 4 : 3;
     result.push({
@@ -415,83 +745,241 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
       ),
     });
 
-    const chartItems = visibleItems.filter((item) => companyRows.some((row) => row.item_key === item.key && Number.parseFloat(row.qty) > 0));
-    const perSlide = companies.length > 6 ? 4 : 6;
-    const chartPages = chunks(chartItems, perSlide);
-    chartPages.forEach((itemSet, pageIndex) => {
+    const plannedCompanyGroupMap = new Map<string, Map<string, ResultRow>>();
+    for (const row of companyPlannedRows) {
+      if (!row.company_id) continue;
+      let sub = plannedCompanyGroupMap.get(row.company_id);
+      if (!sub) {
+        sub = new Map();
+        plannedCompanyGroupMap.set(row.company_id, sub);
+      }
+      sub.set(row.item_key, row);
+    }
+
+    const plannedProjectGroupMap = new Map<string, Map<string, ResultRow>>();
+    for (const row of sitePlannedRows) {
+      const id = row.site_id ?? row.site;
+      if (!id) continue;
+      let sub = plannedProjectGroupMap.get(id);
+      if (!sub) {
+        sub = new Map();
+        plannedProjectGroupMap.set(id, sub);
+      }
+      sub.set(row.item_key, row);
+    }
+
+    const activeItemKeys = new Set([
+      ...holding.rows.filter((r) => Number.parseFloat(r.qty || "0") > 0).map((r) => r.item_key),
+      ...(holdingPlanned?.rows ?? []).filter((r) => Number.parseFloat(r.qty || "0") > 0).map((r) => r.item_key),
+      ...companyRows.filter((r) => Number.parseFloat(r.qty || "0") > 0).map((r) => r.item_key),
+      ...companyPlannedRows.filter((r) => Number.parseFloat(r.qty || "0") > 0).map((r) => r.item_key),
+      ...siteRows.filter((r) => Number.parseFloat(r.qty || "0") > 0).map((r) => r.item_key),
+      ...sitePlannedRows.filter((r) => Number.parseFloat(r.qty || "0") > 0).map((r) => r.item_key),
+    ]);
+    const filteredMetrics = visibleItems.filter((item) => activeItemKeys.has(item.key));
+    const tableMetrics = filteredMetrics.length ? filteredMetrics : visibleItems;
+
+    const tableLegend = hasAnyReportPlanned ? (
+      <div className="flex items-center gap-3 rounded-full border border-[#252850]/10 bg-white/90 px-3.5 py-1 text-[12px] font-semibold text-slate-700 shadow-sm">
+        <span className="flex items-center gap-1.5">
+          <span className="h-2.5 w-2.5 rounded-full bg-[#252850]" />
+          <span>عملکرد واقعی</span>
+        </span>
+        <span className="h-3 w-px bg-slate-300" />
+        <span className="flex items-center gap-1.5">
+          <span className="text-[#9b7a05]">برنامه:</span>
+          <span className="text-slate-500">حجم مصوب</span>
+        </span>
+      </div>
+    ) : undefined;
+
+    const COMPANY_ROWS_PER_SLIDE = 10;
+    const companyPages = chunks(companies, COMPANY_ROWS_PER_SLIDE);
+    if (!companyPages.length) companyPages.push([]);
+    companyPages.forEach((groupSet, pageIndex) => {
       result.push({
-        key: `charts-${pageIndex}`,
+        key: `companies-${pageIndex}`,
         render: (page) => (
-          <Slide title="مقایسه عملکرد شرکت‌ها" subtitle={chartPages.length > 1 ? `بخش ${toFa(pageIndex + 1)} از ${toFa(chartPages.length)}` : period} page={page} period={period}>
-            <div className={`grid min-h-0 flex-1 gap-5 ${perSlide === 6 ? "grid-cols-3" : "grid-cols-2"}`} style={{ gridAutoRows: "1fr" }}>
-              {itemSet.map((item) => <ChartCard key={item.key} item={item} rows={companyRows} total={holdingMap.get(item.key)} />)}
+          <Slide
+            title="کارنامه شرکت‌ها"
+            subtitle={companyPages.length > 1 ? `بخش ${toFa(pageIndex + 1)} از ${toFa(companyPages.length)}` : period}
+            headerRight={tableLegend}
+            page={page}
+            period={period}
+          >
+            <ScorecardTable
+              entityType="company"
+              groups={groupSet}
+              metrics={tableMetrics}
+              holdingMap={holdingMap}
+              plannedHoldingMap={holdingPlannedMap}
+              plannedGroupMap={plannedCompanyGroupMap}
+              showTotal={pageIndex === companyPages.length - 1}
+            />
+          </Slide>
+        ),
+      });
+    });
+
+    const shareDataList: ItemShareData[] = tableMetrics
+      .map((item) => {
+        const contributions: CompanyContribution[] = [];
+        for (let cIdx = 0; cIdx < companies.length; cIdx += 1) {
+          const comp = companies[cIdx]!;
+          const row = comp.rows.get(item.key);
+          const qty = row ? Number.parseFloat(row.qty || "0") : 0;
+          if (qty > 0) {
+            contributions.push({
+              companyId: comp.id,
+              companyName: comp.name,
+              qty,
+              pct: 0,
+              color: getCompanyColor(comp.name, cIdx),
+            });
+          }
+        }
+        const holdingRow = holdingMap.get(item.key);
+        const holdingQty = holdingRow ? Number.parseFloat(holdingRow.qty || "0") : 0;
+        const sumQty = contributions.reduce((acc, c) => acc + c.qty, 0);
+        const baseTotal = sumQty > 0 ? sumQty : holdingQty;
+        if (baseTotal > 0) {
+          for (const c of contributions) {
+            c.pct = (c.qty / baseTotal) * 100;
+          }
+          contributions.sort((a, b) => b.qty - a.qty);
+        }
+        return {
+          item,
+          totalQty: baseTotal,
+          contributions,
+        };
+      })
+      .filter((data) => data.totalQty > 0);
+
+    const activeShareData =
+      shareDataList.length > 0
+        ? shareDataList
+        : tableMetrics.map((item) => ({
+            item,
+            totalQty: 0,
+            contributions: [],
+          }));
+
+    const companyShareLegend = (
+      <div className="flex flex-wrap items-center gap-4 rounded-full border border-[#252850]/10 bg-white/95 px-4 py-1.5 text-[12.5px] font-bold text-slate-700 shadow-sm">
+        {companies.map((comp, idx) => (
+          <span key={comp.id} className="flex items-center gap-1.5">
+            <span
+              className="h-2.5 w-2.5 shrink-0 rounded-full shadow-xs"
+              style={{ backgroundColor: getCompanyColor(comp.name, idx) }}
+            />
+            <span className="max-w-[140px] truncate">{comp.name}</span>
+          </span>
+        ))}
+      </div>
+    );
+
+    const SHARE_ITEMS_PER_SLIDE = 8;
+    const sharePages = chunks(activeShareData, SHARE_ITEMS_PER_SLIDE);
+    if (!sharePages.length) sharePages.push([]);
+    sharePages.forEach((pageItems, pageIndex) => {
+      const gridCols =
+        pageItems.length <= 4
+          ? "grid-cols-2 lg:grid-cols-4"
+          : pageItems.length <= 6
+          ? "grid-cols-3"
+          : "grid-cols-4";
+
+      result.push({
+        key: `company-shares-${pageIndex}`,
+        render: (page) => (
+          <Slide
+            title="سهم شرکت‌ها در احجام عملیات"
+            subtitle={
+              sharePages.length > 1
+                ? `بخش ${toFa(pageIndex + 1)} از ${toFa(sharePages.length)}`
+                : "توزیع درصدی عملکرد هر شرکت نسبت به کل هلدینگ"
+            }
+            headerRight={companyShareLegend}
+            page={page}
+            period={period}
+          >
+            <div
+              className={`grid min-h-0 flex-1 gap-4 ${gridCols}`}
+              style={{ gridAutoRows: "1fr" }}
+            >
+              {pageItems.map((data) => (
+                <DonutShareCard key={data.item.key} data={data} />
+              ))}
             </div>
           </Slide>
         ),
       });
     });
 
-    const tableMetrics = visibleItems.filter((item) => companyRows.some((row) => row.item_key === item.key));
-    const metricGroups = balancedChunks(tableMetrics, MAX_METRIC_COLUMNS);
-    const rowPages = chunks(companies, COMPANY_ROWS_PER_SLIDE);
-    if (!rowPages.length) rowPages.push([]);
-    metricGroups.forEach((metrics, metricIndex) => {
-      rowPages.forEach((groupSet, rowIndex) => {
-        const parts = metricGroups.length * rowPages.length;
-        const partNo = metricIndex * rowPages.length + rowIndex + 1;
-        result.push({
-          key: `companies-${metricIndex}-${rowIndex}`,
-          render: (page) => (
-            <Slide title="کارنامه شرکت‌ها" subtitle={parts > 1 ? `بخش ${toFa(partNo)} از ${toFa(parts)}` : period} page={page} period={period}>
-              <CompanyTable groups={groupSet} metrics={metrics} holdingMap={holdingMap} showTotal={rowIndex === rowPages.length - 1} />
-            </Slide>
-          ),
-        });
+    const PROJECT_ROWS_PER_SLIDE = 10;
+    const projectPages = chunks(projects, PROJECT_ROWS_PER_SLIDE);
+    if (!projectPages.length) projectPages.push([]);
+    projectPages.forEach((groupSet, pageIndex) => {
+      result.push({
+        key: `projects-${pageIndex}`,
+        render: (page) => (
+          <Slide
+            title="کارنامه پروژه‌ها"
+            subtitle={projectPages.length > 1 ? `بخش ${toFa(pageIndex + 1)} از ${toFa(projectPages.length)}` : period}
+            headerRight={tableLegend}
+            page={page}
+            period={period}
+          >
+            <ScorecardTable
+              entityType="project"
+              groups={groupSet}
+              metrics={tableMetrics}
+              holdingMap={holdingMap}
+              plannedHoldingMap={holdingPlannedMap}
+              plannedGroupMap={plannedProjectGroupMap}
+              showTotal={pageIndex === projectPages.length - 1}
+            />
+          </Slide>
+        ),
       });
     });
 
-    const companyNames = new Map(companyRows.map((row) => [row.company_id, row.company]));
-    const fileRows = sources.map((source) => {
-      const used = (source.sheet_log ?? []).filter((sheet) => sheet.used);
-      const companyId = report.files.find((file) => file.filename === source.filename)?.company_id;
-      return {
-        id: source.id,
-        filename: source.filename,
-        company: (companyId && companyNames.get(companyId)) || source.suggested_company || "—",
-        sheets: used.length,
-        rows: used.reduce((sum, sheet) => sum + (sheet.rows_total ?? 0), 0),
-        ok: source.status === "parsed",
-      };
-    });
-    const sourcePages = chunks(fileRows, SOURCE_ROWS_PER_SLIDE);
-    sourcePages.forEach((fileSet, pageIndex) => {
+    const narrativeCompanies = companies
+      .map((comp) => {
+        const narrative = report.narratives?.[comp.id] || report.narratives?.[comp.name];
+        const items = getCompanyNarrativeItems(narrative);
+        return { comp, items };
+      })
+      .filter(({ items }) => items.length > 0);
+
+    const narrativePages = chunks(narrativeCompanies, NARRATIVE_COMPANIES_PER_SLIDE);
+    narrativePages.forEach((pageCompanies, pageIndex) => {
       result.push({
-        key: `sources-${pageIndex}`,
+        key: `narratives-${pageIndex}`,
         render: (page) => (
-          <Slide title="اسناد مأخذ گزارش" subtitle={sourcePages.length > 1 ? `بخش ${toFa(pageIndex + 1)} از ${toFa(sourcePages.length)}` : period} page={page} period={period}>
-            <div className="overflow-hidden rounded-2xl border border-[#252850]/10 bg-white">
-              <table className="w-full table-fixed border-collapse text-[16px]">
-                <thead className="bg-[#252850] text-white">
-                  <tr>
-                    <th className="px-5 py-3 text-start font-bold">فایل</th>
-                    <th className="w-[240px] px-3 py-3 text-start font-bold">شرکت</th>
-                    <th className="w-[130px] px-3 py-3 text-start font-bold">شیت‌ها</th>
-                    <th className="w-[130px] px-3 py-3 text-start font-bold">ردیف‌ها</th>
-                    <th className="w-[150px] px-3 py-3 text-start font-bold">وضعیت</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {fileSet.map((file) => (
-                    <tr key={file.id} className="h-[48px] border-t border-slate-100 odd:bg-white even:bg-slate-50">
-                      <td className="truncate px-5 font-medium text-slate-800" dir="auto">{file.filename}</td>
-                      <td className="truncate px-3 text-slate-600">{file.company}</td>
-                      <td className="px-3 tabular-nums">{toFa(file.sheets)}</td>
-                      <td className="px-3 tabular-nums">{toFa(file.rows)}</td>
-                      <td className={`px-3 font-bold ${file.ok ? "text-emerald-700" : "text-red-700"}`}>{file.ok ? "پردازش شد" : "ناموفق"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          <Slide
+            title="گزارش عملکرد پروژه‌های عمرانی"
+            subtitle={
+              narrativePages.length > 1
+                ? `مرور وضعیت و اقدامات شرکت‌ها · بخش ${toFa(pageIndex + 1)} از ${toFa(narrativePages.length)}`
+                : "مرور وضعیت و اقدامات شرکت‌ها"
+            }
+            page={page}
+            period={period}
+          >
+            <div className="grid min-h-0 flex-1 grid-cols-2 gap-6">
+              {pageCompanies.map(({ comp, items }, idx) => {
+                const globalIdx = pageIndex * NARRATIVE_COMPANIES_PER_SLIDE + idx;
+                return (
+                  <CompanyNarrativeCard
+                    key={comp.id}
+                    company={comp}
+                    index={globalIdx}
+                    items={items}
+                  />
+                );
+              })}
             </div>
           </Slide>
         ),
@@ -539,7 +1027,7 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
       ),
     });
     return result;
-  }, [catalog, companyRows, holding, report, siteRows, sources, weekSubtitle]);
+  }, [catalog, companyPlannedRows, companyRows, holding, holdingPlanned, report, sitePlannedRows, siteRows, weekSubtitle]);
 
   async function exportPdf() {
     if (!report || exporting) return;

@@ -24,7 +24,9 @@ from app.features.volume_report.seed import bump_catalog_version
 
 settings = get_settings()
 
-FIXED_OPTIONS = {"exclude": "حذف از گزارش", "unknown": "نمی‌دانم", "other": "سایر (نامنطبق)"}
+# There is no "remove from report": whatever is not counted is "other" and stays visible. "exclude" is kept as an alias
+# of "other" so questions stored earlier (or proposed by the agent) keep working.
+FIXED_OPTIONS = {"exclude": "سایر (نامنطبق)", "unknown": "نمی‌دانم", "other": "سایر (نامنطبق)"}
 SITE_KIND_LABELS = {"road": "راهسازی", "mining": "معدن", "other": "سایر"}
 PARAMS = {"density_t_per_m3", "thickness_m", "cross_section_m2"}
 
@@ -89,8 +91,9 @@ async def create_from_spec(db: AsyncSession, report: Report, index: GroupIndex, 
         if bad:
             raise BadRequestError(f"Unknown option keys: {bad}. Use catalog item keys, exclude, unknown or other.")
         # Labels come from code, never from the model.
+        keys = ["other" if k == "exclude" else k for k in keys]
         options = [{"key": k, "label": index.items[k].title_fa if k in index.items else FIXED_OPTIONS[k]} for k in dict.fromkeys(keys)]
-        for k in ("exclude", "unknown"):
+        for k in ("other", "unknown"):
             if k not in keys:
                 options.append({"key": k, "label": FIXED_OPTIONS[k]})
     else:
@@ -226,9 +229,9 @@ async def _entries_for(db: AsyncSession, report: Report, q: Question, key: str |
         role = current.role.value if current is not None and current.role.value != "na" else ("supply" if g.role_hint == "supply" else "na")
         if key in index.items:
             entries.append(ConfirmItem(group_key=gk, item_key=key, role=role, remember_scope=scope))
-        elif key == "exclude":
-            entries.append(ConfirmItem(group_key=gk, exclude_reason="other", remember_scope=scope))
-        elif key in ("unknown", "other"):
+        elif key in ("exclude", "other"):  # "other" is remembered like any item when the user asks for it
+            entries.append(ConfirmItem(group_key=gk, disposition="unmatched", role=role, remember_scope=scope))
+        elif key == "unknown":  # not decided yet: kept visible, deliberately not remembered
             entries.append(ConfirmItem(group_key=gk, disposition="unmatched", remember_scope="line"))
         else:
             raise BadRequestError(f"Unknown option: {key}")
@@ -313,7 +316,7 @@ async def refresh_system_questions(db: AsyncSession, report: Report) -> None:
                 report_id=report.id, kind=QuestionKind.CHOICE, group_keys=list(keys_t), impact_score=impact_score(index, list(keys_t)),
                 spec={"system": "unit_mismatch", "kind": "choice", "prompt": f"واحد این ردیف‌ها با آیتم «{title}» سازگار نیست؛ چه کنیم؟",
                       "site_id": site_id, "group_ids": [k[:10] for k in keys_t],
-                      "options": [{"key": "exclude", "label": FIXED_OPTIONS["exclude"]}, {"key": "other", "label": FIXED_OPTIONS["other"]}],
+                      "options": [{"key": "other", "label": FIXED_OPTIONS["other"]}, {"key": "unknown", "label": FIXED_OPTIONS["unknown"]}],
                       "remember_scopes": ["global", "line"], "default_remember": "line"},
             ))
     await db.flush()

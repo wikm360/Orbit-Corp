@@ -12,7 +12,7 @@ import { formatJalaliDate, toFa } from "../lib/jalali";
 import type { PlanVsActual, PlanVsActualRow, ResultScope } from "../types";
 import { Card, EmptyState, ErrorBox, LoadingBlock } from "./common";
 
-const SCOPES: { id: Exclude<ResultScope, "company">; label: string }[] = [{ id: "holding", label: "هلدینگ" }, { id: "site", label: "کارگاه" }];
+const SCOPES: { id: Exclude<ResultScope, "company">; label: string }[] = [{ id: "holding", label: "هلدینگ" }, { id: "site", label: "پروژه" }];
 
 const tone = (pct: number) => (pct >= 100 ? "emerald" : pct >= 80 ? "amber" : "red");
 const BAR = { emerald: "bg-emerald-500", amber: "bg-amber-400", red: "bg-red-500" } as const;
@@ -38,7 +38,7 @@ function ComparisonTable({ rows, showSite }: { rows: PlanVsActualRow[]; showSite
       <table className="w-full min-w-[640px] text-xs">
         <thead className="bg-slate-50 text-slate-600">
           <tr>
-            {showSite && <th className="px-3 py-2 text-start font-medium">کارگاه</th>}
+            {showSite && <th className="px-3 py-2 text-start font-medium">پروژه</th>}
             {["آیتم", "واحد", "پیش‌بینی", "واقعی", "اختلاف", "تحقق"].map((h) => <th key={h} className="px-3 py-2 text-start font-medium">{h}</th>)}
           </tr>
         </thead>
@@ -108,7 +108,7 @@ export function PlanPanel({ reportId, periodEnd, refreshKey }: { reportId: strin
           <div className="overflow-x-auto rounded-xl border border-slate-100">
             <table className="w-full min-w-[420px] text-xs">
               <thead className="bg-slate-50 text-slate-600">
-                <tr>{[...(scope === "site" ? ["کارگاه"] : []), "آیتم", "واحد", "مقدار برنامه‌ریزی‌شده"].map((h) => <th key={h} className="px-3 py-2 text-start font-medium">{h}</th>)}</tr>
+                <tr>{[...(scope === "site" ? ["پروژه"] : []), "آیتم", "واحد", "مقدار برنامه‌ریزی‌شده"].map((h) => <th key={h} className="px-3 py-2 text-start font-medium">{h}</th>)}</tr>
               </thead>
               <tbody>
                 {data.next_plan.map((r, i) => (

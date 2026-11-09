@@ -1,7 +1,7 @@
 import { API_BASE_URL, ApiError, apiRequest, authorizedFetch, parseErrorMessage } from "@/shared/lib/apiClient";
 
 import type {
-  AnswerPayload, CatalogItem, Company, ConfirmItem, Conversion, DecisionRow, FileSelection, ItemRule, ItemRuleWrite, LexiconEntry, LineRow, Question,
+  AnswerPayload, CatalogItem, Company, CompanyNarrative, ConfirmItem, Conversion, DecisionRow, FileSelection, ItemRule, ItemRuleWrite, LexiconEntry, LineRow, Question,
   ReportCreate, ReportDetail, ReportStatus, ReportSummary, ResultScope, ResultsResponse, ReviewGroup, SelectedFile, SettingsItem,
   SettingsItemWrite, Site, SiteKind, SourceInfo, ProgressResponse, GateCause, ActivityResponse, PlanVsActual,
 } from "../types";
@@ -39,6 +39,15 @@ export const volumeReportApi = {
   lines: (id: string, filter: { site_id?: string; item_key?: string; effect?: string; limit?: number; offset?: number }) =>
     apiRequest<LineRow[]>(`${BASE}/${id}/lines${qs(filter)}`),
   trace: (id: string, itemKey: string, siteId?: string) => apiRequest<LineRow[]>(`${BASE}/${id}/trace${qs({ item_key: itemKey, site_id: siteId })}`),
+  narratives: (id: string) => apiRequest<Record<string, CompanyNarrative>>(`${BASE}/${id}/narratives`),
+  saveNarratives: (id: string, narratives: Record<string, CompanyNarrative>) =>
+    send<Record<string, CompanyNarrative>>(`/${id}/narratives`, "PUT", { narratives }),
+  generateNarrative: (id: string, payload: { company_id?: string; company_name: string; raw_text: string }) =>
+    send<{ company_name: string; raw_text: string; cleaned_text: string; items: string[] }>(
+      `/${id}/narratives/generate`,
+      "POST",
+      payload
+    ),
   publish: (id: string) => send<ReportSummary>(`/${id}/publish`, "POST"),
   reopen: (id: string) => send<ReportSummary>(`/${id}/reopen`, "POST"),
 

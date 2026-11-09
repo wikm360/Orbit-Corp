@@ -208,6 +208,7 @@ class Report(Base):
         _enum(ReportStatus, "vr_report_status"), default=ReportStatus.DRAFT, nullable=False, index=True
     )
     progress: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    narratives: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False, server_default=text("'{}'::jsonb"))
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     supersedes_id: Mapped[uuid.UUID | None] = _fk("vr_reports", "SET NULL", nullable=True)
     created_by: Mapped[uuid.UUID | None] = _fk("users", "SET NULL", nullable=True)

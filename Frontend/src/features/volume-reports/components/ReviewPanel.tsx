@@ -94,7 +94,7 @@ export function ReviewPanel({ reportId, catalog, editable, onChanged, onContinue
 
   async function confirmSelected(keys: Set<string>) {
     const { items: payload, skipped } = buildBulkPayload(pending, drafts, keys);
-    if (!payload.length) { setNotice("برای ردیف‌های انتخابی هنوز آیتم یا دلیل حذف مشخص نشده است."); return; }
+    if (!payload.length) { setNotice("برای ردیف‌های انتخابی هنوز آیتم یا «سایر» مشخص نشده است."); return; }
     setBulkBusy(true);
     try {
       await volumeReportApi.confirm(reportId, payload);
@@ -181,7 +181,7 @@ export function ReviewPanel({ reportId, catalog, editable, onChanged, onContinue
                         <select aria-label="آیتم" value={d.choice} disabled={!editable} onChange={(e) => setDraft(g, { choice: e.target.value })} className={fieldClass}>
                           <option value="">— انتخاب کنید —</option>
                           {items.map((i) => <option key={i.key} value={i.key}>{i.title_fa}</option>)}
-                          <option value="exclude">حذف از گزارش</option>
+                          <option value="duplicate">تکراری (دوباره‌شماری)</option>
                           <option value="unmatched">سایر (نامنطبق)</option>
                         </select>
                       </td>

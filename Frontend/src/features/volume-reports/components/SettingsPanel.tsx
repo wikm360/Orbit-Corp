@@ -132,7 +132,7 @@ function LexiconSection({ editable }: { editable: boolean }) {
   return (
     <div className="space-y-3">
       <Notice message={notice} />
-      <p className="text-xs text-slate-500">عبارت‌ها را با «،» جدا کنید. «حذف قطعی» ردیف را بدون پرسش از گزارش خارج می‌کند؛ تغییرات از اجرای بعدی اعمال می‌شود.</p>
+      <p className="text-xs text-slate-500">عبارت‌ها را با «،» جدا کنید. «حذف قطعی» ردیف را بدون پرسش از جمع آیتم‌ها خارج می‌کند (در کارت «سایر» همچنان دیده می‌شود)؛ تغییرات از اجرای بعدی اعمال می‌شود.</p>
       <div className="overflow-x-auto rounded-2xl border border-black/[0.06] bg-white">
         <table className="w-full min-w-[640px] text-xs">
           <thead className="bg-slate-50 text-slate-600"><tr>{["توکن", "نوع", "عبارت‌ها", ""].map((h) => <th key={h} className="px-2 py-2 text-start font-medium">{h}</th>)}</tr></thead>

@@ -2,7 +2,8 @@
 
 import type { ConfirmItem, RememberScope, ReviewGroup, Role } from "../types";
 
-/** What the user picked for a group: a catalog item key, "exclude", "unmatched" or "" (nothing yet). */
+/** What the user picked for a group: a catalog item key, "duplicate", "unmatched" (= «سایر») or "" (nothing yet).
+ *  There is no "remove from report": whatever is not counted is «سایر» and stays visible. */
 export interface RowDraft { choice: string; role: Role; scope: RememberScope }
 
 export const NO_CHOICE = "";
@@ -10,7 +11,7 @@ export const NO_CHOICE = "";
 export function draftFromGroup(group: ReviewGroup): RowDraft {
   let choice = NO_CHOICE;
   if (group.disposition === "counted" && group.item_key) choice = group.item_key;
-  else if (group.disposition === "excluded") choice = "exclude";
+  else if (group.disposition === "excluded") choice = group.exclude_reason === "duplicate" ? "duplicate" : "unmatched"; // legacy removals read as «سایر»
   else if (group.disposition === "unmatched") choice = "unmatched";
   return { choice, role: group.role ?? "na", scope: "global" };
 }
@@ -18,8 +19,8 @@ export function draftFromGroup(group: ReviewGroup): RowDraft {
 export function toConfirmItem(group: ReviewGroup, draft: RowDraft): ConfirmItem | null {
   if (draft.choice === NO_CHOICE) return null;
   const base = { group_key: group.group_key, role: draft.role, remember_scope: draft.scope };
-  if (draft.choice === "exclude") return { ...base, exclude_reason: group.exclude_reason ?? "other" };
-  if (draft.choice === "unmatched") return { ...base, disposition: "unmatched", remember_scope: "line" };
+  if (draft.choice === "duplicate") return { ...base, exclude_reason: "duplicate" };
+  if (draft.choice === "unmatched") return { ...base, disposition: "unmatched" };
   return { ...base, item_key: draft.choice };
 }
 
