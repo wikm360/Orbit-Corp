@@ -12,6 +12,7 @@ import { friendlyErrorMessage } from "@/shared/lib/errorMessages";
 import { volumeReportApi, type ExportFormat } from "../api/volumeReportApi";
 import { Card, ErrorBox, LoadingBlock, ReportStatusBadge, Tabs } from "../components/common";
 import { ActivityPanel } from "../components/ActivityPanel";
+import { EvmPanel } from "../components/EvmPanel";
 import { NarrativesPanel } from "../components/NarrativesPanel";
 import { PlanPanel } from "../components/PlanPanel";
 import { ProgressCard } from "../components/ProgressCard";
@@ -25,7 +26,7 @@ import { formatJalaliDate, formatJalaliDateTime, toFa } from "../lib/jalali";
 import { GATE_HINTS, PERIOD_LABELS, gateLabel, parseGateError } from "../lib/status";
 import type { CatalogItem, GateCause, Progress, ReportDetail } from "../types";
 
-type TabId = "results" | "plan" | "narratives" | "review" | "sources" | "activity";
+type TabId = "results" | "evm" | "plan" | "narratives" | "review" | "sources" | "activity";
 
 export function ReportDetailScreen({ reportId }: { reportId: string }) {
   const router = useRouter();
@@ -148,8 +149,9 @@ export function ReportDetailScreen({ reportId }: { reportId: string }) {
 
       {!processing && report.status !== "draft" && report.status !== "failed" && (
         <>
-          <Tabs<TabId> value={tab} onChange={setTab} tabs={[{ id: "results", label: "نتایج" }, { id: "plan", label: "برنامه و پیش‌بینی" }, { id: "narratives", label: "عملکرد پروژه‌ها" }, { id: "review", label: "بازبینی", badge: openQuestions }, { id: "sources", label: "منابع و هشدارها" }, { id: "activity", label: "گزارش فعالیت" }]} />
+          <Tabs<TabId> value={tab} onChange={setTab} tabs={[{ id: "results", label: "نتایج" }, { id: "evm", label: "شاخص‌های EVM" }, { id: "plan", label: "برنامه و پیش‌بینی" }, { id: "narratives", label: "عملکرد پروژه‌ها" }, { id: "review", label: "بازبینی", badge: openQuestions }, { id: "sources", label: "منابع و هشدارها" }, { id: "activity", label: "گزارش فعالیت" }]} />
           {tab === "results" && <ResultsView reportId={reportId} catalog={catalog} refreshKey={refreshKey} />}
+          {tab === "evm" && <EvmPanel reportId={reportId} refreshKey={refreshKey} />}
           {tab === "plan" && <PlanPanel reportId={reportId} periodEnd={report.period_end} refreshKey={refreshKey} />}
           {tab === "narratives" && <NarrativesPanel reportId={reportId} refreshKey={refreshKey} />}
           {tab === "review" && (

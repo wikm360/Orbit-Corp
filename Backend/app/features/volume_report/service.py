@@ -20,7 +20,7 @@ from app.features.projects.models import Project
 from app.features.volume_report import compute, memory
 from app.features.volume_report.extraction.normalize import Lexicon, LexiconEntry as LexEntry, normalize_text
 from app.features.volume_report.models import (
-    Classification, ClassificationSource, Company, Conversion, Decision, ItemRule, DecisionSource, Disposition, Effect,
+    Classification, ClassificationSource, Company, Conversion, Decision, EvmRow, ItemRule, DecisionSource, Disposition, Effect,
     Dimension, ExcludeReason, Item, Line, LexiconKind, LineResult, Question, QuestionStatus, Report, ReportFile, ReportStatus, Result,
     ResultScope, Role, Site, SiteKind, Snapshot, LexiconEntry,
 )
@@ -515,6 +515,66 @@ async def plan_vs_actual(db: AsyncSession, report: Report, group_by: str) -> dic
     return body
 
 
+# ---- EVM (PV / EV / AC / CPI / SPI) ----------------------------------------------------------------------------
+
+_EVM_SUMS = ("contract_amount", "bcws", "pv", "ev", "ev_net", "ac")
+
+
+def _evm_row_read(r: EvmRow) -> dict:
+    return {"project": r.project_name, "contract_amount": _opt(r.contract_amount), "bcws": _opt(r.bcws), "pv": _opt(r.pv), "ev": _opt(r.ev),
+            "ev_net": _opt(r.ev_net), "ac": _opt(r.ac), "cpi": _opt(r.cpi, "0.01"), "spi": _opt(r.spi, "0.01")}
+
+
+def _opt(value: Decimal | None, step: str = "0.01") -> str | None:
+    return None if value is None else f"{value.quantize(Decimal(step)):f}"
+
+
+def _evm_total(rows: list[EvmRow]) -> dict:
+    """Sum of the projects; CPI/SPI are ratios of sums (ev / AC, EV / PV) over the projects that carry both operands,
+    so a project with no cost or no programme yet does not drag the ratio."""
+    total: dict = {}
+    for field in _EVM_SUMS:
+        values = [getattr(r, field) for r in rows if getattr(r, field) is not None]
+        total[field] = _opt(sum(values, Decimal(0))) if values else None
+    cost = [r for r in rows if r.ev_net is not None and r.ac is not None and r.ac > 0]
+    plan = [r for r in rows if r.ev is not None and r.pv is not None and r.pv > 0]
+    total["cpi"] = _opt(sum(r.ev_net for r in cost) / sum(r.ac for r in cost)) if cost else None
+    total["spi"] = _opt(sum(r.ev for r in plan) / sum(r.pv for r in plan)) if plan else None
+    total["projects"] = len(rows)
+    return total
+
+
+async def get_evm(db: AsyncSession, report: Report) -> dict:
+    """Per basis (actual | planned): the companies with their projects, the company total and the holding total.
+    `total` is computed from the project rows; `reported_total` is the "جمع" row the file itself printed (if any)."""
+    rows = (await db.execute(
+        select(EvmRow, ReportFile.company_id, ReportFile.filename, Company.name)
+        .join(ReportFile, ReportFile.id == EvmRow.report_file_id).join(Company, Company.id == ReportFile.company_id)
+        .where(ReportFile.report_id == report.id).order_by(Company.name, ReportFile.created_at, EvmRow.sheet_name, EvmRow.row_no)
+    )).all()
+    body: dict = {"report_id": report.id}
+    for basis in ("actual", "planned"):
+        companies: dict[uuid.UUID, dict] = {}
+        for row, company_id, filename, company_name in rows:
+            if row.basis != basis:
+                continue
+            company = companies.setdefault(company_id, {"company_id": company_id, "company": company_name, "projects": [], "_rows": [], "_reported": []})
+            if row.is_total:
+                company["_reported"].append(row)
+            else:
+                company["projects"].append({**_evm_row_read(row), "filename": filename})
+                company["_rows"].append(row)
+        out = []
+        for company in companies.values():
+            project_rows, reported = company.pop("_rows"), company.pop("_reported")
+            company["total"] = _evm_total(project_rows)
+            company["reported_total"] = {**_evm_total(reported), **_evm_row_read(reported[0])} if len(reported) == 1 else None
+            out.append(company)
+        flat = [row for row, _, _, _ in rows if row.basis == basis and not row.is_total]
+        body[basis] = {"companies": out, "holding": _evm_total(flat) if flat else None}
+    return body
+
+
 async def report_detail(db: AsyncSession, report: Report) -> dict:
     causes = await gate_causes(db, report) if report.status != ReportStatus.PUBLISHED else []
     files = (await db.execute(select(ReportFile).where(ReportFile.report_id == report.id))).scalars().all()
@@ -569,6 +629,7 @@ async def publish(db: AsyncSession, context: UserContext, report: Report) -> Rep
                    "version": report.version, "project_id": report.project_id},
         "results": {"site": results["rows"], "company": company["rows"], "holding": holding["rows"]},
         "planned_results": planned,
+        "evm": await get_evm(db, report),
         "other": results["other"], "problems": results["problems"], "nonphysical": results["nonphysical"],
         "classifications": classes, "warnings": {"gate": causes, "files": [{"filename": f["filename"], "warnings": f["warnings"]} for f in files]},
         "catalog": [{"key": i.key, "title_fa": i.title_fa, "output_unit": i.output_unit, "decimals": i.decimals} for i in items],

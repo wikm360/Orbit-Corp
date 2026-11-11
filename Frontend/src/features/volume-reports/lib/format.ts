@@ -50,3 +50,17 @@ export function formatQuantityWithUnit(value: string | null | undefined, unit: s
 /** Chart axes need a JS number; only for drawing, never for displayed figures. */
 export const toChartNumber = (value: string): number => Number.parseFloat(value);
 export const formatInt = (n: number) => toFa(n.toLocaleString("en-US").replace(/,/g, "٬"));
+
+/** Rial decimal string -> "میلیارد ریال" with 2 places, by integer arithmetic (no floats): "34000123354.00" -> "۳۴٫۰۰". */
+export function formatBillionRial(value: string | null | undefined): string {
+  if (value === null || value === undefined || value === "") return "—";
+  const m = /^(-?)(\d+)(?:\.\d+)?$/.exec(value.trim());
+  if (!m) return "—";
+  const hundredths = (BigInt(m[2]!) * BigInt(100) + BigInt(500_000_000)) / BigInt(1_000_000_000); // half-up
+  const text = hundredths.toString().padStart(3, "0");
+  const int = text.slice(0, -2).replace(/\B(?=(\d{3})+(?!\d))/g, "٬");
+  return toFa(`${m[1] && hundredths > BigInt(0) ? "-" : ""}${int}٫${text.slice(-2)}`);
+}
+
+/** CPI / SPI ratio string ("1.05") -> Persian digits; null -> "—". */
+export const formatRatio = (value: string | null | undefined): string => (value === null || value === undefined ? "—" : toFa(value.replace(".", "٫")));

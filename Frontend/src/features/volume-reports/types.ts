@@ -140,3 +140,18 @@ export interface VolumeTableArtifact {
 export type ActivityKind = "info" | "step" | "success" | "warn" | "error" | "question";
 export interface ActivityItem { id: number; attempt: number; phase: string; kind: ActivityKind; title: string; detail: Record<string, unknown>; created_at: string }
 export interface ActivityResponse { status: ReportStatus; progress: Progress; items: ActivityItem[] }
+
+/** EVM summary read from each file (`GET /{id}/evm`). Amounts are rial decimal strings; cpi/spi are null when an operand is missing. */
+export interface EvmFigures {
+  contract_amount: string | null; bcws: string | null; pv: string | null; ev: string | null; ev_net: string | null; ac: string | null;
+  cpi: string | null; spi: string | null;
+}
+export interface EvmProject extends EvmFigures { project: string | null; filename: string }
+export interface EvmTotal extends EvmFigures { projects: number }
+export interface EvmCompany {
+  company_id: string; company: string; projects: EvmProject[]; total: EvmTotal;
+  /** The "جمع" row the file itself printed (only when exactly one file of the company has it). */
+  reported_total: (EvmFigures & { projects: number; project: string | null }) | null;
+}
+export interface EvmBasis { companies: EvmCompany[]; holding: EvmTotal | null }
+export interface EvmResponse { report_id: string; actual: EvmBasis; planned: EvmBasis }

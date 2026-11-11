@@ -329,3 +329,400 @@ test('Source details list used sheets, skipped sheets with the reason, and warni
   assert.match(html, /۲۲ ردیف دارای حجم/);
   assert.match(describeWarning({ code: 'unit_missing', row: 7 }), /ردیف ۷/);
 });
+
+// ---- presentation helpers ---------------------------------------------------------------------------------------
+
+const pres = load('features/volume-reports/lib/presentation.ts');
+
+test('presentation decimal addition and unit conversion preserve exact decimal precision', () => {
+  assert.equal(pres.addDecimalStrings('0.1', '0.2'), '0.3');
+  assert.equal(pres.addDecimalStrings('1234.5000', '67.8500'), '1302.3500');
+  assert.equal(pres.addDecimalStrings('100', '25.5'), '125.5');
+  assert.equal(pres.convertMassDecimal('2.5', 't', 'kg'), '2500');
+  assert.equal(pres.convertMassDecimal('1500', 'kg', 't'), '1.500');
+});
+
+test('presentation merges prime_coat and tack_coat in catalog and across all result scopes', () => {
+  const catalog = [
+    { key: 'excavation', title_fa: 'خاکبرداری', description_fa: '', dimension: 'volume', output_unit: 'm3', decimals: 2, is_rollup: false, rollup_of: [], mining_only: false },
+    { key: 'asphalt_binder', title_fa: 'آسفالت بیندر', description_fa: '', dimension: 'mass', output_unit: 't', decimals: 2, is_rollup: false, rollup_of: [], mining_only: false },
+    { key: 'asphalt_topka', title_fa: 'آسفالت توپکا', description_fa: '', dimension: 'mass', output_unit: 't', decimals: 2, is_rollup: false, rollup_of: [], mining_only: false },
+    { key: 'asphalt_total', title_fa: 'آسفالت (جمع)', description_fa: '', dimension: 'mass', output_unit: 't', decimals: 2, is_rollup: true, rollup_of: ['asphalt_binder', 'asphalt_topka'], mining_only: false },
+    { key: 'prime_coat', title_fa: 'پریمکت', description_fa: '', dimension: 'mass', output_unit: 'kg', decimals: 1, is_rollup: false, rollup_of: [], mining_only: false },
+    { key: 'tack_coat', title_fa: 'تک‌کت', description_fa: '', dimension: 'mass', output_unit: 'kg', decimals: 1, is_rollup: false, rollup_of: [], mining_only: false },
+    { key: 'concrete', title_fa: 'بتن', description_fa: '', dimension: 'volume', output_unit: 'm3', decimals: 2, is_rollup: false, rollup_of: [], mining_only: false },
+  ];
+  const { items, coatUnit, coatDecimals } = pres.mergeCoatCatalog(catalog);
+  assert.equal(coatUnit, 'kg');
+  assert.equal(coatDecimals, 1);
+  assert.deepEqual(items.map((i) => i.key), ['excavation', 'asphalt_total', 'prime_tack_total', 'concrete']);
+  assert.equal(items[2].title_fa, 'پریمکت و تک‌کت');
+
+  const mkRow = (over) => ({
+    scope: 'holding', company_id: null, company: null, site_id: null, site: null,
+    item_key: 'excavation', item: 'خاکبرداری', decimals: 2, sort: 1, qty: '10.0000', unit: 'm3', n_lines: 1, has_unconfirmed: false, ...over,
+  });
+
+  const holdingMerged = pres.mergeCoatResultRows([
+    mkRow({ item_key: 'prime_coat', unit: 'kg', decimals: 1, sort: 11, qty: '1200.4000', n_lines: 2, has_unconfirmed: false }),
+    mkRow({ item_key: 'tack_coat', unit: 'kg', decimals: 1, sort: 12, qty: '300.6000', n_lines: 3, has_unconfirmed: true }),
+    mkRow({ item_key: 'concrete', unit: 'm3', qty: '55.0000' }),
+  ], coatUnit, coatDecimals);
+  assert.equal(holdingMerged.length, 2);
+  const holdingCoat = holdingMerged.find((r) => r.item_key === 'prime_tack_total');
+  assert.equal(holdingCoat.qty, '1501.0000');
+  assert.equal(holdingCoat.n_lines, 5);
+  assert.equal(holdingCoat.has_unconfirmed, true);
+
+  const companyMerged = pres.mergeCoatResultRows([
+    mkRow({ scope: 'company', company_id: 'c1', company: 'شرکت الف', item_key: 'prime_coat', unit: 'kg', qty: '400.5' }),
+    mkRow({ scope: 'company', company_id: 'c1', company: 'شرکت الف', item_key: 'tack_coat', unit: 'kg', qty: '99.5' }),
+    mkRow({ scope: 'company', company_id: 'c2', company: 'شرکت ب', item_key: 'tack_coat', unit: 'kg', qty: '250.0' }),
+  ], coatUnit, coatDecimals);
+  assert.equal(companyMerged.length, 2);
+  assert.equal(companyMerged.find((r) => r.company_id === 'c1').qty, '500.0');
+  assert.equal(companyMerged.find((r) => r.company_id === 'c2').qty, '250.0');
+
+  const siteMerged = pres.mergeCoatResultRows([
+    mkRow({ scope: 'site', company_id: 'c1', site_id: 's1', site: 'کارگاه ۱', item_key: 'prime_coat', unit: 't', qty: '1.2' }),
+    mkRow({ scope: 'site', company_id: 'c1', site_id: 's1', site: 'کارگاه ۱', item_key: 'tack_coat', unit: 'kg', qty: '300' }),
+  ], coatUnit, coatDecimals);
+  assert.equal(siteMerged.length, 1);
+  assert.equal(siteMerged[0].qty, '1500');
+  assert.equal(siteMerged[0].unit, 'kg');
+});
+
+test('presentation summary groups catalog into 4 departments and scales typography relative to widest number', () => {
+  const mkItem = (key, title_fa, output_unit = 'm3') => ({
+    key, title_fa, description_fa: '', dimension: 'volume', output_unit, decimals: 2, is_rollup: false, rollup_of: [], mining_only: false,
+  });
+  const catalog13 = [
+    mkItem('excavation', 'خاکبرداری'),
+    mkItem('fill', 'خاکریزی'),
+    mkItem('subbase', 'زیراساس'),
+    mkItem('base', 'اساس'),
+    mkItem('asphalt_total', 'آسفالت (جمع)', 't'),
+    mkItem('concrete', 'بتن'),
+    mkItem('rebar', 'آرماتور', 't'),
+    mkItem('formwork', 'قالب', 'm2'),
+    mkItem('prime_tack_total', 'پریمکت و تک‌کت', 'kg'),
+    mkItem('precast', 'بتن پیش‌ساخته'),
+    mkItem('pile_drilling', 'حفاری شمع', 'm'),
+    mkItem('pipe_laying', 'لوله‌گذاری', 'm'),
+    mkItem('mining_load', 'بارگیری ماده معدنی و باطله'),
+    mkItem('custom_extra', 'عملیات ویژه', 'm3'),
+  ];
+  const groups = pres.groupSummaryDepartments(catalog13);
+  assert.equal(groups.length, 4);
+  assert.deepEqual(groups.map((g) => g.id), ['earthwork', 'asphalt', 'concrete', 'infrastructure']);
+  assert.deepEqual(groups[0].items.map((i) => i.key), ['excavation', 'fill', 'subbase', 'base']);
+  assert.deepEqual(groups[1].items.map((i) => i.key), ['asphalt_total', 'prime_tack_total']);
+  assert.deepEqual(groups[2].items.map((i) => i.key), ['concrete', 'rebar', 'formwork', 'precast']);
+  assert.deepEqual(groups[3].items.map((i) => i.key), ['mining_load', 'pipe_laying', 'pile_drilling', 'custom_extra']);
+
+  const smallMap = new Map([['excavation', { scope: 'holding', company_id: null, company: null, site_id: null, site: null, item_key: 'excavation', item: '', decimals: 2, sort: 1, qty: '450.00', unit: 'm3', n_lines: 1, has_unconfirmed: false }]]);
+  const hugeMap = new Map([['excavation', { scope: 'holding', company_id: null, company: null, site_id: null, site: null, item_key: 'excavation', item: '', decimals: 2, sort: 1, qty: '1234567890.12', unit: 'm3', n_lines: 1, has_unconfirmed: false }]]);
+
+  const smallTypo = pres.estimateSummaryTypography(groups, smallMap);
+  const hugeTypo = pres.estimateSummaryTypography(groups, hugeMap);
+  assert.ok(smallTypo.numberFontPx > hugeTypo.numberFontPx, `expected small numbers (${smallTypo.numberFontPx}px) to render larger than huge numbers (${hugeTypo.numberFontPx}px)`);
+  assert.ok(smallTypo.numberFontPx >= 50);
+  assert.ok(hugeTypo.numberFontPx >= 26);
+});
+
+test('presentation rounds quantities to whole integers with no decimal separator and sizes scorecard tables dynamically', () => {
+  assert.equal(pres.formatPresentationQuantity('145230.50'), '۱۴۵٬۲۳۱');
+  assert.equal(pres.formatPresentationQuantity('185.642'), '۱۸۶');
+  assert.equal(pres.formatPresentationQuantity('22551.0'), '۲۲٬۵۵۱');
+  assert.equal(pres.formatPresentationQuantity('0.4'), '۰');
+  assert.equal(pres.formatPresentationQuantity(null), '—');
+  assert.ok(!pres.formatPresentationQuantity('145230.50').includes('٫'));
+
+  const metricTitles = ['خاکبرداری', 'خاکریزی', 'زیراساس', 'اساس', 'آسفالت', 'بتن', 'آرماتور', 'قالب', 'پریمکت و تک‌کت', 'بتن پیش‌ساخته', 'لوله‌گذاری', 'بارگیری ماده معدنی و باطله'];
+  const metricUnits = ['مترمکعب', 'مترمکعب', 'مترمکعب', 'مترمکعب', 'تن', 'مترمکعب', 'تن', 'مترمربع', 'کیلوگرم', 'مترمکعب', 'متر', 'مترمکعب'];
+
+  const compactCompanies = pres.estimateScorecardTypography({
+    metricTitles,
+    metricUnits,
+    entityNames: ['آبادگران رفاه نصر', 'فراگیر عمران نصر', 'گلومک سازه نصر', 'محور گستر نصر'],
+    entityType: 'company',
+    rowCount: 4,
+    showTotal: true,
+    hasSubtitles: false,
+    hasPlanned: false,
+    maxFormattedValue: '۳۲۰٬۵۰۰',
+  });
+  assert.equal(compactCompanies.tableHeightPx, pres.SUMMARY_CANVAS_H);
+  assert.ok(compactCompanies.rowHeightPx >= 110);
+  assert.ok(compactCompanies.cellValuePx >= 20);
+  assert.ok(compactCompanies.headerTitlePx >= 15);
+  assert.ok(compactCompanies.logoSizePx >= 40);
+
+  const densePlannedProjects = pres.estimateScorecardTypography({
+    metricTitles,
+    metricUnits,
+    entityNames: Array.from({ length: 10 }, (_, i) => `پروژه شماره ${i + 1}`),
+    entityType: 'project',
+    rowCount: 10,
+    showTotal: true,
+    hasSubtitles: true,
+    hasPlanned: true,
+    maxFormattedValue: '۳۲۰٬۵۰۰',
+  });
+  assert.equal(densePlannedProjects.tableHeightPx, pres.SUMMARY_CANVAS_H);
+  assert.ok(densePlannedProjects.rowHeightPx < compactCompanies.rowHeightPx);
+  assert.ok(densePlannedProjects.cellValuePx >= 14);
+  assert.ok(densePlannedProjects.entityNamePx >= 14);
+});
+
+test('presentation share pages balance cards evenly and compute large filled pie charts with inside percentages', () => {
+  const twelve = Array.from({ length: 12 }, (_, i) => i);
+  const pages12 = pres.splitSharePages(twelve, 8);
+  assert.deepEqual(pages12.map((p) => p.length), [6, 6]);
+  assert.deepEqual(pres.splitSharePages(twelve.slice(0, 8), 8).map((p) => p.length), [8]);
+  assert.deepEqual(pres.splitSharePages([...twelve, 12], 8).map((p) => p.length), [7, 6]);
+
+  const geo6 = pres.estimateShareCardGeometry(6);
+  assert.equal(geo6.cols, 3);
+  assert.equal(geo6.rows, 2);
+  assert.ok(geo6.pieSizePx >= 250, `expected large pie (>=250px) in 3x2 grid, got ${geo6.pieSizePx}`);
+
+  const geo4 = pres.estimateShareCardGeometry(4);
+  assert.equal(geo4.cols, 2);
+  assert.equal(geo4.rows, 2);
+  assert.ok(geo4.pieSizePx >= 250);
+
+  const single = pres.computePieSlices([{ companyId: 'c1', companyName: 'محور گستر نصر', pct: 100, color: '#252850' }], 260);
+  assert.equal(single.length, 1);
+  assert.equal(single[0].isFullCircle, true);
+  assert.equal(single[0].labelText, '۱۰۰٪');
+  assert.equal(single[0].labelX, 130);
+  assert.equal(single[0].labelY, 130);
+  assert.equal(single[0].isOutside, false);
+
+  const multi = pres.computePieSlices([
+    { companyId: 'c1', companyName: 'الف', pct: 55, color: '#d97706' },
+    { companyId: 'c2', companyName: 'ب', pct: 45, color: '#252850' },
+  ], 260);
+  assert.equal(multi.length, 2);
+  assert.equal(multi[0].isFullCircle, false);
+  assert.match(multi[0].pathD, /^M /);
+  assert.equal(multi[0].labelText, '۵۵٪');
+  assert.equal(multi[1].labelText, '۴۵٪');
+  assert.equal(multi[0].isOutside, false);
+
+  const staggeredTiny = pres.computePieSlices([
+    { companyId: 'c1', companyName: 'الف', pct: 88, color: '#252850' },
+    { companyId: 'c2', companyName: 'ب', pct: 5, color: '#d97706' },
+    { companyId: 'c3', companyName: 'ج', pct: 5, color: '#059669' },
+    { companyId: 'c4', companyName: 'د', pct: 2, color: '#7c3aed' },
+  ], 260);
+  const dist23 = Math.hypot(staggeredTiny[1].labelX - staggeredTiny[2].labelX, staggeredTiny[1].labelY - staggeredTiny[2].labelY);
+  assert.ok(dist23 >= 16, `adjacent narrow slices should stagger radially (dist=${dist23})`);
+  assert.equal(staggeredTiny[3].isOutside, true);
+  assert.ok(staggeredTiny[3].labelX >= 0 && staggeredTiny[3].labelX <= 260);
+  assert.ok(staggeredTiny[3].labelY >= 0 && staggeredTiny[3].labelY <= 260);
+});
+
+test('presentation exposes all 6 summary layout variants and computes hole-free grids and infographic splits', () => {
+  assert.equal(pres.SUMMARY_VARIANTS.length, 6);
+  assert.deepEqual(
+    pres.SUMMARY_VARIANTS.map((v) => v.id),
+    ['departments', 'hero_bento', 'infographic', 'split_rows', 'aligned_split', 'classic'],
+  );
+  assert.equal(pres.DEFAULT_SUMMARY_VARIANT, 'departments');
+  assert.equal(pres.isSummaryVariant('aligned_split'), true);
+  assert.equal(pres.isSummaryVariant('unknown'), false);
+
+  const mkItem = (key, title_fa, output_unit = 'm3') => ({
+    key, title_fa, description_fa: '', dimension: 'volume', output_unit, decimals: 2, is_rollup: false, rollup_of: [], mining_only: false,
+  });
+  const mkRow = (item_key, qty, company_id = null, scope = 'holding') => ({
+    scope, company_id, company: company_id ? `Company ${company_id}` : null, site_id: null, site: null,
+    item_key, item: '', decimals: 2, sort: 1, qty, unit: 'm3', n_lines: 1, has_unconfirmed: false,
+  });
+
+  const items13 = [
+    mkItem('excavation', 'خاکبرداری', 'm3'),
+    mkItem('fill', 'خاکریزی', 'm3'),
+    mkItem('subbase', 'زیراساس', 'm3'),
+    mkItem('base', 'اساس', 'm3'),
+    mkItem('asphalt_total', 'آسفالت (جمع)', 't'),
+    mkItem('prime_tack_total', 'پریمکت و تک‌کت', 'kg'),
+    mkItem('concrete', 'بتن', 'm3'),
+    mkItem('rebar', 'آرماتور', 't'),
+    mkItem('formwork', 'قالب', 'm2'),
+    mkItem('precast', 'بتن پیش‌ساخته', 'm3'),
+    mkItem('mining_load', 'بارگیری معدن', 'm3'),
+    mkItem('pipe_laying', 'لوله‌گذاری', 'm'),
+    mkItem('pile_drilling', 'حفاری شمع', 'm'),
+  ];
+
+  // Classic balanced rows: 13 -> [4, 3, 3, 3]
+  const classicRows = pres.splitSummaryRows(items13, 4);
+  assert.deepEqual(classicRows.map((r) => r.length), [4, 3, 3, 3]);
+
+  // 11 active + 2 inactive -> 4x3 = 12 slots (1 colSpan=2 wide hero + 10 single = 12)
+  const map11 = new Map([
+    ['excavation', mkRow('excavation', '150000')],
+    ['fill', mkRow('fill', '90000')],
+    ['subbase', mkRow('subbase', '42000')],
+    ['base', mkRow('base', '31000')],
+    ['asphalt_total', mkRow('asphalt_total', '18500')],
+    ['prime_tack_total', mkRow('prime_tack_total', '22500')],
+    ['concrete', mkRow('concrete', '14200')],
+    ['rebar', mkRow('rebar', '410')],
+    ['formwork', mkRow('formwork', '9800')],
+    ['mining_load', mkRow('mining_load', '84000')],
+    ['pipe_laying', mkRow('pipe_laying', '186')],
+  ]);
+
+  const classicTypo = pres.estimateClassicSummaryTypography(classicRows, map11);
+  assert.ok(classicTypo.numberFontPx >= 36 && classicTypo.numberFontPx <= 70);
+
+  const bento11 = pres.planSymmetricBentoGrid(items13, map11);
+  assert.equal(bento11.cols, 4);
+  assert.equal(bento11.rows, 3);
+  assert.equal(bento11.cells.reduce((acc, c) => acc + c.colSpan, 0), 12);
+  assert.equal(bento11.inactiveItems.length, 2);
+  assert.equal(bento11.cells.filter((c) => c.isHero).length, 3);
+
+  // 12 active + 1 inactive -> 4x3 = 12 exact cells
+  const map12 = new Map(map11);
+  map12.set('precast', mkRow('precast', '320'));
+  const bento12 = pres.planSymmetricBentoGrid(items13, map12);
+  assert.equal(bento12.cols, 4);
+  assert.equal(bento12.rows, 3);
+  assert.equal(bento12.cells.reduce((acc, c) => acc + c.colSpan, 0), 12);
+  assert.equal(bento12.cells.filter((c) => c.colSpan === 2).length, 0);
+
+  // Infographic splits m3 sorted desc and non-m3 metrics with true share percentages
+  const mapTiny = new Map(map11);
+  mapTiny.set('precast', mkRow('precast', '400'));
+  const info = pres.splitInfographicItems(items13, mapTiny);
+  assert.equal(info.m3Items[0].item.key, 'excavation');
+  assert.equal(info.m3Items[0].barPct, 100);
+  const smallest = info.m3Items[info.m3Items.length - 1];
+  assert.equal(smallest.barPct, 4);
+  assert.equal(smallest.sharePctLabel, 'زیر ۱٪');
+  assert.ok(info.m3Items.every((x) => x.item.output_unit === 'm3'));
+  assert.ok(info.otherItems.every((x) => x.item.output_unit !== 'm3'));
+  assert.equal(info.inactiveItems.length, 1);
+  assert.equal(pres.getSummaryDepartmentTitle('asphalt_total'), 'آسفالت و قیرپاشی');
+
+  // Executive 2-column split counts real participating companies & planned attainment
+  const companyRows = [
+    mkRow('excavation', '100000', 'c1', 'company'),
+    mkRow('excavation', '50000', 'c2', 'company'),
+    mkRow('excavation', '0', 'c3', 'company'),
+    mkRow('asphalt_total', '18500', 'c1', 'company'),
+  ];
+  const plannedMap = new Map([['excavation', mkRow('excavation', '120000')]]);
+  const splitPlan = pres.buildExecutiveSplitColumns(items13, map11, plannedMap, companyRows);
+  assert.deepEqual(splitPlan.columns.map((c) => c.length), [6, 5]);
+  assert.equal(splitPlan.inactiveItems.length, 2);
+  const excRow = splitPlan.columns[0].find((r) => r.item.key === 'excavation');
+  assert.equal(excRow.activeCompanyCount, 2);
+  assert.equal(excRow.planPct, 125);
+});
+
+test('presentation overview semi-circular radar distributes companies symmetrically below center mother card', () => {
+  assert.equal(pres.getCompanyColor('محور گستر نصر'), '#252850');
+  assert.equal(pres.matchCompanyLogo('آبادگران رفاه نصر')?.src, '/volume-reports/logo_abadgaran.png');
+
+  assert.equal(pres.isExcludedFromOverviewRing('شرکت محور گستر نصر'), true);
+  assert.equal(pres.isExcludedFromOverviewRing('محور\u200cگستر نصر'), true);
+  assert.equal(pres.isExcludedFromOverviewRing('شرکت جهاد نصر کرمان'), true);
+  assert.equal(pres.isExcludedFromOverviewRing('جهاد نصر کرمان'), true);
+  assert.equal(pres.isExcludedFromOverviewRing('jihad_nasr_kerman'), true);
+  assert.equal(pres.isExcludedFromOverviewRing('جهاد نصر سیستان'), false);
+  assert.equal(pres.isExcludedFromOverviewRing('آبادگران رفاه نصر'), false);
+
+  const builtOverview = pres.buildOverviewWheelCompanies(
+    [
+      { id: 'm', name: 'محور گستر نصر', projectCount: 2 },
+      { id: 'a', name: 'آبادگران', projectCount: 6 },
+      { id: 'f', name: 'فراگیر', projectCount: 2 },
+      { id: 'g', name: 'گلومک سازه', projectCount: 6 },
+      { id: 's', name: 'جهاد نصر سیستان و بلوچستان', projectCount: 2 },
+    ],
+    [{ id: 't-db', name: 'تژه', is_active: true }],
+  );
+  assert.equal(builtOverview.length, 5);
+  assert.equal(builtOverview.some((c) => c.name === 'تژه' && c.projectCount === 0 && c.id === 't-db'), true);
+  assert.equal(builtOverview.some((c) => c.name.includes('محور')), false);
+
+  const builtFallbackTezhe = pres.buildOverviewWheelCompanies([
+    { id: 'a', name: 'آبادگران', projectCount: 1 },
+  ]);
+  assert.equal(builtFallbackTezhe.length, 2);
+  assert.equal(builtFallbackTezhe.some((c) => c.name === 'تژه نصر' && c.projectCount === 0), true);
+
+  const emptyRadar = pres.computeOverviewRadarLayout([]);
+  assert.equal(emptyRadar.nodes.length, 0);
+  assert.ok(emptyRadar.primaryArcPath.startsWith('M '));
+
+  const singleRadar = pres.computeOverviewRadarLayout([
+    { id: 'c1', name: 'آبادگران رفاه نصر', color: '#d97706', projectCount: 2, sublabel: '۲ پروژه' },
+  ]);
+  assert.equal(singleRadar.nodes.length, 1);
+  assert.equal(singleRadar.nodes[0].angleDeg, 90);
+  assert.ok(Math.abs(singleRadar.nodes[0].x - singleRadar.cx) < 0.01);
+
+  const radar5 = pres.computeOverviewRadarLayout([
+    { id: '1', name: 'آبادگران رفاه نصر', color: '#d97706', projectCount: 6, sublabel: '۶ پروژه' },
+    { id: '2', name: 'تژه نصر', color: '#e11d48', projectCount: 0, sublabel: 'عضو هلدینگ' },
+    { id: '3', name: 'جهاد نصر سیستان و بلوچستان', color: '#0284c7', projectCount: 2, sublabel: '۲ پروژه' },
+    { id: '4', name: 'فراگیر عمران نصر', color: '#059669', projectCount: 2, sublabel: '۲ پروژه' },
+    { id: '5', name: 'گلومک سازه', color: '#7c3aed', projectCount: 6, sublabel: '۶ پروژه' },
+  ]);
+  assert.equal(radar5.nodes.length, 5);
+  assert.deepEqual(radar5.nodes.map((n) => n.angleDeg), [160, 125, 90, 55, 20]);
+  assert.ok(Math.abs(radar5.nodes[2].x - radar5.cx) < 0.01);
+  assert.ok(Math.abs((radar5.nodes[0].x - radar5.cx) + (radar5.nodes[4].x - radar5.cx)) < 0.05);
+  assert.ok(Math.abs(radar5.nodes[0].y - radar5.nodes[4].y) < 0.05);
+  assert.ok(radar5.nodes.every((n) => n.spokeX1 === radar5.cx && n.spokeY1 < n.y));
+  assert.ok(radar5.nodes.every((n) => n.y > radar5.originY));
+  assert.ok(radar5.nodes[2].y > radar5.nodes[0].y);
+
+  const radar6 = pres.computeOverviewRadarLayout([
+    { id: '1', name: 'ش۱', color: '#d97706', projectCount: 1, sublabel: '۱ پروژه' },
+    { id: '2', name: 'ش۲', color: '#e11d48', projectCount: 0, sublabel: 'عضو هلدینگ' },
+    { id: '3', name: 'ش۳', color: '#0284c7', projectCount: 2, sublabel: '۲ پروژه' },
+    { id: '4', name: 'ش۴', color: '#059669', projectCount: 2, sublabel: '۲ پروژه' },
+    { id: '5', name: 'ش۵', color: '#7c3aed', projectCount: 1, sublabel: '۱ پروژه' },
+    { id: '6', name: 'ش۶', color: '#252850', projectCount: 3, sublabel: '۳ پروژه' },
+  ]);
+  assert.equal(radar6.nodes.length, 6);
+  assert.ok(radar6.nodes[0].cardW < radar5.nodes[0].cardW);
+
+  const radar10 = pres.computeOverviewRadarLayout(
+    Array.from({ length: 10 }, (_, idx) => ({ id: String(idx), name: `شرکت ${idx + 1}`, color: '#252850', projectCount: 1, sublabel: '۱ پروژه' })),
+  );
+  assert.equal(radar10.nodes.length, 10);
+  assert.ok(radar10.nodes[0].logoSizePx < radar6.nodes[0].logoSizePx);
+});
+
+test('Jalali weekday and company scorecard period note format Wed-Tue and arbitrary ranges without timezone shift', () => {
+  // Wed 2026-11-04 (1405/08/13) .. Tue 2026-11-10 (1405/08/19)
+  assert.equal(jalali.formatJalaliWeekday('2026-11-01'), 'یکشنبه');
+  assert.equal(jalali.formatJalaliWeekday('2026-11-02'), 'دوشنبه');
+  assert.equal(jalali.formatJalaliWeekday('2026-11-03'), 'سه‌شنبه');
+  assert.equal(jalali.formatJalaliWeekday('2026-11-04'), 'چهارشنبه');
+  assert.equal(jalali.formatJalaliWeekday('2026-11-05'), 'پنج‌شنبه');
+  assert.equal(jalali.formatJalaliWeekday('2026-11-06'), 'جمعه');
+  assert.equal(jalali.formatJalaliWeekday('2026-11-07'), 'شنبه');
+  assert.equal(jalali.formatJalaliWeekday('2026-02-31'), '');
+  assert.equal(jalali.formatJalaliWeekday(null), '');
+  assert.equal(jalali.formatJalaliDateWithWeekday('2026-11-04'), 'چهارشنبه ۱۴۰۵/۰۸/۱۳');
+  assert.equal(jalali.formatJalaliDateWithWeekday('2026-11-10'), 'سه‌شنبه ۱۴۰۵/۰۸/۱۹');
+  assert.equal(
+    pres.formatCompanyScorecardPeriodNote('2026-11-04', '2026-11-10'),
+    'گزارش هفتگی هلدینگ عمرانی از تاریخ چهارشنبه ۱۴۰۵/۰۸/۱۳ تا تاریخ سه‌شنبه ۱۴۰۵/۰۸/۱۹',
+  );
+  assert.equal(
+    pres.formatCompanyScorecardPeriodNote('2026-10-24', '2026-10-30'),
+    'گزارش هفتگی هلدینگ عمرانی از تاریخ شنبه ۱۴۰۵/۰۸/۰۲ تا تاریخ جمعه ۱۴۰۵/۰۸/۰۸',
+  );
+  assert.equal(pres.formatCompanyScorecardPeriodNote(null, null), null);
+});

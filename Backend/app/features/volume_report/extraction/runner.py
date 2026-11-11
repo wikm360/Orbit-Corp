@@ -1,7 +1,10 @@
 """File-level extraction: probe every sheet, parse the income ones, build the `sheet_log` stored on `vr_report_files`."""
 
+import os
 from dataclasses import dataclass, field
 from typing import Any
+
+from app.features.volume_report.extraction.evm_parser import ParsedEvm, parse_evm_sheet
 
 from app.features.volume_report.extraction.income_parser import ParsedSheet, parse_income_sheet
 from app.features.volume_report.extraction.normalize import Lexicon
@@ -13,6 +16,7 @@ from app.features.volume_report.extraction.workbook import open_workbook
 class FileExtraction:
     sheet_log: list[dict[str, Any]] = field(default_factory=list)
     sheets: list[ParsedSheet] = field(default_factory=list)
+    evm_sheets: list[ParsedEvm] = field(default_factory=list)
     suggested_company: str | None = None
     warnings: list[dict[str, Any]] = field(default_factory=list)
 
@@ -51,6 +55,16 @@ def extract_file(
         probes = probe_workbook(workbook)
         result.suggested_company = suggest_company(workbook, probes)
         for sheet, probe in zip(workbook.sheets, probes):
+            evm = None if sheet.is_hidden else parse_evm_sheet(sheet.name, sheet.rows(), os.path.basename(path))
+            if evm is not None:
+                # The EVM summary (PV/EV/AC/CPI/SPI per project) is its own data set, never an income table.
+                result.evm_sheets.append(evm)
+                result.warnings.extend({**w, "sheet": sheet.name} for w in evm.warnings)
+                result.sheet_log.append({
+                    "sheet": probe.sheet, "visibility": probe.visibility, "kind": "evm", "used": True, "reason": None,
+                    "basis": evm.basis, "evm_rows": len(evm.rows), "header_row": evm.header_row,
+                })
+                continue
             parsed = parse_income_sheet(
                 sheet.name, sheet.rows(), lexicon, period_label, (layout_overrides or {}).get(sheet.name),
                 "planned" if probe.kind == "planned" else "actual",

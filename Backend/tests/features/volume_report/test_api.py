@@ -442,3 +442,59 @@ async def test_narratives_crud_and_generate(client, tmp_path, monkeypatch):
     data = gen_res.json()
     assert len(data["items"]) == 2
     assert "پروژه زاهدان خاش" in data["items"][0]
+
+
+async def _evm_document(tmp_path, project_id, uploader_id, rows, title="گزارش مدیریت ارزش کسب شده (EVM)"):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "EVM"
+    ws.append(["شرکت نمونه"])
+    ws.append([title])
+    ws.append(["ردیف", "نام پروژه", "مبلغ قرارداد (ریال)", "M-BCWS", "PV", "EV", "ev", "AC", "CPI=ev/AC", "SPI=EV/PV"])
+    for row in rows:
+        ws.append(row)
+    path = save(wb, tmp_path, f"{uuid.uuid4().hex}.xlsx")
+    async with async_session_factory() as db:
+        doc = Document(filename="evm.xlsx", file_path=path, content_type="application/octet-stream", status=DocumentStatus.READY,
+                       content_hash=uuid.uuid4().hex + uuid.uuid4().hex, project_id=uuid.UUID(project_id), uploaded_by=uuid.UUID(uploader_id))
+        db.add(doc)
+        await db.commit()
+        return str(doc.id)
+
+
+async def test_evm_rows_are_read_per_project_company_and_holding_with_forecast_apart(client, tmp_path):
+    _, leader, leader_id, project_id, _ = await _world(client, "evm")
+    alef, be = await _company(client, leader, "شرکت الف"), await _company(client, leader, "شرکت ب")
+    docs = [
+        await _evm_document(tmp_path, project_id, leader_id, [
+            [1, "پروژه ۱", 1_000_000_000_000, 100e9, 100e9, 80e9, 60e9, 50e9, 1.2, 0.8], [2, "پروژه ۲", 500_000_000_000, 50e9, 50e9, 20e9, 15e9, 30e9, 0.5, 0.4],
+            ["جمع", None, None, 150e9, 150e9, 100e9, 75e9, 80e9, 0.94, 0.67]]),
+        await _evm_document(tmp_path, project_id, leader_id, [[1, "پروژه ۳", 9_000_000_000_000, 10e9, 10e9, 10e9, 8e9, 4e9, 2.0, 1.0]]),
+        await _evm_document(tmp_path, project_id, leader_id, [[1, "پروژه ۱", 1_000_000_000_000, 120e9, 120e9, 120e9, 90e9, 60e9, 1.5, 1.0]], title="پیش بینی مدیریت ارزش کسب شده (EVM)"),
+    ]
+    report = (await client.post(API, json={"project_id": project_id, "title": "e", "period_type": "week", "period_start": "2026-11-01",
+                                           "period_end": "2026-11-07", "period_label": "هفته"}, headers=leader)).json()
+    files = [{"document_id": docs[0], "company_id": alef}, {"document_id": docs[1], "company_id": be}, {"document_id": docs[2], "company_id": alef}]
+    assert (await client.put(f"{API}/{report['id']}/files", json={"files": files}, headers=leader)).status_code == 200
+    assert (await client.post(f"{API}/{report['id']}/run", headers=leader)).status_code == 202
+    await pipeline.run_report(uuid.UUID(report["id"]))
+
+    data = (await client.get(f"{API}/{report['id']}/evm", headers=leader)).json()
+    companies = {c["company"]: c for c in data["actual"]["companies"]}
+    a = companies["شرکت الف"]
+    assert [p["project"] for p in a["projects"]] == ["پروژه 1", "پروژه 2"]
+    assert Decimal(a["projects"][0]["pv"]) == 100 * 10**9 and Decimal(a["projects"][0]["cpi"]) == Decimal("1.2") and Decimal(a["projects"][0]["spi"]) == Decimal("0.8")
+    assert Decimal(a["total"]["ev"]) == 100 * 10**9 and Decimal(a["total"]["ac"]) == 80 * 10**9 and Decimal(a["total"]["cpi"]) == Decimal("0.94")  # 75 / 80
+    assert Decimal(a["total"]["spi"]) == Decimal("0.67") and a["reported_total"]["spi"] == "0.67"
+    assert Decimal(data["actual"]["holding"]["ev"]) == 110 * 10**9 and Decimal(data["actual"]["holding"]["ac"]) == 84 * 10**9
+    assert companies["شرکت ب"]["reported_total"] is None
+    plan = data["planned"]["companies"]
+    assert len(plan) == 1 and plan[0]["company"] == "شرکت الف" and Decimal(plan[0]["total"]["spi"]) == 1  # the forecast never mixes into the actuals
+    # re-running replaces (never duplicates) the rows
+    assert (await client.post(f"{API}/{report['id']}/run", headers=leader)).status_code == 202
+    await pipeline.run_report(uuid.UUID(report["id"]))
+    again = (await client.get(f"{API}/{report['id']}/evm", headers=leader)).json()
+    assert len(again["actual"]["companies"][0]["projects"]) + len(again["actual"]["companies"][1]["projects"]) == 3
+    # a non-member is refused
+    outsider, _ = await _register(client, "evm-outsider@example.com")
+    assert (await client.get(f"{API}/{report['id']}/evm", headers=outsider)).status_code == 403

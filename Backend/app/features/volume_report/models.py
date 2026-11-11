@@ -265,6 +265,32 @@ class Line(Base):
     created_at: Mapped[datetime] = _now()
 
 
+class EvmRow(Base):
+    """One row of an EVM summary sheet exactly as read: a project of a company, or the sheet's own "جمع" row (is_total).
+
+    Rial amounts; `cpi`/`spi` are the printed ratios and are NULL when an operand is missing (the sheet prints 0.00 then).
+    `basis`: actual = the report's own period, planned = the forecast for the period after it (same as vr_lines)."""
+
+    __tablename__ = "vr_evm_rows"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    report_file_id: Mapped[uuid.UUID] = _fk("vr_report_files", "CASCADE", index=True)
+    sheet_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    row_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    basis: Mapped[str] = mapped_column(String(10), nullable=False, default="actual", server_default="actual")
+    project_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_total: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    contract_amount: Mapped[Decimal | None] = mapped_column(Numeric(24, 2), nullable=True)
+    bcws: Mapped[Decimal | None] = mapped_column(Numeric(24, 2), nullable=True)
+    pv: Mapped[Decimal | None] = mapped_column(Numeric(24, 2), nullable=True)
+    ev: Mapped[Decimal | None] = mapped_column(Numeric(24, 2), nullable=True)
+    ev_net: Mapped[Decimal | None] = mapped_column(Numeric(24, 2), nullable=True)
+    ac: Mapped[Decimal | None] = mapped_column(Numeric(24, 2), nullable=True)
+    cpi: Mapped[Decimal | None] = mapped_column(Numeric(10, 3), nullable=True)
+    spi: Mapped[Decimal | None] = mapped_column(Numeric(10, 3), nullable=True)
+    created_at: Mapped[datetime] = _now()
+
+
 class Item(Base):
     """Catalog entry (one of the reported activities). Editable: adding an item needs no code change."""
 

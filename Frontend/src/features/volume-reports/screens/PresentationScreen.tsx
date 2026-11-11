@@ -4,11 +4,31 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { volumeReportApi } from "../api/volumeReportApi";
+import { CompanyMark, HoldingRadialOverview } from "../components/HoldingRadialOverview";
+import { SummarySlideContent, SummaryVariantBar, fitTextMaxPx } from "../components/SummarySlideViews";
 import { ErrorBox, LoadingBlock } from "../components/common";
 import { runSoon } from "../lib/defer";
-import { formatQuantity, unitLabel } from "../lib/format";
+import { unitLabel } from "../lib/format";
 import { formatJalaliDate, formatWeekLabel, toFa } from "../lib/jalali";
-import type { CatalogItem, CompanyNarrative, ReportDetail, ResultRow, ResultsResponse } from "../types";
+import {
+  DEFAULT_SUMMARY_VARIANT,
+  addDecimalStrings,
+  buildOverviewWheelCompanies,
+  computePieSlices,
+  estimateScorecardTypography,
+  estimateShareCardGeometry,
+  formatCompanyScorecardPeriodNote,
+  formatPresentationQuantity,
+  getCompanyColor,
+  isSummaryVariant,
+  mergeCoatCatalog,
+  mergeCoatResultRows,
+  splitSharePages,
+  type ScorecardTypography,
+  type ShareCardGeometry,
+  type SummaryVariant,
+} from "../lib/presentation";
+import type { CatalogItem, Company, CompanyNarrative, ReportDetail, ResultRow, ResultsResponse } from "../types";
 
 /** The slide canvas is 16in x 9in at 96dpi, so it prints 1:1 and is scaled down with CSS on screen (see globals.css). */
 const SLIDE_W = 1536;
@@ -16,15 +36,7 @@ const SLIDE_H = 864;
 const NAVY = "#252850";
 const READY_STATUSES = new Set(["awaiting_user", "needs_review", "ready", "published"]);
 const NARRATIVE_COMPANIES_PER_SLIDE = 2;
-
-const LOGOS: { match: string[]; src: string; label: string }[] = [
-  { match: ["فراگیر", "faragir"], src: "/volume-reports/logo_faragir.png", label: "فراگیر عمران نصر" },
-  { match: ["سیستان", "sistan"], src: "/volume-reports/logo_sistan.png", label: "جهاد نصر سیستان" },
-  { match: ["گلومک", "golomak"], src: "/volume-reports/logo_golomak.png", label: "گلومک سازه نصر" },
-  { match: ["آبادگران", "abadgaran"], src: "/volume-reports/logo_abadgaran.png", label: "آبادگران رفاه نصر" },
-  { match: ["محورگستر", "محور گستر", "mehvar"], src: "/volume-reports/logo_mehvar.png", label: "محور گستر نصر" },
-  { match: ["تژه", "tezhe"], src: "/volume-reports/logo_tezheh.png", label: "تژه نصر" },
-];
+const SUMMARY_VARIANT_STORAGE_KEY = "vr-presentation-summary-variant";
 
 function chunks<T>(items: T[], size: number): T[][] {
   const result: T[][] = [];
@@ -84,26 +96,12 @@ function groupByProject(rows: ResultRow[], extraRows: ResultRow[] = []): Scoreca
   return Array.from(groups.values()).sort((a, b) => a.name.localeCompare(b.name, "fa"));
 }
 
-function matchLogo(name: string) {
-  const normalized = name.toLocaleLowerCase("fa");
-  return LOGOS.find((logo) => logo.match.some((part) => normalized.includes(part)));
-}
-
-function CompanyMark({ name, size }: { name: string; size: number }) {
-  const logo = matchLogo(name);
-  if (logo) {
-    // Plain <img>: next/image can defer or skip loading in print, which left the logos blank in the PDF.
-    // eslint-disable-next-line @next/next/no-img-element
-    return <img src={logo.src} alt={logo.label} loading="eager" decoding="sync" style={{ width: size * 1.25, height: size }} className="shrink-0 object-contain" />;
-  }
-  return <span style={{ width: size, height: size }} className="grid shrink-0 place-items-center rounded-lg bg-[#252850] text-sm font-bold text-[#fed836]">{name.slice(0, 1)}</span>;
-}
-
 interface SlideSpec { key: string; render: (page: string) => ReactNode }
 
 function Slide({
   title,
   subtitle,
+  titleAside,
   headerRight,
   page,
   period,
@@ -111,6 +109,7 @@ function Slide({
 }: {
   title: string;
   subtitle?: string;
+  titleAside?: ReactNode;
   headerRight?: ReactNode;
   page: string;
   period: string;
@@ -124,11 +123,14 @@ function Slide({
         data-slide-bg="#f7f7f5"
       >
         <div className="mb-4 flex shrink-0 items-end justify-between gap-6 border-b-2 border-[#252850]/10 pb-3">
-          <div>
+          <div className="min-w-0">
             {subtitle && <p className="mb-1 text-[14px] font-semibold text-[#9b7a05]">{subtitle}</p>}
-            <h2 className="text-[32px] font-black leading-tight text-[#252850]">{title}</h2>
+            <div className="flex flex-wrap items-center gap-3.5">
+              <h2 className="shrink-0 text-[32px] font-black leading-tight text-[#252850]">{title}</h2>
+              {titleAside}
+            </div>
           </div>
-          <div className="mb-1.5 flex items-center gap-4">
+          <div className="mb-1.5 flex shrink-0 items-center gap-4">
             {headerRight}
             <span className="h-1.5 w-24 shrink-0 rounded-full bg-[#fed836]" />
           </div>
@@ -140,25 +142,6 @@ function Slide({
         </div>
       </div>
     </section>
-  );
-}
-
-function SummaryCard({ item, row }: { item: CatalogItem; row: ResultRow | undefined }) {
-  const empty = !row;
-  const title = item.key === "asphalt_total" ? "آسفالت" : item.title_fa;
-  return (
-    <div className={`flex flex-col justify-between rounded-2xl border border-[#252850]/10 bg-white p-5 shadow-sm ${empty ? "opacity-50" : ""}`}>
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-[17px] font-bold text-slate-800">{title}</p>
-        {item.key === "asphalt_total" && (
-          <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500">بیندر + توپکا</span>
-        )}
-      </div>
-      <div className="mt-3 flex items-baseline justify-between gap-2">
-        <p className="text-[32px] font-black leading-none tabular-nums text-[#252850]">{row ? formatQuantity(row.qty, item.decimals) : "—"}</p>
-        <p className="text-[14px] font-medium text-slate-400">{unitLabel(item.output_unit)}</p>
-      </div>
-    </div>
   );
 }
 
@@ -180,88 +163,356 @@ function ScorecardTable({
   showTotal: boolean;
 }) {
   const isCompany = entityType === "company";
+  const metricTitles = useMemo(
+    () => metrics.map((item) => (item.key === "asphalt_total" ? "آسفالت" : item.title_fa)),
+    [metrics],
+  );
+  const metricUnits = useMemo(() => metrics.map((item) => unitLabel(item.output_unit)), [metrics]);
+  const entityNames = useMemo(() => groups.map((g) => g.name), [groups]);
+  const hasSubtitles = useMemo(() => !isCompany && groups.some((g) => Boolean(g.companyName)), [groups, isCompany]);
+
+  const { hasPlanned, formattedValues, formattedPlanned, maxVal, maxPlan } = useMemo(() => {
+    const vals: string[] = [];
+    const plans: string[] = [];
+    for (const group of groups) {
+      const planGroup = plannedGroupMap?.get(group.id);
+      for (const item of metrics) {
+        const row = group.rows.get(item.key);
+        if (row) vals.push(formatPresentationQuantity(row.qty));
+        const planRow = planGroup?.get(item.key);
+        if (planRow && Number.parseFloat(planRow.qty || "0") > 0) {
+          plans.push(`برنامه: ${formatPresentationQuantity(planRow.qty)}`);
+        }
+      }
+    }
+    if (showTotal) {
+      for (const item of metrics) {
+        const row = holdingMap.get(item.key);
+        if (row) vals.push(formatPresentationQuantity(row.qty));
+        const planRow = plannedHoldingMap?.get(item.key);
+        if (planRow && Number.parseFloat(planRow.qty || "0") > 0) {
+          plans.push(`برنامه: ${formatPresentationQuantity(planRow.qty)}`);
+        }
+      }
+    }
+    const maxV = vals.reduce((a, b) => (b.length > a.length ? b : a), "۱۰٬۰۰۰");
+    const maxP = plans.reduce((a, b) => (b.length > a.length ? b : a), "");
+    return {
+      hasPlanned: plans.length > 0,
+      formattedValues: vals,
+      formattedPlanned: plans,
+      maxVal: maxV,
+      maxPlan: maxP || undefined,
+    };
+  }, [groups, holdingMap, metrics, plannedGroupMap, plannedHoldingMap, showTotal]);
+
+  const fallback = useMemo(
+    () =>
+      estimateScorecardTypography({
+        metricTitles,
+        metricUnits,
+        entityNames,
+        entityType,
+        rowCount: groups.length,
+        showTotal,
+        hasSubtitles,
+        hasPlanned,
+        maxFormattedValue: maxVal,
+        maxPlannedText: maxPlan,
+      }),
+    [entityNames, entityType, groups.length, hasPlanned, hasSubtitles, maxPlan, maxVal, metricTitles, metricUnits, showTotal],
+  );
+
+  const measurementKey = useMemo(
+    () =>
+      [
+        entityType,
+        String(showTotal),
+        metricTitles.join(","),
+        entityNames.join(","),
+        formattedValues.join(","),
+        formattedPlanned.join(","),
+      ].join("|"),
+    [entityNames, entityType, formattedPlanned, formattedValues, metricTitles, showTotal],
+  );
+
+  const [measured, setMeasured] = useState<{ key: string; typography: ScorecardTypography } | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const probeRef = useRef<HTMLSpanElement | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const measure = () => {
+      if (cancelled) return;
+      const container = containerRef.current;
+      const probe = probeRef.current;
+      if (!container || !probe || container.clientWidth === 0 || container.clientHeight === 0) return;
+
+      const canvasW = container.clientWidth;
+      const canvasH = container.clientHeight;
+      const est = estimateScorecardTypography({
+        metricTitles,
+        metricUnits,
+        entityNames,
+        entityType,
+        rowCount: groups.length,
+        showTotal,
+        hasSubtitles,
+        hasPlanned,
+        maxFormattedValue: maxVal,
+        maxPlannedText: maxPlan,
+        canvasW,
+        canvasH,
+      });
+
+      const metricColW = (canvasW - 2 - est.entityColW) / Math.max(metrics.length, 1);
+      const innerMetricW = Math.max(metricColW - 8, 48);
+
+      probe.style.fontWeight = "500";
+      probe.style.fontVariantNumeric = "normal";
+      let headerUnitPx = Math.min(15, Math.max(11, Math.round(est.headerHeightPx * 0.16)));
+      for (const unit of metricUnits) {
+        if (!unit) continue;
+        headerUnitPx = Math.min(headerUnitPx, fitTextMaxPx(probe, unit, 10, headerUnitPx, innerMetricW));
+      }
+
+      probe.style.fontWeight = "700";
+      const headerTitleCapH = Math.floor((est.headerHeightPx - headerUnitPx * 1.25 - 14) / (2 * 1.2));
+      let headerTitlePx = Math.max(12, Math.min(21, headerTitleCapH));
+      for (const title of metricTitles) {
+        for (const word of title.split(/\s+/).filter(Boolean)) {
+          headerTitlePx = Math.min(headerTitlePx, fitTextMaxPx(probe, word, 11, headerTitlePx, innerMetricW));
+        }
+        headerTitlePx = Math.min(headerTitlePx, fitTextMaxPx(probe, title, 11, headerTitlePx, innerMetricW * 1.85));
+      }
+
+      probe.style.fontWeight = "600";
+      probe.style.fontVariantNumeric = "tabular-nums";
+      let planTextPx = hasPlanned ? Math.max(10, Math.min(14, Math.floor(est.rowHeightPx * 0.2))) : 11;
+      for (const plan of formattedPlanned) {
+        planTextPx = Math.min(planTextPx, fitTextMaxPx(probe, plan, 10, planTextPx, innerMetricW));
+      }
+
+      probe.style.fontWeight = "800";
+      const vertCellBudget = est.rowHeightPx - (hasPlanned ? Math.ceil(planTextPx * 1.35) + 10 : 10);
+      let cellValuePx = Math.max(13, Math.min(34, Math.floor(vertCellBudget * 0.68)));
+      for (const val of formattedValues) {
+        if (!val || val === "—") continue;
+        cellValuePx = Math.min(cellValuePx, fitTextMaxPx(probe, val, 13, cellValuePx, innerMetricW));
+      }
+
+      probe.style.fontWeight = "900";
+      let totalValuePx = Math.max(cellValuePx, Math.min(cellValuePx + 1, Math.floor(vertCellBudget * 0.7)));
+      for (const val of formattedValues) {
+        if (!val || val === "—") continue;
+        totalValuePx = Math.min(totalValuePx, fitTextMaxPx(probe, val, 13, totalValuePx, innerMetricW));
+      }
+
+      probe.style.fontWeight = "700";
+      probe.style.fontVariantNumeric = "normal";
+      const innerEntityW = Math.max(est.entityColW - (isCompany ? est.logoSizePx + 30 : 24), 90);
+      const entityVertBudget = est.rowHeightPx - (hasSubtitles ? Math.ceil(est.entitySubPx * 1.3) + 10 : 12);
+      let entityNamePx = Math.max(14, Math.min(23, Math.floor(entityVertBudget * 0.55)));
+      for (const name of entityNames) {
+        entityNamePx = Math.min(entityNamePx, fitTextMaxPx(probe, name, 13, entityNamePx, innerEntityW * 1.85));
+      }
+
+      const headerEntityPx = Math.max(15, Math.min(22, headerTitlePx + 3));
+      const totalLabelPx = Math.max(15, Math.min(23, entityNamePx + 1));
+
+      setMeasured({
+        key: measurementKey,
+        typography: {
+          ...est,
+          headerTitlePx,
+          headerUnitPx,
+          headerEntityPx,
+          entityNamePx,
+          cellValuePx,
+          totalValuePx,
+          totalLabelPx,
+          planTextPx,
+        },
+      });
+    };
+
+    const cancelSoon = runSoon(measure);
+    void document.fonts?.ready.then(measure);
+
+    return () => {
+      cancelled = true;
+      cancelSoon();
+    };
+  }, [
+    entityNames,
+    entityType,
+    formattedPlanned,
+    formattedValues,
+    groups.length,
+    hasPlanned,
+    hasSubtitles,
+    isCompany,
+    maxPlan,
+    maxVal,
+    measurementKey,
+    metricTitles,
+    metricUnits,
+    metrics.length,
+    showTotal,
+  ]);
+
+  const typo = measured?.key === measurementKey ? measured.typography : fallback;
+
   return (
-    <div className="overflow-hidden rounded-2xl border border-[#252850]/10 bg-white shadow-sm">
-      <table className="w-full table-fixed border-collapse text-[15px]">
-        <thead className="bg-[#252850] text-white">
-          <tr>
-            <th className="w-[210px] px-3.5 py-3 text-start text-[15px] font-bold">
-              {isCompany ? "شرکت" : "پروژه"}
-            </th>
-            {metrics.map((item) => (
-              <th key={item.key} className="px-1.5 py-2.5 text-center text-[13.5px] font-semibold leading-snug">
-                <div className="truncate">{item.key === "asphalt_total" ? "آسفالت" : item.title_fa}</div>
-                <span className="block text-[11px] font-normal text-white/60">{unitLabel(item.output_unit)}</span>
+    <div ref={containerRef} className="relative flex min-h-0 flex-1 flex-col">
+      <span
+        ref={probeRef}
+        aria-hidden="true"
+        className="pointer-events-none invisible absolute -top-[9999px] left-0 whitespace-nowrap"
+      />
+      <div
+        className="overflow-hidden rounded-2xl border border-[#252850]/15 bg-white shadow-sm"
+        style={{ height: `${typo.tableHeightPx}px` }}
+      >
+        <table className="h-full w-full table-fixed border-collapse" style={{ height: `${typo.tableHeightPx}px` }}>
+          <thead className="bg-[#252850] text-white" style={{ height: `${typo.headerHeightPx}px` }}>
+            <tr>
+              <th
+                className="text-start font-extrabold"
+                style={{ width: `${typo.entityColW}px`, paddingInline: "12px", fontSize: `${typo.headerEntityPx}px` }}
+              >
+                {isCompany ? "شرکت" : "پروژه"}
               </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {groups.map((group) => {
-            const planGroup = plannedGroupMap?.get(group.id);
-            return (
-              <tr key={group.id} className="h-[46px] border-t border-slate-100 odd:bg-white even:bg-slate-50/70">
-                <th scope="row" className="px-3.5 text-start font-bold text-slate-800">
-                  {isCompany ? (
-                    <span className="flex items-center gap-2.5">
-                      <CompanyMark name={group.name} size={26} />
-                      <span className="truncate text-[14.5px]">{group.name}</span>
-                    </span>
-                  ) : (
-                    <div className="flex flex-col min-w-0">
-                      <span className="truncate text-[14.5px] font-bold text-slate-800">{group.name}</span>
-                      {group.companyName && (
-                        <span className="truncate text-[11.5px] font-normal text-slate-400">{group.companyName}</span>
-                      )}
-                    </div>
-                  )}
+              {metrics.map((item, idx) => (
+                <th
+                  key={item.key}
+                  className="border-s border-white/10 px-1 py-1.5 text-center font-bold leading-tight"
+                >
+                  <div className="line-clamp-2" style={{ fontSize: `${typo.headerTitlePx}px`, lineHeight: 1.2 }}>
+                    {metricTitles[idx]}
+                  </div>
+                  <span
+                    className="mt-0.5 block font-medium leading-tight text-white/75"
+                    style={{ fontSize: `${typo.headerUnitPx}px` }}
+                  >
+                    {metricUnits[idx]}
+                  </span>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {groups.map((group) => {
+              const planGroup = plannedGroupMap?.get(group.id);
+              return (
+                <tr
+                  key={group.id}
+                  className="border-t border-slate-200/70 odd:bg-white even:bg-slate-50/75"
+                  style={{ height: `${typo.rowHeightPx}px` }}
+                >
+                  <th
+                    scope="row"
+                    className="text-start align-middle font-bold text-[#252850]"
+                    style={{ paddingInline: "12px" }}
+                  >
+                    {isCompany ? (
+                      <span className="flex items-center gap-2.5">
+                        <CompanyMark name={group.name} size={typo.logoSizePx} />
+                        <span
+                          className="line-clamp-2 font-bold leading-snug"
+                          style={{ fontSize: `${typo.entityNamePx}px` }}
+                        >
+                          {group.name}
+                        </span>
+                      </span>
+                    ) : (
+                      <div className="flex min-w-0 flex-col">
+                        <span
+                          className="line-clamp-2 font-bold leading-snug text-[#252850]"
+                          style={{ fontSize: `${typo.entityNamePx}px` }}
+                        >
+                          {group.name}
+                        </span>
+                        {group.companyName && (
+                          <span
+                            className="mt-0.5 truncate font-medium text-slate-400"
+                            style={{ fontSize: `${typo.entitySubPx}px` }}
+                          >
+                            {group.companyName}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </th>
+                  {metrics.map((item) => {
+                    const row = group.rows.get(item.key);
+                    const planRow = planGroup?.get(item.key);
+                    const hasPlan = planRow && Number.parseFloat(planRow.qty || "0") > 0;
+                    return (
+                      <td key={item.key} className="border-s border-slate-100 px-1 py-1 text-center align-middle tabular-nums">
+                        <div
+                          className="whitespace-nowrap font-extrabold leading-none text-[#252850]"
+                          style={{ fontSize: `${typo.cellValuePx}px` }}
+                        >
+                          {row ? formatPresentationQuantity(row.qty) : <span className="font-normal text-slate-300">—</span>}
+                        </div>
+                        {hasPlan && (
+                          <div
+                            className="mt-1 whitespace-nowrap font-semibold leading-none text-slate-500"
+                            style={{ fontSize: `${typo.planTextPx}px` }}
+                          >
+                            برنامه: {formatPresentationQuantity(planRow.qty)}
+                          </div>
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+            {showTotal && (
+              <tr
+                className="border-t-2 border-[#252850] bg-[#fed836]/25"
+                style={{ height: `${typo.rowHeightPx}px` }}
+              >
+                <th
+                  scope="row"
+                  className="text-start align-middle font-black text-[#252850]"
+                  style={{ paddingInline: "12px", fontSize: `${typo.totalLabelPx}px` }}
+                >
+                  جمع هلدینگ
                 </th>
                 {metrics.map((item) => {
-                  const row = group.rows.get(item.key);
-                  const planRow = planGroup?.get(item.key);
+                  const row = holdingMap.get(item.key);
+                  const planRow = plannedHoldingMap?.get(item.key);
                   const hasPlan = planRow && Number.parseFloat(planRow.qty || "0") > 0;
                   return (
-                    <td key={item.key} className="px-1 py-1 text-center tabular-nums">
-                      <div className="text-[14px] font-bold text-[#252850]">
-                        {row ? formatQuantity(row.qty, item.decimals) : <span className="text-slate-300 font-normal">—</span>}
+                    <td
+                      key={item.key}
+                      className="border-s border-[#252850]/10 px-1 py-1 text-center align-middle tabular-nums"
+                    >
+                      <div
+                        className="whitespace-nowrap font-black leading-none text-[#252850]"
+                        style={{ fontSize: `${typo.totalValuePx}px` }}
+                      >
+                        {row ? formatPresentationQuantity(row.qty) : <span className="font-normal text-slate-300">—</span>}
                       </div>
                       {hasPlan && (
-                        <div className="text-[10.5px] font-medium text-slate-500">
-                          برنامه: {formatQuantity(planRow.qty, item.decimals)}
+                        <div
+                          className="mt-1 whitespace-nowrap font-bold leading-none text-[#9b7a05]"
+                          style={{ fontSize: `${typo.planTextPx}px` }}
+                        >
+                          برنامه: {formatPresentationQuantity(planRow.qty)}
                         </div>
                       )}
                     </td>
                   );
                 })}
               </tr>
-            );
-          })}
-          {showTotal && (
-            <tr className="h-[50px] border-t-2 border-[#252850] bg-[#fed836]/25">
-              <th scope="row" className="px-3.5 text-start text-[15.5px] font-black text-[#252850]">
-                جمع هلدینگ
-              </th>
-              {metrics.map((item) => {
-                const row = holdingMap.get(item.key);
-                const planRow = plannedHoldingMap?.get(item.key);
-                const hasPlan = planRow && Number.parseFloat(planRow.qty || "0") > 0;
-                return (
-                  <td key={item.key} className="px-1 py-1 text-center tabular-nums">
-                    <div className="text-[14.5px] font-black text-[#252850]">
-                      {row ? formatQuantity(row.qty, item.decimals) : <span className="text-slate-300 font-normal">—</span>}
-                    </div>
-                    {hasPlan && (
-                      <div className="text-[11px] font-bold text-[#9b7a05]">
-                        برنامه: {formatQuantity(planRow.qty, item.decimals)}
-                      </div>
-                    )}
-                  </td>
-                );
-              })}
-            </tr>
-          )}
-        </tbody>
-      </table>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -277,154 +528,204 @@ interface CompanyContribution {
 interface ItemShareData {
   item: CatalogItem;
   totalQty: number;
+  totalQtyStr: string;
   contributions: CompanyContribution[];
 }
 
-const COMPANY_PALETTE: { match: string[]; color: string; label: string }[] = [
-  { match: ["محورگستر", "محور گستر", "mehvar"], color: "#252850", label: "محور گستر نصر" },
-  { match: ["آبادگران", "abadgaran"], color: "#d97706", label: "آبادگران رفاه نصر" },
-  { match: ["فراگیر", "faragir"], color: "#059669", label: "فراگیر عمران نصر" },
-  { match: ["گلومک", "golomak"], color: "#7c3aed", label: "گلومک سازه نصر" },
-  { match: ["سیستان", "sistan"], color: "#0284c7", label: "جهاد نصر سیستان" },
-  { match: ["تژه", "tezhe"], color: "#e11d48", label: "تژه نصر" },
-];
-
-const FALLBACK_COLORS = ["#252850", "#d97706", "#059669", "#7c3aed", "#0284c7", "#e11d48", "#0891b2", "#ea580c", "#4f46e5", "#16a34a"];
-
-function getCompanyColor(name: string, index = 0): string {
-  const normalized = name.toLocaleLowerCase("fa");
-  const found = COMPANY_PALETTE.find((item) => item.match.some((part) => normalized.includes(part)));
-  return found?.color ?? FALLBACK_COLORS[index % FALLBACK_COLORS.length]!;
-}
-
-function DonutChart({
+function PieChart({
   contributions,
-  totalFormatted,
-  unit,
-  size = 146,
-  strokeWidth = 18,
+  size,
 }: {
   contributions: CompanyContribution[];
-  totalFormatted: string;
-  unit: string;
-  size?: number;
-  strokeWidth?: number;
+  size: number;
 }) {
-  const center = size / 2;
-  const radius = center - strokeWidth / 2 - 2;
-  const circumference = 2 * Math.PI * radius;
-  const hasMultiple = contributions.length > 1;
-  const gap = hasMultiple ? 2.5 : 0;
-
-  const slices: { c: CompanyContribution; strokeLength: number; dashoffset: number }[] = [];
-  let offset = 0;
-  for (const c of contributions) {
-    const sliceLength = (c.pct / 100) * circumference;
-    const strokeLength = Math.max(sliceLength - gap, 1);
-    slices.push({ c, strokeLength, dashoffset: -offset });
-    offset += sliceLength;
+  if (contributions.length === 0) {
+    const emptyR = Math.max(40, size / 2 - 4);
+    return (
+      <div className="relative flex items-center justify-center" style={{ width: size, height: size }}>
+        <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+          <circle cx={size / 2} cy={size / 2} r={emptyR} fill="#f8fafc" stroke="#e2e8f0" strokeWidth={2} />
+        </svg>
+        <span className="pointer-events-none absolute text-center text-[13px] font-semibold text-slate-400">
+          فاقد تفکیک شرکتی
+        </span>
+      </div>
+    );
   }
+
+  const slices = computePieSlices(contributions, size);
+  const center = size / 2;
+  const radius = size / 2 - 3;
 
   return (
     <div className="relative flex items-center justify-center" style={{ width: size, height: size }}>
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="overflow-visible">
-        {/* Background track */}
-        <circle
-          cx={center}
-          cy={center}
-          r={radius}
-          fill="none"
-          stroke="#f1f5f9"
-          strokeWidth={strokeWidth}
-        />
-
-        {/* Slices */}
-        {slices.map(({ c, strokeLength, dashoffset }) => (
-          <circle
-            key={c.companyId}
-            cx={center}
-            cy={center}
-            r={radius}
-            fill="none"
-            stroke={c.color}
-            strokeWidth={strokeWidth}
-            strokeDasharray={`${strokeLength} ${circumference - strokeLength}`}
-            strokeDashoffset={dashoffset}
-            transform={`rotate(-90 ${center} ${center})`}
-            className="transition-all"
-          >
-            <title>{`${c.companyName}: %${toFa(Math.round(c.pct))}`}</title>
-          </circle>
-        ))}
+        {slices.map((s) =>
+          s.isFullCircle ? (
+            <circle key={s.companyId} cx={center} cy={center} r={radius} fill={s.color}>
+              <title>{`${s.companyName}: ${s.labelText}`}</title>
+            </circle>
+          ) : (
+            <path
+              key={s.companyId}
+              d={s.pathD}
+              fill={s.color}
+              stroke="#ffffff"
+              strokeWidth={2.5}
+              strokeLinejoin="round"
+            >
+              <title>{`${s.companyName}: ${s.labelText}`}</title>
+            </path>
+          ),
+        )}
       </svg>
 
-      {/* Center content */}
-      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-2 text-center">
-        <span className="text-[10px] font-semibold text-slate-400">جمع کل</span>
-        <span className="text-[15px] font-black leading-tight text-[#252850] tabular-nums">
-          {totalFormatted}
-        </span>
-        <span className="text-[10px] font-bold text-slate-400">{unit}</span>
+      {slices.map((s) =>
+        s.isOutside ? (
+          <span
+            key={s.companyId}
+            className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded-full border bg-white/95 px-1.5 py-0.5 font-black leading-none shadow-sm tabular-nums"
+            style={{
+              left: `${s.labelX}px`,
+              top: `${s.labelY}px`,
+              color: s.color,
+              borderColor: `${s.color}40`,
+              fontSize: `${s.labelFontPx}px`,
+            }}
+          >
+            {s.labelText}
+          </span>
+        ) : (
+          <span
+            key={s.companyId}
+            className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 whitespace-nowrap font-black leading-none text-white tabular-nums"
+            style={{
+              left: `${s.labelX}px`,
+              top: `${s.labelY}px`,
+              fontSize: `${s.labelFontPx}px`,
+              textShadow: "0 1px 3px rgba(15, 23, 42, 0.45)",
+            }}
+          >
+            {s.labelText}
+          </span>
+        ),
+      )}
+    </div>
+  );
+}
+
+function ShareCard({
+  data,
+  geo,
+  chartBoxRef,
+}: {
+  data: ItemShareData;
+  geo: ShareCardGeometry;
+  chartBoxRef?: (el: HTMLDivElement | null) => void;
+}) {
+  const { item, totalQtyStr, contributions } = data;
+  const title = item.key === "asphalt_total" ? "آسفالت" : item.title_fa;
+  const unit = unitLabel(item.output_unit);
+  const formattedTotal = formatPresentationQuantity(totalQtyStr);
+
+  return (
+    <div
+      className="flex min-h-0 flex-col overflow-hidden rounded-3xl border border-[#252850]/15 bg-white shadow-sm"
+      style={{ paddingInline: "14px", paddingBlock: "10px" }}
+    >
+      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-slate-100 pb-2">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span
+            className="truncate font-black leading-tight text-[#252850]"
+            style={{ fontSize: `${geo.titlePx}px` }}
+          >
+            {title}
+          </span>
+          {item.key === "asphalt_total" && (
+            <span className="shrink-0 rounded-md border border-[#252850]/15 bg-[#252850]/[0.05] px-1.5 py-0.5 text-[10.5px] font-semibold text-[#252850]/80">
+              بیندر + توپکا
+            </span>
+          )}
+        </div>
+        <div className="flex shrink-0 items-baseline gap-1 rounded-xl border border-[#252850]/12 bg-[#252850]/[0.05] px-2.5 py-0.5">
+          <span
+            className="font-black leading-none text-[#252850] tabular-nums"
+            style={{ fontSize: `${geo.totalPx}px` }}
+          >
+            {formattedTotal}
+          </span>
+          <span
+            className="font-bold leading-none text-[#252850]/75"
+            style={{ fontSize: `${geo.unitPx}px` }}
+          >
+            {unit}
+          </span>
+        </div>
+      </div>
+
+      <div ref={chartBoxRef} className="flex min-h-0 min-w-0 flex-1 items-center justify-center pt-1">
+        <PieChart contributions={contributions} size={geo.pieSizePx} />
       </div>
     </div>
   );
 }
 
-function DonutShareCard({ data }: { data: ItemShareData }) {
-  const { item, totalQty, contributions } = data;
-  const title = item.key === "asphalt_total" ? "آسفالت" : item.title_fa;
-  const unit = unitLabel(item.output_unit);
-  const formattedTotal = formatQuantity(totalQty.toString(), item.decimals);
+function ShareGrid({ items }: { items: ItemShareData[] }) {
+  const fallback = useMemo(() => estimateShareCardGeometry(items.length), [items.length]);
+  const measurementKey = useMemo(
+    () => `${items.length}:${items.map((i) => i.item.key).join(",")}`,
+    [items],
+  );
+  const [measured, setMeasured] = useState<{ key: string; geo: ShareCardGeometry } | null>(null);
+  const chartBoxRef = useRef<HTMLDivElement | null>(null);
+
+  const setFirstChartBoxRef = useCallback((el: HTMLDivElement | null) => {
+    chartBoxRef.current = el;
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const measure = () => {
+      if (cancelled) return;
+      const box = chartBoxRef.current;
+      if (!box || box.clientWidth === 0 || box.clientHeight === 0) return;
+      const pieSizePx = Math.max(160, Math.min(460, Math.floor(Math.min(box.clientWidth, box.clientHeight) - 6)));
+      setMeasured({
+        key: measurementKey,
+        geo: {
+          ...fallback,
+          pieSizePx,
+        },
+      });
+    };
+
+    const cancelSoon = runSoon(measure);
+    void document.fonts?.ready.then(measure);
+
+    return () => {
+      cancelled = true;
+      cancelSoon();
+    };
+  }, [fallback, measurementKey]);
+
+  const geo = measured?.key === measurementKey ? measured.geo : fallback;
 
   return (
-    <div className="flex min-h-0 flex-col justify-between rounded-3xl border border-[#252850]/10 bg-white p-4 shadow-sm">
-      {/* Header */}
-      <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
-        <div className="flex items-center gap-2">
-          <span className="text-[16px] font-black text-[#252850]">{title}</span>
-          {item.key === "asphalt_total" && (
-            <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[10.5px] font-semibold text-slate-500">
-              بیندر + توپکا
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* Donut Chart */}
-      <div className="my-2.5 flex items-center justify-center">
-        <DonutChart
-          contributions={contributions}
-          totalFormatted={formattedTotal}
-          unit={unit}
-          size={146}
-          strokeWidth={18}
+    <div
+      className="grid min-h-0 flex-1 gap-4"
+      style={{
+        gridTemplateColumns: `repeat(${geo.cols}, minmax(0, 1fr))`,
+        gridTemplateRows: `repeat(${geo.rows}, minmax(0, 1fr))`,
+      }}
+    >
+      {items.map((data, index) => (
+        <ShareCard
+          key={data.item.key}
+          data={data}
+          geo={geo}
+          chartBoxRef={index === 0 ? setFirstChartBoxRef : undefined}
         />
-      </div>
-
-      {/* Company Share Pills */}
-      <div className="flex flex-wrap items-center justify-center gap-1.5 pt-1">
-        {contributions.length === 0 ? (
-          <span className="text-[11.5px] text-slate-400">فاقد عملکرد در این دوره</span>
-        ) : (
-          contributions.map((c) => (
-            <div
-              key={c.companyId}
-              className="flex items-center gap-1.5 rounded-full border border-slate-200/70 bg-slate-50/90 px-2.5 py-0.5 shadow-2xs"
-            >
-              <span
-                className="h-2 w-2 shrink-0 rounded-full"
-                style={{ backgroundColor: c.color }}
-              />
-              <span className="max-w-[110px] truncate text-[11.5px] font-bold text-slate-700">
-                {c.companyName}
-              </span>
-              <span className="text-[12px] font-black tabular-nums" style={{ color: c.color }}>
-                %{toFa(Math.round(c.pct))}
-              </span>
-            </div>
-          ))
-        )}
-      </div>
+      ))}
     </div>
   );
 }
@@ -469,7 +770,7 @@ function CompanyNarrativeCard({
           </div>
         </div>
         <div
-          className="flex h-9 w-9 items-center justify-center rounded-2xl text-[14px] font-black text-white shadow-xs"
+          className="flex h-9 w-9 items-center justify-center rounded-2xl text-[14px] font-black text-white shadow-sm"
           style={{ backgroundColor: accentColor }}
         >
           {toFa(String(index + 1).padStart(2, "0"))}
@@ -537,6 +838,7 @@ function getSlideBackground(node: HTMLElement): string {
 async function downloadPdf(fileName: string, onProgress: (done: number, total: number) => void) {
   const nodes = Array.from(document.querySelectorAll<HTMLElement>(".presentation-page .slide-canvas"));
   if (!nodes.length) throw new Error("اسلایدی برای خروجی وجود ندارد.");
+  if (document.fonts?.ready) await document.fonts.ready;
   const [{ toJpeg }, { jsPDF }] = await Promise.all([import("html-to-image"), import("jspdf")]);
 
   const pdf = new jsPDF({ orientation: "landscape", unit: "px", format: [SLIDE_W, SLIDE_H], hotfixes: ["px_scaling"], compress: true });
@@ -576,10 +878,41 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
   const [holdingPlanned, setHoldingPlanned] = useState<ResultsResponse | null>(null);
   const [companyPlannedRows, setCompanyPlannedRows] = useState<ResultRow[]>([]);
   const [sitePlannedRows, setSitePlannedRows] = useState<ResultRow[]>([]);
+  const [settingsCompanies, setSettingsCompanies] = useState<Company[]>([]);
   const [error, setError] = useState<unknown>(null);
   const [exporting, setExporting] = useState<{ done: number; total: number } | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [summaryVariant, setSummaryVariant] = useState<SummaryVariant>(DEFAULT_SUMMARY_VARIANT);
   const { scale, ref: pageRef } = useSlideScale();
+
+  useEffect(() => {
+    return runSoon(() => {
+      try {
+        const param = new URLSearchParams(window.location.search).get("summary");
+        if (isSummaryVariant(param)) {
+          setSummaryVariant(param);
+          return;
+        }
+        const saved = window.localStorage.getItem(SUMMARY_VARIANT_STORAGE_KEY);
+        if (isSummaryVariant(saved)) setSummaryVariant(saved);
+      } catch {
+        // Ignore storage access failures in restricted environments.
+      }
+    });
+  }, []);
+
+  const handleSelectSummaryVariant = useCallback((next: SummaryVariant) => {
+    setSummaryVariant(next);
+    try {
+      window.localStorage.setItem(SUMMARY_VARIANT_STORAGE_KEY, next);
+    } catch {
+      // Ignore storage access failures.
+    }
+  }, []);
+
+  const scrollToSummarySlide = useCallback(() => {
+    document.getElementById("slide-summary")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
 
   const load = useCallback(async () => {
     setError(null);
@@ -593,6 +926,7 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
         companyPlannedResult,
         holdingPlannedResult,
         sitePlannedResult,
+        companySettings,
       ] = await Promise.all([
         volumeReportApi.get(reportId),
         volumeReportApi.catalog(),
@@ -602,6 +936,7 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
         volumeReportApi.results(reportId, "company", [], "planned").catch(() => null),
         volumeReportApi.results(reportId, "holding", [], "planned").catch(() => null),
         volumeReportApi.results(reportId, "site", [], "planned").catch(() => null),
+        volumeReportApi.settings.companies().catch(() => [] as Company[]),
       ]);
       setReport(detail);
       setCatalog(items);
@@ -611,6 +946,7 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
       setCompanyPlannedRows(companyPlannedResult?.rows ?? []);
       setHoldingPlanned(holdingPlannedResult ?? null);
       setSitePlannedRows(sitePlannedResult?.rows ?? []);
+      setSettingsCompanies(companySettings);
     } catch (reason) {
       setError(reason);
     }
@@ -635,16 +971,22 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
 
   const slides = useMemo<SlideSpec[]>(() => {
     if (!report || !holding) return [];
-    const EXCLUDED_ITEM_KEYS = new Set(["asphalt_binder", "asphalt_topka"]);
-    const visibleItems = catalog.filter((item) => (!item.is_rollup || item.key === "asphalt_total") && !EXCLUDED_ITEM_KEYS.has(item.key));
-    const holdingMap = new Map(holding.rows.map((row) => [row.item_key, row]));
-    const holdingPlannedMap = new Map((holdingPlanned?.rows ?? []).map((row) => [row.item_key, row]));
-    const companies = groupByCompany(companyRows, companyPlannedRows);
-    const projects = groupByProject(siteRows, sitePlannedRows);
+    const { items: visibleItems, coatUnit, coatDecimals } = mergeCoatCatalog(catalog);
+    const mergedHoldingRows = mergeCoatResultRows(holding.rows, coatUnit, coatDecimals);
+    const mergedHoldingPlannedRows = mergeCoatResultRows(holdingPlanned?.rows ?? [], coatUnit, coatDecimals);
+    const mergedCompanyRows = mergeCoatResultRows(companyRows, coatUnit, coatDecimals);
+    const mergedCompanyPlannedRows = mergeCoatResultRows(companyPlannedRows, coatUnit, coatDecimals);
+    const mergedSiteRows = mergeCoatResultRows(siteRows, coatUnit, coatDecimals);
+    const mergedSitePlannedRows = mergeCoatResultRows(sitePlannedRows, coatUnit, coatDecimals);
+
+    const holdingMap = new Map(mergedHoldingRows.map((row) => [row.item_key, row]));
+    const holdingPlannedMap = new Map(mergedHoldingPlannedRows.map((row) => [row.item_key, row]));
+    const companies = groupByCompany(mergedCompanyRows, mergedCompanyPlannedRows);
+    const projects = groupByProject(mergedSiteRows, mergedSitePlannedRows);
     const period = weekSubtitle || report.period_label;
     const hasAnyReportPlanned =
-      companyPlannedRows.some((r) => Number.parseFloat(r.qty || "0") > 0) ||
-      sitePlannedRows.some((r) => Number.parseFloat(r.qty || "0") > 0);
+      mergedCompanyPlannedRows.some((r) => Number.parseFloat(r.qty || "0") > 0) ||
+      mergedSitePlannedRows.some((r) => Number.parseFloat(r.qty || "0") > 0);
     const result: SlideSpec[] = [];
 
     result.push({
@@ -703,33 +1045,31 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
       ),
     });
 
-    const overviewStats = [
-      { label: "شرکت‌های دارای عملکرد", value: toFa(companies.length) },
-      { label: "پروژه‌های دارای عملکرد", value: toFa(projects.length) },
-    ];
-    const logoCols = companies.length > 6 ? 4 : 3;
+    const companySites = new Map<string, Set<string>>();
+    for (const row of [...mergedSiteRows, ...mergedSitePlannedRows]) {
+      const compKey = row.company_id ?? row.company;
+      const siteKey = row.site_id ?? row.site;
+      if (!compKey || !siteKey) continue;
+      let sites = companySites.get(compKey);
+      if (!sites) {
+        sites = new Set();
+        companySites.set(compKey, sites);
+      }
+      sites.add(siteKey);
+    }
+    const overviewCompanies = buildOverviewWheelCompanies(
+      companies.map((company) => ({
+        id: company.id,
+        name: company.name,
+        projectCount: (companySites.get(company.id) ?? companySites.get(company.name))?.size ?? 0,
+      })),
+      settingsCompanies,
+    );
     result.push({
       key: "overview",
       render: (page) => (
         <Slide title="نمای کلی گزارش" subtitle={period} page={page} period={period}>
-          <div className="grid grid-cols-2 gap-6">
-            {overviewStats.map((stat) => (
-              <div key={stat.label} className="rounded-3xl border border-[#252850]/10 bg-white p-6">
-                <p className="text-[18px] text-slate-500">{stat.label}</p>
-                <p className="mt-3 text-[56px] font-black leading-none tabular-nums text-[#252850]">{stat.value}</p>
-              </div>
-            ))}
-          </div>
-          <div className="mt-6 grid min-h-0 flex-1 gap-5" style={{ gridTemplateColumns: `repeat(${logoCols}, minmax(0, 1fr))`, gridAutoRows: "1fr" }}>
-            {companies.map((company) => (
-              <div key={company.id} className="flex items-center gap-5 rounded-3xl border border-[#252850]/10 bg-white px-6">
-                <CompanyMark name={company.name} size={72} />
-                <div className="min-w-0">
-                  <p className="text-[24px] font-black leading-snug text-[#252850]">{company.name}</p>
-                </div>
-              </div>
-            ))}
-          </div>
+          <HoldingRadialOverview companies={overviewCompanies} totalProjects={projects.length} />
         </Slide>
       ),
     });
@@ -737,16 +1077,25 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
     result.push({
       key: "summary",
       render: (page) => (
-        <Slide title="خلاصه عملکرد هلدینگ" subtitle={period} page={page} period={period}>
-          <div className="grid min-h-0 flex-1 grid-cols-4 gap-4" style={{ gridAutoRows: "1fr" }}>
-            {visibleItems.map((item) => <SummaryCard key={item.key} item={item} row={holdingMap.get(item.key)} />)}
+        <>
+          <div id="slide-summary" className="no-print">
+            <SummaryVariantBar variant={summaryVariant} onSelect={handleSelectSummaryVariant} compact />
           </div>
-        </Slide>
+          <Slide title="خلاصه عملکرد هلدینگ" subtitle={period} page={page} period={period}>
+            <SummarySlideContent
+              variant={summaryVariant}
+              items={visibleItems}
+              holdingMap={holdingMap}
+              holdingPlannedMap={holdingPlannedMap}
+              companyRows={mergedCompanyRows}
+            />
+          </Slide>
+        </>
       ),
     });
 
     const plannedCompanyGroupMap = new Map<string, Map<string, ResultRow>>();
-    for (const row of companyPlannedRows) {
+    for (const row of mergedCompanyPlannedRows) {
       if (!row.company_id) continue;
       let sub = plannedCompanyGroupMap.get(row.company_id);
       if (!sub) {
@@ -757,7 +1106,7 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
     }
 
     const plannedProjectGroupMap = new Map<string, Map<string, ResultRow>>();
-    for (const row of sitePlannedRows) {
+    for (const row of mergedSitePlannedRows) {
       const id = row.site_id ?? row.site;
       if (!id) continue;
       let sub = plannedProjectGroupMap.get(id);
@@ -769,12 +1118,12 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
     }
 
     const activeItemKeys = new Set([
-      ...holding.rows.filter((r) => Number.parseFloat(r.qty || "0") > 0).map((r) => r.item_key),
-      ...(holdingPlanned?.rows ?? []).filter((r) => Number.parseFloat(r.qty || "0") > 0).map((r) => r.item_key),
-      ...companyRows.filter((r) => Number.parseFloat(r.qty || "0") > 0).map((r) => r.item_key),
-      ...companyPlannedRows.filter((r) => Number.parseFloat(r.qty || "0") > 0).map((r) => r.item_key),
-      ...siteRows.filter((r) => Number.parseFloat(r.qty || "0") > 0).map((r) => r.item_key),
-      ...sitePlannedRows.filter((r) => Number.parseFloat(r.qty || "0") > 0).map((r) => r.item_key),
+      ...mergedHoldingRows.filter((r) => Number.parseFloat(r.qty || "0") > 0).map((r) => r.item_key),
+      ...mergedHoldingPlannedRows.filter((r) => Number.parseFloat(r.qty || "0") > 0).map((r) => r.item_key),
+      ...mergedCompanyRows.filter((r) => Number.parseFloat(r.qty || "0") > 0).map((r) => r.item_key),
+      ...mergedCompanyPlannedRows.filter((r) => Number.parseFloat(r.qty || "0") > 0).map((r) => r.item_key),
+      ...mergedSiteRows.filter((r) => Number.parseFloat(r.qty || "0") > 0).map((r) => r.item_key),
+      ...mergedSitePlannedRows.filter((r) => Number.parseFloat(r.qty || "0") > 0).map((r) => r.item_key),
     ]);
     const filteredMetrics = visibleItems.filter((item) => activeItemKeys.has(item.key));
     const tableMetrics = filteredMetrics.length ? filteredMetrics : visibleItems;
@@ -793,6 +1142,17 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
       </div>
     ) : undefined;
 
+    const companyScorecardPeriodNote = formatCompanyScorecardPeriodNote(
+      report.period_start,
+      report.period_end,
+    );
+    const companyScorecardBadge = companyScorecardPeriodNote ? (
+      <span className="inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-[#252850]/12 bg-white px-4 py-1 text-[14px] font-bold text-[#252850] shadow-sm">
+        <span className="h-2 w-2 shrink-0 rounded-full bg-[#fed836]" />
+        <span>{companyScorecardPeriodNote}</span>
+      </span>
+    ) : undefined;
+
     const COMPANY_ROWS_PER_SLIDE = 10;
     const companyPages = chunks(companies, COMPANY_ROWS_PER_SLIDE);
     if (!companyPages.length) companyPages.push([]);
@@ -803,6 +1163,7 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
           <Slide
             title="کارنامه شرکت‌ها"
             subtitle={companyPages.length > 1 ? `بخش ${toFa(pageIndex + 1)} از ${toFa(companyPages.length)}` : period}
+            titleAside={companyScorecardBadge}
             headerRight={tableLegend}
             page={page}
             period={period}
@@ -824,11 +1185,13 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
     const shareDataList: ItemShareData[] = tableMetrics
       .map((item) => {
         const contributions: CompanyContribution[] = [];
+        let sumQtyStr = "0";
         for (let cIdx = 0; cIdx < companies.length; cIdx += 1) {
           const comp = companies[cIdx]!;
           const row = comp.rows.get(item.key);
           const qty = row ? Number.parseFloat(row.qty || "0") : 0;
           if (qty > 0) {
+            sumQtyStr = addDecimalStrings(sumQtyStr, row!.qty || "0");
             contributions.push({
               companyId: comp.id,
               companyName: comp.name,
@@ -842,6 +1205,7 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
         const holdingQty = holdingRow ? Number.parseFloat(holdingRow.qty || "0") : 0;
         const sumQty = contributions.reduce((acc, c) => acc + c.qty, 0);
         const baseTotal = sumQty > 0 ? sumQty : holdingQty;
+        const baseTotalStr = sumQty > 0 ? sumQtyStr : (holdingRow?.qty ?? "0");
         if (baseTotal > 0) {
           for (const c of contributions) {
             c.pct = (c.qty / baseTotal) * 100;
@@ -851,6 +1215,7 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
         return {
           item,
           totalQty: baseTotal,
+          totalQtyStr: baseTotalStr,
           contributions,
         };
       })
@@ -862,34 +1227,30 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
         : tableMetrics.map((item) => ({
             item,
             totalQty: 0,
+            totalQtyStr: "0",
             contributions: [],
           }));
 
     const companyShareLegend = (
-      <div className="flex flex-wrap items-center gap-4 rounded-full border border-[#252850]/10 bg-white/95 px-4 py-1.5 text-[12.5px] font-bold text-slate-700 shadow-sm">
+      <div
+        className={`flex flex-wrap items-center gap-4 rounded-full border border-[#252850]/15 bg-white/95 font-bold text-[#252850] shadow-sm ${
+          companies.length <= 6 ? "px-5 py-2 text-[14px]" : "px-4 py-1.5 text-[12.5px]"
+        }`}
+      >
         {companies.map((comp, idx) => (
-          <span key={comp.id} className="flex items-center gap-1.5">
+          <span key={comp.id} className="flex items-center gap-2">
             <span
-              className="h-2.5 w-2.5 shrink-0 rounded-full shadow-xs"
+              className="h-3 w-3 shrink-0 rounded-full shadow-sm"
               style={{ backgroundColor: getCompanyColor(comp.name, idx) }}
             />
-            <span className="max-w-[140px] truncate">{comp.name}</span>
+            <span className="max-w-[160px] truncate">{comp.name}</span>
           </span>
         ))}
       </div>
     );
 
-    const SHARE_ITEMS_PER_SLIDE = 8;
-    const sharePages = chunks(activeShareData, SHARE_ITEMS_PER_SLIDE);
-    if (!sharePages.length) sharePages.push([]);
+    const sharePages = splitSharePages(activeShareData, 8);
     sharePages.forEach((pageItems, pageIndex) => {
-      const gridCols =
-        pageItems.length <= 4
-          ? "grid-cols-2 lg:grid-cols-4"
-          : pageItems.length <= 6
-          ? "grid-cols-3"
-          : "grid-cols-4";
-
       result.push({
         key: `company-shares-${pageIndex}`,
         render: (page) => (
@@ -904,14 +1265,7 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
             page={page}
             period={period}
           >
-            <div
-              className={`grid min-h-0 flex-1 gap-4 ${gridCols}`}
-              style={{ gridAutoRows: "1fr" }}
-            >
-              {pageItems.map((data) => (
-                <DonutShareCard key={data.item.key} data={data} />
-              ))}
-            </div>
+            <ShareGrid items={pageItems} />
           </Slide>
         ),
       });
@@ -1027,7 +1381,20 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
       ),
     });
     return result;
-  }, [catalog, companyPlannedRows, companyRows, holding, holdingPlanned, report, sitePlannedRows, siteRows, weekSubtitle]);
+  }, [
+    catalog,
+    companyPlannedRows,
+    companyRows,
+    handleSelectSummaryVariant,
+    holding,
+    holdingPlanned,
+    report,
+    settingsCompanies,
+    sitePlannedRows,
+    siteRows,
+    summaryVariant,
+    weekSubtitle,
+  ]);
 
   async function exportPdf() {
     if (!report || exporting) return;
@@ -1057,18 +1424,25 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
 
   return (
     <div className="presentation-page min-h-full bg-[#edf0f3] p-3 md:p-6" dir="rtl" lang="fa">
-      <div className="no-print mx-auto mb-4 flex max-w-[1600px] flex-wrap items-center justify-between gap-3 rounded-2xl bg-white p-4 shadow-sm">
-        <div>
-          <Link href={`/volume-reports/${reportId}`} className="text-xs text-slate-500 hover:text-[#252850]">بازگشت به گزارش</Link>
-          <h1 className="mt-1 text-base font-bold text-[#252850]">گزارش عملکرد هلدینگ عمرانی — {weekSubtitle}</h1>
-          <p className="mt-1 text-[11px] text-slate-500">{toFa(slides.length)} اسلاید</p>
+      <div className="no-print mx-auto mb-4 flex max-w-[1600px] flex-col gap-3 rounded-2xl bg-white p-4 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <Link href={`/volume-reports/${reportId}`} className="text-xs text-slate-500 hover:text-[#252850]">بازگشت به گزارش</Link>
+            <h1 className="mt-1 text-base font-bold text-[#252850]">گزارش عملکرد هلدینگ عمرانی — {weekSubtitle}</h1>
+            <p className="mt-1 text-[11px] text-slate-500">{toFa(slides.length)} اسلاید</p>
+          </div>
+          <div className="flex items-center gap-3">
+            {exportError && <span className="text-xs text-red-600">{exportError}</span>}
+            <button type="button" disabled={Boolean(exporting)} onClick={() => void exportPdf()} className="rounded-xl bg-[#252850] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[#1e2246] disabled:opacity-60">
+              {exporting ? `در حال ساخت PDF… ${toFa(exporting.done)} از ${toFa(exporting.total)}` : "دانلود PDF"}
+            </button>
+          </div>
         </div>
-        <div className="flex items-center gap-3">
-          {exportError && <span className="text-xs text-red-600">{exportError}</span>}
-          <button type="button" disabled={Boolean(exporting)} onClick={() => void exportPdf()} className="rounded-xl bg-[#252850] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[#1e2246] disabled:opacity-60">
-            {exporting ? `در حال ساخت PDF… ${toFa(exporting.done)} از ${toFa(exporting.total)}` : "دانلود PDF"}
-          </button>
-        </div>
+        <SummaryVariantBar
+          variant={summaryVariant}
+          onSelect={handleSelectSummaryVariant}
+          onJumpToSlide={scrollToSummarySlide}
+        />
       </div>
       <div ref={pageRef} className="print-only-container mx-auto flex max-w-[1600px] flex-col gap-5" style={{ ["--slide-scale" as string]: scale }}>
         {slides.map((slide, index) => <SlideItem key={slide.key} slide={slide} page={toFa(index + 1)} />)}

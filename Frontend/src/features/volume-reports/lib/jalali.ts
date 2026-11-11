@@ -78,6 +78,44 @@ export function isValidJalali(jy: number, jm: number, jd: number): boolean {
 const pad2 = (n: number) => String(n).padStart(2, "0");
 export const toFa = (value: string | number) => String(value).replace(/\d/g, (d) => FA_DIGITS[Number(d)]!);
 
+const PERSIAN_WEEKDAYS = [
+  "یکشنبه",
+  "دوشنبه",
+  "سه‌شنبه",
+  "چهارشنبه",
+  "پنج‌شنبه",
+  "جمعه",
+  "شنبه",
+] as const;
+
+function parseIsoCalendarParts(iso: string): { gy: number; gm: number; gd: number } | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (!m) return null;
+  const [gy, gm, gd] = [Number(m[1]), Number(m[2]), Number(m[3])] as const;
+  const utc = new Date(Date.UTC(gy, gm - 1, gd));
+  if (utc.getUTCFullYear() !== gy || utc.getUTCMonth() + 1 !== gm || utc.getUTCDate() !== gd) {
+    return null;
+  }
+  return { gy, gm, gd };
+}
+
+/** "2026-11-04" -> "چهارشنبه" (date-only in UTC: no timezone shift). */
+export function formatJalaliWeekday(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const parts = parseIsoCalendarParts(iso);
+  if (!parts) return "";
+  const weekdayIndex = new Date(Date.UTC(parts.gy, parts.gm - 1, parts.gd)).getUTCDay();
+  return PERSIAN_WEEKDAYS[weekdayIndex] ?? "";
+}
+
+/** "2026-11-04" -> "چهارشنبه ۱۴۰۵/۰۸/۱۳" (date-only: no timezone shift). */
+export function formatJalaliDateWithWeekday(iso: string | null | undefined): string {
+  const dateStr = formatJalaliDate(iso);
+  if (dateStr === "—") return "—";
+  const weekday = formatJalaliWeekday(iso);
+  return weekday ? `${weekday} ${dateStr}` : dateStr;
+}
+
 /** "2026-09-23" -> "۱۴۰۵/۰۷/۰۱" (date-only: no timezone shift). */
 export function isoToJalali(iso: string): JalaliDate | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);

@@ -376,6 +376,12 @@ async def plan_vs_actual(group_by: str = Query("holding", pattern="^(holding|com
     return await service.plan_vs_actual(db, report, group_by)
 
 
+@router.get("/{report_id}/evm")
+async def evm(report: Report = Depends(get_report_for_member), db: AsyncSession = Depends(get_db)):
+    """PV / EV / AC / CPI / SPI per project and per company, read from the EVM summary page of each file (actual + planned)."""
+    return await service.get_evm(db, report)
+
+
 @router.get("/{report_id}/lines")
 async def lines(site_id: uuid.UUID | None = None, item_key: str | None = None, effect: str | None = None,
                 limit: int = Query(200, ge=1, le=1000), offset: int = Query(0, ge=0),
