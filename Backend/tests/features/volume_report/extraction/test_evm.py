@@ -135,7 +135,7 @@ def test_real_excel_with_extra_average_column_and_income_totals():
     from app.features.volume_report.extraction.workbook import open_workbook
 
     with open_workbook(str(SAMPLES / "سیستان پیش بینی.xlsx")) as wb:
-        totals = parse_income_totals(next(s for s in wb.sheets if s.name == "درآمد میرجاوه").rows())
+        totals = parse_income_totals(next(s for s in wb.sheets if "میرجاوه" in s.name and "درآمد" in s.name).rows())
     assert totals.income_total == Decimal(77_700_000_000) and totals.adjustment == Decimal(28_934_824_632)
 
 

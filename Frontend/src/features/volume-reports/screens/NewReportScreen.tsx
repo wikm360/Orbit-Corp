@@ -17,7 +17,7 @@ import { SourceDetails } from "../components/SourcesPanel";
 import { useRunProgress } from "../hooks/useRunProgress";
 import { useWorkspaceProjects } from "../hooks/useWorkspaceProjects";
 import { runSoon } from "../lib/defer";
-import { suggestPeriodLabel, toFa } from "../lib/jalali";
+import { JALALI_MONTHS, formatJalaliDate, suggestPeriodLabel, toFa } from "../lib/jalali";
 import { STATUS_LABELS } from "../lib/status";
 import { filesReady, isExcelName, matchSuggestedCompany, validateInfo, type InfoDraft } from "../lib/wizard";
 import type { Company, Progress, ReportStatus, SelectedFile, SourceInfo } from "../types";
@@ -104,6 +104,7 @@ function NewReportInner() {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [selection, setSelection] = useState<Record<string, string>>({}); // document_id -> company_id
+  const [monthly, setMonthly] = useState<Record<string, number>>({}); // document_id -> Jalali month of a monthly forecast (0 = read it from the file)
   const [selected, setSelected] = useState<SelectedFile[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [onlySelected, setOnlySelected] = useState(false);
@@ -293,7 +294,11 @@ function NewReportInner() {
     setBusy(true);
     setMessage(null);
     try {
-      const result = await volumeReportApi.setFiles(reportId, Object.entries(selection).map(([document_id, company_id]) => ({ document_id, company_id })));
+      const result = await volumeReportApi.setFiles(reportId, Object.entries(selection).map(([document_id, company_id]) => (
+        document_id in monthly
+          ? { document_id, company_id, kind: "monthly_plan" as const, ...(monthly[document_id] ? { plan_month: monthly[document_id] } : {}) }
+          : { document_id, company_id }
+      )));
       setSelected(result);
       setStep(3);
     } catch (e) { setMessage(friendlyErrorMessage(e, "ثبت فایل‌ها ناموفق بود.")); } finally { setBusy(false); }
@@ -559,6 +564,7 @@ function NewReportInner() {
                                             next[d.id] = auto;
                                           } else {
                                             delete next[d.id];
+                                            setMonthly((m) => { const rest = { ...m }; delete rest[d.id]; return rest; });
                                           }
                                           return next;
                                         })
@@ -596,6 +602,30 @@ function NewReportInner() {
                                           </option>
                                         ))}
                                       </select>
+                                      <select
+                                        aria-label={`نوع فایل ${d.filename}`}
+                                        value={d.id in monthly ? "monthly" : "period"}
+                                        onChange={(e) => setMonthly((m) => {
+                                          const rest = { ...m };
+                                          if (e.target.value === "monthly") rest[d.id] = 0; else delete rest[d.id];
+                                          return rest;
+                                        })}
+                                        className={`${fieldClass} text-xs py-1.5`}
+                                      >
+                                        <option value="period">گزارش دوره</option>
+                                        <option value="monthly">برنامه‌ی ماهانه</option>
+                                      </select>
+                                      {d.id in monthly && (
+                                        <select
+                                          aria-label={`ماه برنامه ${d.filename}`}
+                                          value={monthly[d.id]}
+                                          onChange={(e) => setMonthly((m) => ({ ...m, [d.id]: Number(e.target.value) }))}
+                                          className={`${fieldClass} text-xs py-1.5`}
+                                        >
+                                          <option value={0}>ماه: از روی فایل</option>
+                                          {JALALI_MONTHS.map((name, index) => <option key={name} value={index + 1}>{name}</option>)}
+                                        </select>
+                                      )}
                                     </div>
                                   )}
                                 </li>
@@ -683,6 +713,12 @@ function NewReportInner() {
                   <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-600">
                     شرکت: {companies.find((c) => c.id === current)?.name ?? "—"}
                     {f.suggested_company && <span className="rounded bg-sky-50 px-2 py-0.5 text-sky-800">پیشنهاد از روی فایل: {f.suggested_company}</span>}
+                    {f.kind === "monthly_plan" && f.plan && (
+                      <span className="rounded bg-indigo-50 px-2 py-0.5 text-indigo-800">
+                        برنامه‌ی ماهانه · {formatJalaliDate(f.plan.plan_start)} تا {formatJalaliDate(f.plan.plan_end)} · سهم این گزارش: {toFa(f.plan.overlap_days)} از {toFa(f.plan.plan_days)} روز
+                        {f.plan.overlap_days === 0 && " (دوره‌ی بعد در این ماه نیست؛ استفاده نمی‌شود)"}
+                      </span>
+                    )}
                     {suggested && suggested !== current && f.document_id && (
                       <Button size="sm" variant="secondary" onClick={() => { setSelection((s) => ({ ...s, [f.document_id!]: suggested })); setStep(2); }}>استفاده از پیشنهاد</Button>
                     )}

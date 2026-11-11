@@ -310,7 +310,7 @@ export function CompanyProfileBody({ evm, evmPlanned }: { evm: EvmCompany | null
   const cv = diffRial(t.ev_net, t.ac);
   const next = evmPlanned?.total ?? null;
   const nextText = next && (num(next.ev) !== null || num(next.ac) !== null)
-    ? `پیش‌بینی دوره‌ی بعد · EV ${formatBillionRial(next.ev)} · AC ${formatBillionRial(next.ac)} · SPI ${formatRatio(next.spi)} · CPI ${formatRatio(next.cpi)}`
+    ? `پیش‌بینی دوره‌ی بعد${evmPlanned?.plan_source === "monthly" ? " (از برنامه‌ی ماهانه)" : ""} · EV ${formatBillionRial(next.ev)} · AC ${formatBillionRial(next.ac)} · SPI ${formatRatio(next.spi)} · CPI ${formatRatio(next.cpi)}`
     : null;
   const steps = buildSteps(evm.income, t);
   return (

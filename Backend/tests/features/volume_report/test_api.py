@@ -503,3 +503,100 @@ async def test_evm_rows_are_read_per_project_company_and_holding_with_forecast_a
     # a non-member is refused
     outsider, _ = await _register(client, "evm-outsider@example.com")
     assert (await client.get(f"{API}/{report['id']}/evm", headers=outsider)).status_code == 403
+
+
+async def _monthly_report(client, leader, project_id, company, docs, start, end):
+    report = (await client.post(API, json={"project_id": project_id, "title": "m", "period_type": "week", "period_start": start,
+                                           "period_end": end, "period_label": "هفته"}, headers=leader)).json()
+    r = await client.put(f"{API}/{report['id']}/files", json={"files": docs}, headers=leader)
+    assert r.status_code == 200, r.text
+    assert (await client.post(f"{API}/{report['id']}/run", headers=leader)).status_code == 202
+    await pipeline.run_report(uuid.UUID(report["id"]))
+    return report["id"], r.json()
+
+
+async def _planned_concrete(client, headers, rid):
+    g = await _groups(client, headers, rid)
+    await client.post(f"{API}/{rid}/review/confirm", json={"items": [_confirm(g["بتن ریزی پی"], "concrete")]}, headers=headers)
+    rows = (await client.get(f"{API}/{rid}/results?group_by=holding&basis=planned", headers=headers)).json()["rows"]
+    return {x["item_key"]: Decimal(x["qty"]) for x in rows}
+
+
+async def test_monthly_forecast_is_spread_over_the_days_of_the_next_period(client, tmp_path):
+    _, leader, leader_id, project_id, _ = await _world(client, "monthly")
+    company = await _company(client, leader)
+    title = "گزارش درآمد پروژه سیرجان قطروئیه در ماه پیش بینی آبان"
+    monthly = await _document(tmp_path, project_id, leader_id, rows=[(None, "بتن ریزی پی", "متر مکعب", 300)], name="m.xlsx", title=title)
+    actual = await _document(tmp_path, project_id, leader_id, rows=[(None, "بتن ریزی پی", "متر مکعب", 40)], name="a.xlsx")
+    docs = [{"document_id": actual, "company_id": company}, {"document_id": monthly, "company_id": company, "kind": "monthly_plan"}]
+
+    # Aban 1405 = 2026-10-23 .. 2026-11-21 (30 days). Next period 11-08..11-14 lies fully inside: 7/30 of the month.
+    rid, files = await _monthly_report(client, leader, project_id, company, docs, "2026-11-01", "2026-11-07")
+    mf = next(f for f in files if f["kind"] == "monthly_plan")
+    assert mf["suggested_plan_month"] == 8 and mf["plan_start"] == "2026-10-23" and mf["plan_end"] == "2026-11-21"
+    assert mf["plan"]["overlap_days"] == 7 and mf["plan"]["plan_days"] == 30
+    plan = await _planned_concrete(client, leader, rid)
+    assert plan["concrete"] == Decimal("70")  # 300 x 7 / 30; the actual file's 40 never leaks into the forecast
+    actual_rows = {x["item_key"]: Decimal(x["qty"]) for x in (await client.get(f"{API}/{rid}/results?group_by=holding", headers=leader)).json()["rows"]}
+    assert actual_rows["concrete"] == 40
+    src = (await client.get(f"{API}/{rid}/sources", headers=leader)).json()
+    assert next(x for x in src if x["kind"] == "monthly_plan")["plan"]["factor"] == "0.233333"
+
+    # a week that straddles the end of the month only gets the days that are inside it (Nov 19, 20, 21)
+    rid2, _ = await _monthly_report(client, leader, project_id, company, [{**d, "document_id": d["document_id"]} for d in docs], "2026-11-12", "2026-11-18")
+    assert (await _planned_concrete(client, leader, rid2))["concrete"] == Decimal("30")  # 300 x 3 / 30
+
+    # a period outside the month contributes nothing
+    rid3, _ = await _monthly_report(client, leader, project_id, company, docs, "2026-11-15", "2026-11-21")
+    assert (await _planned_concrete(client, leader, rid3)).get("concrete", Decimal(0)) == 0
+
+
+async def test_site_with_its_own_forecast_ignores_the_monthly_one(client, tmp_path):
+    _, leader, leader_id, project_id, _ = await _world(client, "monthly2")
+    company = await _company(client, leader)
+    title = "گزارش درآمد پروژه سیرجان قطروئیه در ماه پیش بینی آبان"
+    monthly = await _document(tmp_path, project_id, leader_id, rows=[(None, "بتن ریزی پی", "متر مکعب", 300)], name="m.xlsx", title=title)
+    weekly = await _two_sheet_document(tmp_path, project_id, leader_id, 25, 12)  # forecast sheet of its own: 12
+    docs = [{"document_id": weekly, "company_id": company}, {"document_id": monthly, "company_id": company, "kind": "monthly_plan"}]
+    rid, _ = await _monthly_report(client, leader, project_id, company, docs, "2026-11-01", "2026-11-07")
+    assert (await _planned_concrete(client, leader, rid))["concrete"] == Decimal("12")  # never 12 + 70
+
+
+async def test_monthly_forecast_needs_a_month(client, tmp_path):
+    _, leader, leader_id, project_id, _ = await _world(client, "monthly3")
+    company = await _company(client, leader)
+    plain = await _document(tmp_path, project_id, leader_id, name="p.xlsx")  # title names no forecast month
+    report = (await client.post(API, json={"project_id": project_id, "title": "m", "period_type": "week", "period_start": "2026-11-01",
+                                           "period_end": "2026-11-07", "period_label": "هفته"}, headers=leader)).json()
+    body = {"files": [{"document_id": plain, "company_id": company, "kind": "monthly_plan"}]}
+    assert (await client.put(f"{API}/{report['id']}/files", json=body, headers=leader)).status_code == 400
+    body["files"][0]["plan_month"] = 8
+    ok = await client.put(f"{API}/{report['id']}/files", json=body, headers=leader)
+    assert ok.status_code == 200 and ok.json()[0]["plan_start"] == "2026-10-23"
+
+
+@pytest.mark.skipif(not __import__("pathlib").Path("eval/volume_report/پیش بینی آبان معابر.xls").exists(), reason="sample not present")
+async def test_real_monthly_xls_scales_evm_and_volumes(client, tmp_path):
+    import shutil
+
+    _, leader, leader_id, project_id, _ = await _world(client, "monthly-real")
+    company = await _company(client, leader)
+    path = tmp_path / f"{uuid.uuid4().hex}.xls"
+    shutil.copy("eval/volume_report/پیش بینی آبان معابر.xls", path)
+    async with async_session_factory() as db:
+        doc = Document(filename="پیش بینی آبان معابر.xls", file_path=str(path), content_type="application/octet-stream", status=DocumentStatus.READY,
+                       content_hash=uuid.uuid4().hex + uuid.uuid4().hex, project_id=uuid.UUID(project_id), uploaded_by=uuid.UUID(leader_id))
+        db.add(doc)
+        await db.commit()
+        doc_id = str(doc.id)
+    rid, files = await _monthly_report(client, leader, project_id, company, [{"document_id": doc_id, "company_id": company, "kind": "monthly_plan"}],
+                                       "2026-11-01", "2026-11-07")
+    assert files[0]["suggested_kind"] == "monthly_plan" and files[0]["suggested_plan_month"] == 8
+    evm = (await client.get(f"{API}/{rid}/evm", headers=leader)).json()
+    plan = evm["planned"]["companies"][0]
+    assert plan["plan_source"] == "monthly" and evm["actual"]["companies"] == []
+    project = plan["projects"][0]
+    assert Decimal(project["ev"]) == (Decimal("112752231806") * 7 / 30).quantize(Decimal("0.01"))  # month x 7/30
+    assert project["cpi"] == "0.81" and project["spi"] == "2.31"  # ratios are not scaled
+    assert Decimal(project["contract_amount"]) == Decimal("1623534593647")
+    assert Decimal(plan["income"]["income_total"]) == (Decimal("112752231805") * 7 / 30).quantize(Decimal("0.01"))

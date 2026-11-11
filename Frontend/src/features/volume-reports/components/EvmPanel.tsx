@@ -65,7 +65,7 @@ function Row({ name, f, strong, note }: { name: string; f: EvmFigures; strong?: 
   );
 }
 
-function CompanyCard({ company }: { company: EvmCompany }) {
+function CompanyCard({ company, planned }: { company: EvmCompany; planned: boolean }) {
   const reported = company.reported_total;
   const differs = reported && (reported.spi !== company.total.spi || reported.cpi !== company.total.cpi);
   return (
@@ -81,6 +81,9 @@ function CompanyCard({ company }: { company: EvmCompany }) {
           </tbody>
         </table>
       </div>
+      {planned && company.plan_source === "monthly" && (
+        <p className="mt-2 text-[11px] text-indigo-700">بخشی از این پیش‌بینی از برنامه‌ی ماهانه آمده است: مبالغ به نسبت روزهای دوره‌ی بعد از ماه تقسیم شده‌اند (SPI و CPI تغییری نمی‌کنند).</p>
+      )}
       {differs && reported && (
         <p className="mt-2 text-[11px] text-slate-500">
           جمع اعلام‌شده در خودِ فایل: SPI {formatRatio(reported.spi)} · CPI {formatRatio(reported.cpi)} · EV {formatBillionRial(reported.ev)} · AC {formatBillionRial(reported.ac)} (میلیارد ریال)
@@ -90,12 +93,12 @@ function CompanyCard({ company }: { company: EvmCompany }) {
   );
 }
 
-function BasisView({ data }: { data: EvmBasis }) {
+function BasisView({ data, planned }: { data: EvmBasis; planned: boolean }) {
   if (data.companies.length === 0) return <EmptyState title="جدول EVM در فایل‌ها پیدا نشد" hint="صفحه/شیت «گزارش مدیریت ارزش کسب شده (EVM)» باید در فایل باشد؛ اگر هست، گزارش را دوباره اجرا کنید." />;
   return (
     <div className="space-y-4">
       {data.holding && <Card><Summary total={data.holding} title={`مجموع همه‌ی شرکت‌ها — ${toFa(data.holding.projects)} پروژه`} /></Card>}
-      {data.companies.map((c) => <CompanyCard key={c.company_id} company={c} />)}
+      {data.companies.map((c) => <CompanyCard key={c.company_id} company={c} planned={planned} />)}
       <p className="text-[11px] text-slate-400">ارقام به میلیارد ریال. EV: کارکرد · ev: کارکرد پس از کسر ضریب بالاسری · PV: کارکرد طبق برنامه · AC: هزینه‌ی واقعی · SPI = EV/PV · CPI = ev/AC. «—» یعنی در فایل داده‌ای برای محاسبه نبوده است.</p>
     </div>
   );
@@ -123,7 +126,7 @@ export function EvmPanel({ reportId, refreshKey }: { reportId: string; refreshKe
             className={cn("rounded-lg px-4 py-1.5 text-sm", basis === b.id ? "bg-white font-medium text-teal-800 shadow-sm" : "text-slate-600")}>{b.label}</button>
         ))}
       </div>
-      <BasisView data={data[basis]} />
+      <BasisView data={data[basis]} planned={basis === "planned"} />
     </div>
   );
 }

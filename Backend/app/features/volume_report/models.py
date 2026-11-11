@@ -236,6 +236,10 @@ class ReportFile(Base):
     sheet_log: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     warnings: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     suggested_company: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    # period = a normal report file; monthly_plan = a forecast for a whole month, spread over the days of the next period.
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="period", server_default="period")
+    plan_start: Mapped[date | None] = mapped_column(Date, nullable=True)
+    plan_end: Mapped[date | None] = mapped_column(Date, nullable=True)
     created_at: Mapped[datetime] = _now()
 
 

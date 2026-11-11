@@ -56,7 +56,8 @@ def _unreadable(rows: list[list[Any]]) -> bool:
 
 
 def extract_file(
-    path: str, lexicon: Lexicon, period_label: str | None = None, layout_overrides: dict[str, dict] | None = None
+    path: str, lexicon: Lexicon, period_label: str | None = None, layout_overrides: dict[str, dict] | None = None,
+    force_planned: bool = False,
 ) -> FileExtraction:
     """Blocking (file I/O): run in a worker/thread."""
     result = FileExtraction()
@@ -68,6 +69,8 @@ def extract_file(
             evm = None if sheet.is_hidden else parse_evm_sheet(sheet.name, sheet.rows(), os.path.basename(path))
             if evm is not None:
                 # The EVM summary (PV/EV/AC/CPI/SPI per project) is its own data set, never an income table.
+                if force_planned:
+                    evm.basis = "planned"
                 result.evm_sheets.append(evm)
                 result.warnings.extend({**w, "sheet": sheet.name} for w in evm.warnings)
                 result.sheet_log.append({
@@ -78,7 +81,8 @@ def extract_file(
             if not sheet.is_hidden:
                 totals = parse_income_totals(sheet.rows())
                 if totals is not None:
-                    result.income_totals.append((sheet.name, detect_basis(sheet.name, sheet.rows(), os.path.basename(path)), totals))
+                    totals_basis = "planned" if force_planned else detect_basis(sheet.name, sheet.rows(), os.path.basename(path))
+                    result.income_totals.append((sheet.name, totals_basis, totals))
             if not sheet.is_hidden and probe.kind == "other" and _unreadable(sheet.rows()):
                 # Broken font encoding: the PDF holds control characters instead of letters, nothing can be read from it.
                 if not any(w.get("code") == "unreadable_pdf_font" for w in result.warnings):
@@ -86,7 +90,7 @@ def extract_file(
                 result.sheet_log.append({"sheet": probe.sheet, "visibility": probe.visibility, "kind": "other", "used": False, "reason": "unreadable_font"})
                 continue
             # A forecast file ("پیش بینی" in its name or title) keeps plain "درآمد …" sheet names: those are still the forecast.
-            basis = "planned" if probe.kind == "planned" or detect_basis(sheet.name, sheet.rows(), os.path.basename(path)) == "planned" else "actual"
+            basis = "planned" if force_planned or probe.kind == "planned" or detect_basis(sheet.name, sheet.rows(), os.path.basename(path)) == "planned" else "actual"
             parsed = parse_income_sheet(
                 sheet.name, sheet.rows(), lexicon, period_label, (layout_overrides or {}).get(sheet.name), basis,
             ) if probe.used else None
@@ -117,6 +121,13 @@ def extract_file(
                 entry["layout_override"] = layout_overrides[sheet.name]  # kept so a re-run applies the confirmed layout again
             result.sheet_log.append(entry)
     return result
+
+
+def suggest_plan_month_for_file(path: str) -> int | None:
+    """Cheap probe for the wizard (blocking): the month of a monthly forecast, else None."""
+    from app.features.volume_report.extraction.plan_month import detect_plan_month
+
+    return detect_plan_month(path)
 
 
 def suggest_company_for_file(path: str) -> str | None:

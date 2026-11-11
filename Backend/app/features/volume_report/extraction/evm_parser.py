@@ -168,6 +168,8 @@ def _parse_row(row_no: int, tokens: list[str]) -> tuple[EvmRowData | None, list[
     amounts = [_to_decimal(t) for t in tokens[start:last + 1] if _is_amount(t) or _is_zero(t)]
     if any(a is None for a in amounts):
         return None, [], "unparsable_amount"
+    if not amounts:
+        return None, [], None  # a project listed with its contract only (nothing planned / done): not a data row, not a problem
     data = EvmRowData(row_no=row_no, project_name=None, is_total=is_total, contract_amount=contract)
     printed_cpi, printed_spi = ratios
     if not _assign(data, amounts, printed_cpi):

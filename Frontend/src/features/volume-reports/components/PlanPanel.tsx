@@ -89,6 +89,19 @@ export function PlanPanel({ reportId, periodEnd, refreshKey }: { reportId: strin
         ))}
       </div>
 
+      {(data.plan_files ?? []).length > 0 && (
+        <div className="space-y-1 rounded-xl border border-indigo-100 bg-indigo-50/60 px-4 py-2.5 text-xs text-indigo-900">
+          {(data.plan_files ?? []).map((f) => (
+            <p key={f.filename}>
+              <span className="font-semibold">برنامه‌ی ماهانه «{f.filename}»</span> ({f.company}):{" "}
+              {f.overlap_days === 0
+                ? "دوره‌ی بعد در این ماه نیست و استفاده نمی‌شود."
+                : `${toFa(f.overlap_days)} روز از ${toFa(f.plan_days)} روز ماه (${formatJalaliDate(f.plan_start)} تا ${formatJalaliDate(f.plan_end)}) به دوره‌ی بعد می‌رسد؛ برای پروژه‌هایی که پیش‌بینی هفتگی ندارند این سهم به‌عنوان پیش‌بینی گذاشته شده است.`}
+            </p>
+          ))}
+        </div>
+      )}
+
       <Card title="تحقق پیش‌بینیِ دوره‌ی قبل"
         actions={prev && <Link href={`/volume-reports/${prev.id}`} className="text-xs text-teal-700 hover:underline">گزارش مبدأ: {prev.title} ({prev.period_label})</Link>}>
         {!prev ? (

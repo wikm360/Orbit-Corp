@@ -39,6 +39,9 @@ class ReportRead(BaseModel):
 class FileSelection(BaseModel):
     document_id: uuid.UUID
     company_id: uuid.UUID
+    kind: Literal["period", "monthly_plan"] = "period"
+    plan_month: int | None = Field(default=None, ge=1, le=12)  # Jalali month of a monthly forecast; detected from the title when omitted
+    plan_year: int | None = Field(default=None, ge=1300, le=1500)  # default: the occurrence closest to the report period
 
 
 class FilesUpdate(BaseModel):

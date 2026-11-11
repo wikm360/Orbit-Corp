@@ -5,9 +5,11 @@ import hashlib
 import json
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,7 +19,7 @@ from app.core.dependencies import UserContext
 from app.core.exceptions import BadRequestError, ConflictError, ForbiddenError, NotFoundError
 from app.features.documents.models import Document, DocumentStatus
 from app.features.projects.models import Project
-from app.features.volume_report import compute, memory
+from app.features.volume_report import compute, jalali, memory
 from app.features.volume_report.extraction.normalize import Lexicon, LexiconEntry as LexEntry, normalize_text
 from app.features.volume_report.models import (
     Classification, ClassificationSource, Company, Conversion, Decision, EvmRow, IncomeTotal, ItemRule, DecisionSource, Disposition, Effect,
@@ -103,12 +105,39 @@ def resolve_document_path(document: Document) -> str:
     return str(path)
 
 
+# ---- monthly forecast: spread over the days of the next period ---------------------------------------------------
+
+def next_period(report: Report) -> tuple[date, date]:
+    """The period the forecast is for: right after this one, same length."""
+    length = (report.period_end - report.period_start).days + 1
+    start = report.period_end + timedelta(days=1)
+    return start, start + timedelta(days=length - 1)
+
+
+def plan_info(report: Report, f: ReportFile) -> dict | None:
+    """For a monthly forecast: how many days of the next period fall inside the month, and the resulting share of the month."""
+    if f.kind != "monthly_plan" or f.plan_start is None or f.plan_end is None:
+        return None
+    start, end = next_period(report)
+    overlap = max(0, (min(end, f.plan_end) - max(start, f.plan_start)).days + 1)
+    plan_days = (f.plan_end - f.plan_start).days + 1
+    period_days = (end - start).days + 1
+    return {"plan_start": f.plan_start, "plan_end": f.plan_end, "period_start": start, "period_end": end, "overlap_days": overlap,
+            "plan_days": plan_days, "period_days": period_days, "factor": f"{Decimal(overlap) / Decimal(plan_days):.6f}"}
+
+
+def plan_factor(report: Report, f: ReportFile) -> Decimal:
+    info = plan_info(report, f)
+    return Decimal(1) if info is None else Decimal(info["overlap_days"]) / Decimal(info["plan_days"])
+
+
 async def set_files(db: AsyncSession, report: Report, selections: list[FileSelection]) -> list[dict]:
-    from app.features.volume_report.extraction.runner import suggest_company_for_file
+    from app.features.volume_report.extraction.runner import suggest_company_for_file, suggest_plan_month_for_file
 
     _require_editable(report)
     wanted: dict[uuid.UUID, ReportFile] = {}
     suggestions: dict[uuid.UUID, str | None] = {}
+    month_suggestions: dict[uuid.UUID, int | None] = {}
     for sel in selections:
         document = await db.get(Document, sel.document_id)
         if document is None or document.project_id != report.project_id:
@@ -124,12 +153,21 @@ async def set_files(db: AsyncSession, report: Report, selections: list[FileSelec
             raise BadRequestError("Duplicate document in the selection")
         wanted[sel.document_id] = ReportFile(
             report_id=report.id, document_id=document.id, filename=document.filename,
-            content_hash=document.content_hash, company_id=company.id,
+            content_hash=document.content_hash, company_id=company.id, kind=sel.kind,
         )
         try:
-            suggestions[document.id] = await asyncio.to_thread(suggest_company_for_file, resolve_document_path(document))
+            path = resolve_document_path(document)
+            suggestions[document.id] = await asyncio.to_thread(suggest_company_for_file, path)
+            month_suggestions[document.id] = await asyncio.to_thread(suggest_plan_month_for_file, path)
         except Exception:  # a suggestion is optional; the run reports real read errors
-            suggestions[document.id] = None
+            suggestions.setdefault(document.id, None)
+            month_suggestions.setdefault(document.id, None)
+        if sel.kind == "monthly_plan":
+            month = sel.plan_month or month_suggestions.get(document.id)
+            if month is None:
+                raise BadRequestError("plan_month is required for a monthly forecast (it is not named in the file's title)")
+            start, end = jalali.month_range(sel.plan_year, month) if sel.plan_year else jalali.nearest_month_range(month, report.period_end)
+            wanted[sel.document_id].plan_start, wanted[sel.document_id].plan_end = start, end
 
     existing = (await db.execute(select(ReportFile).where(ReportFile.report_id == report.id))).scalars().all()
     keep = {f.document_id: f for f in existing if f.document_id in wanted}
@@ -139,13 +177,17 @@ async def set_files(db: AsyncSession, report: Report, selections: list[FileSelec
     for doc_id, new in wanted.items():
         if doc_id in keep:
             keep[doc_id].company_id = new.company_id
+            keep[doc_id].kind, keep[doc_id].plan_start, keep[doc_id].plan_end = new.kind, new.plan_start, new.plan_end
         else:
             db.add(new)
     await db.commit()
     files = (await db.execute(select(ReportFile).where(ReportFile.report_id == report.id))).scalars().all()
     return [
         {"id": f.id, "document_id": f.document_id, "filename": f.filename, "company_id": f.company_id,
-         "status": f.status.value, "suggested_company": suggestions.get(f.document_id) or f.suggested_company}
+         "status": f.status.value, "suggested_company": suggestions.get(f.document_id) or f.suggested_company,
+         "kind": f.kind, "plan_start": f.plan_start, "plan_end": f.plan_end, "plan": plan_info(report, f),
+         "suggested_kind": "monthly_plan" if month_suggestions.get(f.document_id) else "period",
+         "suggested_plan_month": month_suggestions.get(f.document_id)}
         for f in files
     ]
 
@@ -273,8 +315,19 @@ async def recompute(db: AsyncSession, report: Report) -> list[dict]:
     items = {i.id: i for i in (await db.execute(select(Item))).scalars()}
     item_in = {i.key: compute.ItemIn(i.key, i.output_unit, i.mining_only, i.is_rollup, list(i.rollup_of)) for i in items.values()}
     pairs = await _report_lines(db, report.id)
+    files = {f.id: f for f in (await db.execute(select(ReportFile).where(ReportFile.report_id == report.id))).scalars()}
+    factors = {fid: plan_factor(report, f) for fid, f in files.items()}
+    # A site with a forecast of its own (a normal file) never takes the monthly one; otherwise a monthly forecast counts for the
+    # days of the next period inside its month (a superseded line stays, with quantity 0, so every line keeps a result).
+    own_plan_sites = {s.id for l, s in pairs if l.basis == "planned" and files[l.report_file_id].kind == "period"}
+
+    def effective_quantity(l: Line, s: Site) -> Decimal:
+        if l.basis == "planned" and files[l.report_file_id].kind == "monthly_plan":
+            return Decimal(0) if s.id in own_plan_sites else l.quantity * factors[l.report_file_id]
+        return l.quantity
+
     lines_in = [
-        compute.LineIn(str(l.id), str(s.id), s.kind.value, l.group_key, l.unit_norm, l.quantity, bool(l.flags.get("negative_qty")), l.description_norm)
+        compute.LineIn(str(l.id), str(s.id), s.kind.value, l.group_key, l.unit_norm, effective_quantity(l, s), bool(l.flags.get("negative_qty")), l.description_norm)
         for l, s in pairs
     ]
     basis_of = {str(l.id): l.basis for l, _ in pairs}
@@ -559,7 +612,12 @@ async def plan_vs_actual(db: AsyncSession, report: Report, group_by: str) -> dic
     previous = await _previous_report(db, report)
     actual = await get_results(db, report, group_by, set(), "actual")
     own_plan = await get_results(db, report, group_by, set(), "planned")
-    body: dict = {"report_id": report.id, "group_by": group_by, "previous_report": None, "rows": [], "next_plan": own_plan["rows"]}
+    monthly_files = (await db.execute(
+        select(ReportFile, Company.name).join(Company, Company.id == ReportFile.company_id)
+        .where(ReportFile.report_id == report.id, ReportFile.kind == "monthly_plan").order_by(ReportFile.created_at)
+    )).all()
+    plan_files = [{"filename": f.filename, "company": company_name, **info} for f, company_name in monthly_files if (info := plan_info(report, f))]
+    body: dict = {"report_id": report.id, "group_by": group_by, "previous_report": None, "rows": [], "next_plan": own_plan["rows"], "plan_files": plan_files}
     if previous is None:
         return body
     prev_plan = await get_results(db, report=previous, group_by=group_by, include=set(), basis="planned")
@@ -628,37 +686,79 @@ def _income_read(rows: list[IncomeTotal]) -> dict | None:
     }
 
 
+_SCALED_AMOUNTS = ("bcws", "pv", "ev", "ev_net", "ac")
+_SCALED_INCOME = ("statement_base", "statement_coef", "adjustment", "income_total", "cumulative")
+
+
+def _scaled(row: Any, factor: Decimal, fields: tuple[str, ...]) -> SimpleNamespace:
+    """A copy of an EVM / income row with the amounts times `factor` (ratios, contract amount and names are untouched)."""
+    columns = {c.name: getattr(row, c.name) for c in row.__table__.columns}
+    for name in fields:
+        if columns.get(name) is not None:
+            columns[name] = columns[name] * factor
+    return SimpleNamespace(**columns)
+
+
 async def get_evm(db: AsyncSession, report: Report) -> dict:
     """Per basis (actual | planned): the companies with their projects, the company total and the holding total.
-    `total` is computed from the project rows; `reported_total` is the "جمع" row the file itself printed (if any)."""
+    `total` is computed from the project rows; `reported_total` is the "جمع" row the file itself printed (if any).
+    Planned rows of a monthly forecast file are scaled to the next period (days inside the month / days of the month) and
+    only used for projects that have no forecast of their own in a normal file."""
     rows = (await db.execute(
-        select(EvmRow, ReportFile.company_id, ReportFile.filename, Company.name)
+        select(EvmRow, ReportFile, Company.name)
         .join(ReportFile, ReportFile.id == EvmRow.report_file_id).join(Company, Company.id == ReportFile.company_id)
         .where(ReportFile.report_id == report.id).order_by(Company.name, ReportFile.created_at, EvmRow.sheet_name, EvmRow.row_no)
     )).all()
     income_rows = (await db.execute(
-        select(IncomeTotal, ReportFile.company_id).join(ReportFile, ReportFile.id == IncomeTotal.report_file_id).where(ReportFile.report_id == report.id)
+        select(IncomeTotal, ReportFile).join(ReportFile, ReportFile.id == IncomeTotal.report_file_id).where(ReportFile.report_id == report.id)
     )).all()
     body: dict = {"report_id": report.id}
     for basis in ("actual", "planned"):
-        companies: dict[uuid.UUID, dict] = {}
-        for row, company_id, filename, company_name in rows:
+        # (row, file, company name, scaled?) after the monthly-forecast rules
+        own_projects = {(f.company_id, normalize_text(r.project_name or "")) for r, f, _ in rows
+                        if r.basis == basis and not r.is_total and f.kind == "period"}
+        selected: list[tuple[Any, ReportFile, str, bool]] = []
+        for row, f, company_name in rows:
             if row.basis != basis:
                 continue
-            company = companies.setdefault(company_id, {"company_id": company_id, "company": company_name, "projects": [], "_rows": [], "_reported": []})
+            if f.kind == "monthly_plan":
+                factor = plan_factor(report, f)
+                if factor == 0 or (not row.is_total and (f.company_id, normalize_text(row.project_name or "")) in own_projects):
+                    continue
+                if row.is_total and any(c == f.company_id for c, _ in own_projects):
+                    continue  # the company already has projects from normal forecast files: a monthly "جمع" would double count
+                selected.append((_scaled(row, factor, _SCALED_AMOUNTS), f, company_name, True))
+            else:
+                selected.append((row, f, company_name, False))
+        companies: dict[uuid.UUID, dict] = {}
+        for row, f, company_name, monthly in selected:
+            company = companies.setdefault(f.company_id, {"company_id": f.company_id, "company": company_name, "projects": [], "_rows": [], "_reported": [],
+                                                           "plan_source": "report"})
+            if monthly:
+                company["plan_source"] = "monthly"
             if row.is_total:
                 company["_reported"].append(row)
             else:
-                company["projects"].append({**_evm_row_read(row), "filename": filename})
+                company["projects"].append({**_evm_row_read(row), "filename": f.filename, "plan_source": "monthly" if monthly else "report"})
                 company["_rows"].append(row)
         out = []
         for company in companies.values():
             project_rows, reported = company.pop("_rows"), company.pop("_reported")
             company["total"] = _evm_total(project_rows)
-            company["income"] = _income_read([r for r, cid in income_rows if cid == company["company_id"] and r.basis == basis])
+            income = []
+            for r, f in income_rows:
+                if f.company_id != company["company_id"] or r.basis != basis:
+                    continue
+                if f.kind == "monthly_plan":
+                    if plan_factor(report, f) == 0 or any(rr.basis == basis and ff.kind == "period" and ff.company_id == f.company_id for rr, ff in income_rows):
+                        continue
+                    income.append(_scaled(r, plan_factor(report, f), _SCALED_INCOME))
+                else:
+                    income.append(r)
+            company["income"] = _income_read(income)
             company["reported_total"] = {**_evm_total(reported), **_evm_row_read(reported[0])} if len(reported) == 1 else None
             out.append(company)
-        flat = [row for row, _, _, _ in rows if row.basis == basis and not row.is_total]
+        flat = [row for row, _, _, _ in selected if not row.is_total]
         body[basis] = {"companies": out, "holding": _evm_total(flat) if flat else None}
     return body
 
@@ -673,7 +773,8 @@ async def report_detail(db: AsyncSession, report: Report) -> dict:
         "narratives": report.narratives or {},
         "supersedes_id": report.supersedes_id, "published_at": report.published_at, "error_message": report.error_message,
         "files": [{"id": f.id, "document_id": f.document_id, "filename": f.filename, "company_id": f.company_id,
-                   "status": f.status.value, "error_message": f.error_message} for f in files],
+                   "status": f.status.value, "error_message": f.error_message, "kind": f.kind, "plan_start": f.plan_start,
+                   "plan_end": f.plan_end} for f in files],
         "issues": causes,
     }
 
@@ -702,7 +803,8 @@ async def sources(db: AsyncSession, report: Report) -> list[dict]:
             "evm": {b: {"projects": evm.get((f.id, b, False), 0), "has_total": bool(evm.get((f.id, b, True)))} for b in ("actual", "planned")},
         }
         out.append({"id": f.id, "filename": f.filename, "status": f.status.value, "error_message": f.error_message,
-                    "suggested_company": f.suggested_company, "sheet_log": f.sheet_log, "warnings": f.warnings, "reads": reads})
+                    "suggested_company": f.suggested_company, "sheet_log": f.sheet_log, "warnings": f.warnings, "reads": reads,
+                    "kind": f.kind, "plan": plan_info(report, f)})
     return out
 
 
@@ -769,7 +871,8 @@ async def reopen(db: AsyncSession, context: UserContext, report: Report) -> Repo
     db.add(fresh)
     await db.flush()
     for f in (await db.execute(select(ReportFile).where(ReportFile.report_id == report.id))).scalars():
-        db.add(ReportFile(report_id=fresh.id, document_id=f.document_id, filename=f.filename, content_hash=f.content_hash, company_id=f.company_id))
+        db.add(ReportFile(report_id=fresh.id, document_id=f.document_id, filename=f.filename, content_hash=f.content_hash, company_id=f.company_id,
+                          kind=f.kind, plan_start=f.plan_start, plan_end=f.plan_end))
     # Human decisions carry over so the new draft starts where the old one ended.
     for c in (await db.execute(select(Classification).where(Classification.report_id == report.id, Classification.source == ClassificationSource.HUMAN))).scalars():
         db.add(Classification(

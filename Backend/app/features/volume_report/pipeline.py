@@ -60,7 +60,7 @@ async def _parse_files(db: AsyncSession, report: Report, lexicon, overrides: dic
             if document is None or document.project_id != report.project_id:
                 raise ValueError("Source document is no longer available")
             path = service.resolve_document_path(document)
-            extraction = await asyncio.to_thread(extract_file, path, lexicon, report.period_label, overrides.get(rfile.id))
+            extraction = await asyncio.to_thread(extract_file, path, lexicon, report.period_label, overrides.get(rfile.id), rfile.kind == "monthly_plan")
         except Exception as exc:
             logger.warning("Volume report %s: file %s failed: %s", report.id, rfile.filename, exc)
             rfile.status = FileStatus.FAILED

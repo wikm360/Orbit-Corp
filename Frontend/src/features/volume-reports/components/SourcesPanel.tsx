@@ -4,9 +4,9 @@ import { useEffect, useState } from "react";
 
 import { volumeReportApi } from "../api/volumeReportApi";
 import { runSoon } from "../lib/defer";
-import { toFa } from "../lib/jalali";
+import { formatJalaliDate, toFa } from "../lib/jalali";
 import { SHEET_REASON_LABELS, WARNING_LABELS } from "../lib/status";
-import type { SourceInfo, SourceReads, SourceWarning } from "../types";
+import type { PlanInfo, SourceInfo, SourceReads, SourceWarning } from "../types";
 import { Card, EmptyState, ErrorBox, LoadingBlock } from "./common";
 
 export const describeWarning = (w: SourceWarning): string => {
@@ -20,8 +20,18 @@ type ReadState = "ok" | "partial" | "none";
 interface ReadRow { label: string; state: ReadState; detail: string }
 
 /** The parameters a file was expected to give, one line each: ✓ read, ⚠ read only for part of the sheets, — not found. */
-function readRows(reads: SourceReads): ReadRow[] {
+function readRows(reads: SourceReads, plan?: PlanInfo | null): ReadRow[] {
   const rows: ReadRow[] = [];
+  if (plan) {
+    const pct = toFa(((plan.overlap_days / plan.plan_days) * 100).toFixed(1).replace(".", "٫"));
+    rows.push({
+      label: `برنامه‌ی ماهانه (${formatJalaliDate(plan.plan_start)} تا ${formatJalaliDate(plan.plan_end)})`,
+      state: plan.overlap_days === 0 ? "none" : plan.overlap_days < plan.period_days ? "partial" : "ok",
+      detail: plan.overlap_days === 0
+        ? "دوره‌ی بعد در این ماه نیست؛ استفاده نمی‌شود"
+        : `${toFa(plan.overlap_days)} از ${toFa(plan.plan_days)} روز ماه = ${pct}٪` + (plan.overlap_days < plan.period_days ? ` · فقط ${toFa(plan.overlap_days)} از ${toFa(plan.period_days)} روز دوره‌ی بعد` : ""),
+    });
+  }
   const sheets = (n: number) => `${toFa(n)} پروژه`;
   rows.push({ label: "حجم عملیات (درآمد)", state: reads.income.actual > 0 ? "ok" : "none", detail: reads.income.actual > 0 ? sheets(reads.income.actual) : "شیت درآمد خوانده نشد" });
   rows.push({ label: "برنامه / پیش‌بینی حجم‌ها", state: reads.income.planned > 0 ? "ok" : "none", detail: reads.income.planned > 0 ? sheets(reads.income.planned) : "در این فایل نیست" });
@@ -53,12 +63,12 @@ const STATE_STYLE: Record<ReadState, { mark: string; tone: string }> = {
   none: { mark: "—", tone: "text-slate-400" },
 };
 
-function ReadChecklist({ reads }: { reads: SourceReads }) {
+function ReadChecklist({ reads, plan }: { reads: SourceReads; plan?: PlanInfo | null }) {
   return (
     <div className="mb-3 rounded-xl border border-slate-100 bg-slate-50/70 px-3 py-2" aria-label="پارامترهای خوانده‌شده">
       <h3 className="mb-1 text-xs font-medium text-slate-600">پارامترهای خوانده‌شده از این فایل</h3>
       <ul className="grid gap-x-6 gap-y-0.5 text-xs md:grid-cols-2">
-        {readRows(reads).map((row) => (
+        {readRows(reads, plan).map((row) => (
           <li key={row.label} className="flex items-baseline gap-2">
             <span className={`w-4 shrink-0 text-center font-bold ${STATE_STYLE[row.state].tone}`}>{STATE_STYLE[row.state].mark}</span>
             <span className="text-slate-700">{row.label}</span>
@@ -81,7 +91,7 @@ export function SourceDetails({ sources, compact = false }: { sources: SourceInf
         return (
           <Card key={source.id} title={source.filename} actions={<span className="text-xs text-slate-500">{source.status === "failed" ? "ناموفق" : source.status === "parsed" ? "خوانده‌شده" : "در انتظار"}</span>}>
             {source.error_message && <p className="mb-2 text-xs text-red-600">{source.error_message}</p>}
-            {source.reads && <ReadChecklist reads={source.reads} />}
+            {source.reads && <ReadChecklist reads={source.reads} plan={source.plan} />}
             {source.warnings.length > 0 && (
               <ul className="mb-3 space-y-1" aria-label="هشدارها">
                 {source.warnings.map((w, i) => <li key={i} className="rounded-lg bg-amber-50 px-3 py-1.5 text-xs text-amber-900">⚠ {describeWarning(w)}{w.sheet ? ` — ${w.sheet.trim()}` : ""}</li>)}
