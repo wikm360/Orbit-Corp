@@ -15,9 +15,10 @@ from app.features.documents.models import Document
 from app.features.volume_report import activity, questions, service
 from app.features.volume_report.agent import runner as agent_runner
 from app.features.volume_report.extraction.normalize import group_key
+from app.features.volume_report.extraction.period_range import resolve_period
 from app.features.volume_report.extraction.runner import extract_file
 from app.features.volume_report.models import (
-    Classification, ClassificationSource, Company, Decision, Dimension, Disposition, EvmRow, ExcludeReason, IncomeTotal, FileStatus, Item, Line,
+    Classification, ClassificationSource, Company, Decision, Dimension, Disposition, EvmRow, ExcludeReason, IncomeTotal, PvPlanRow, FileStatus, Item, Line,
     Question, QuestionStatus, Report, ReportFile, ReportStatus, Role, Site, SiteKind,
 )
 from app.features.volume_report.seed import ensure_seeded
@@ -60,7 +61,7 @@ async def _parse_files(db: AsyncSession, report: Report, lexicon, overrides: dic
             if document is None or document.project_id != report.project_id:
                 raise ValueError("Source document is no longer available")
             path = service.resolve_document_path(document)
-            extraction = await asyncio.to_thread(extract_file, path, lexicon, report.period_label, overrides.get(rfile.id), rfile.kind == "monthly_plan")
+            extraction = await asyncio.to_thread(extract_file, path, lexicon, report.period_label, overrides.get(rfile.id), rfile.kind == "monthly_plan", rfile.kind == "monthly_pv")
         except Exception as exc:
             logger.warning("Volume report %s: file %s failed: %s", report.id, rfile.filename, exc)
             rfile.status = FileStatus.FAILED
@@ -68,12 +69,18 @@ async def _parse_files(db: AsyncSession, report: Report, lexicon, overrides: dic
             await activity.log_activity(db, report.id, "parse", f"فایل «{rfile.filename}» خوانده نشد: {rfile.error_message}", kind="error", commit=False)
             continue
         rfile.sheet_log, rfile.warnings, rfile.suggested_company = extraction.sheet_log, extraction.warnings, extraction.suggested_company
+        if extraction.pv_plan is not None:
+            for pv_row in extraction.pv_plan.rows:
+                db.add(PvPlanRow(report_file_id=rfile.id, row_no=pv_row.row_no, project_name=pv_row.project_name, pv_month=pv_row.pv_month))
+            await activity.log_activity(db, report.id, "parse", f"فایل «{rfile.filename}»: برنامه‌ی PV ماهانه‌ی {len(extraction.pv_plan.rows)} پروژه خوانده شد",
+                                        kind="success", commit=False)
         for evm in extraction.evm_sheets:
+            period = resolve_period(evm.period, report.period_end) if evm.period is not None else None
             for row in evm.rows:
                 db.add(EvmRow(
                     report_file_id=rfile.id, sheet_name=evm.sheet_name, row_no=row.row_no, basis=evm.basis, project_name=row.project_name,
                     is_total=row.is_total, contract_amount=row.contract_amount, bcws=row.bcws, pv=row.pv, ev=row.ev, ev_net=row.ev_net,
-                    ac=row.ac, cpi=row.cpi, spi=row.spi,
+                    ac=row.ac, cpi=row.cpi, spi=row.spi, period_start=period[0] if period else None, period_end=period[1] if period else None,
                 ))
         for sheet_name, basis, totals in extraction.income_totals:
             db.add(IncomeTotal(report_file_id=rfile.id, sheet_name=sheet_name, basis=basis, statement_base=totals.statement_base,
@@ -164,6 +171,7 @@ async def _execute(db: AsyncSession, report: Report) -> None:
     await db.execute(delete(Line).where(Line.report_file_id.in_(file_ids)))  # cascades to line results
     await db.execute(delete(EvmRow).where(EvmRow.report_file_id.in_(file_ids)))
     await db.execute(delete(IncomeTotal).where(IncomeTotal.report_file_id.in_(file_ids)))
+    await db.execute(delete(PvPlanRow).where(PvPlanRow.report_file_id.in_(file_ids)))
     await db.execute(delete(Classification).where(Classification.report_id == report.id))
     await db.flush()
     overrides = {
@@ -182,15 +190,27 @@ async def _execute(db: AsyncSession, report: Report) -> None:
 
 async def _agent_and_finish(db: AsyncSession, report: Report, lexicon) -> None:
     """Agent pass for the groups nobody decided yet, then deterministic resolve and the status."""
-    pending = await db.scalar(
+    open_qs = (await db.execute(
+        select(Question).where(Question.report_id == report.id, Question.status == QuestionStatus.OPEN)
+    )).scalars().all()
+    asked_keys = {k for q in open_qs for k in q.group_keys}
+    if asked_keys:
+        await db.execute(
+            update(Classification).where(
+                Classification.report_id == report.id, Classification.disposition == Disposition.NEEDS_INPUT,
+                Classification.reason == "awaiting_classification", Classification.group_key.in_(asked_keys),
+            ).values(reason="asked")
+        )
+    pending = int(await db.scalar(
         select(func.count()).select_from(Classification).where(
             Classification.report_id == report.id, Classification.disposition == Disposition.NEEDS_INPUT, Classification.reason == "awaiting_classification")
-    )
+    ) or 0)
+    open_layout_sheets = {(q.spec.get("file_id"), q.spec.get("sheet")) for q in open_qs if q.spec.get("system") == "layout"}
     unknown_layouts = any(
-        e.get("layout_unknown")
+        e.get("layout_unknown") and (str(f.id), e.get("sheet")) not in open_layout_sheets
         for f in (await db.execute(select(ReportFile).where(ReportFile.report_id == report.id))).scalars()
         for e in f.sheet_log
-    ) and not await db.scalar(select(func.count()).select_from(Question).where(Question.report_id == report.id, Question.status == QuestionStatus.OPEN))
+    )
     if pending or unknown_layouts:
         await _progress(db, report, "agent", 0, 1, f"{pending} groups")
         await activity.log_activity(db, report.id, "agent", f"شروع بررسی هوشمند: {pending} گروه نیازمند تصمیم" if pending else "شروع بررسی هوشمند چیدمان شیت‌ها",
@@ -212,6 +232,7 @@ async def _agent_and_finish(db: AsyncSession, report: Report, lexicon) -> None:
     await _progress(db, report, "compute", 0, 1)
     await activity.log_activity(db, report.id, "compute", "محاسبه‌ی نتایج (تبدیل واحد و جمع‌بندی)", kind="step")
     await service.recompute(db, report)
+    await questions._supersede_resolved(db, report, recomputed=True)
     await questions.refresh_system_questions(db, report)
     await questions.trim_open_questions(db, report)
     causes = await service.gate_causes(db, report)
@@ -225,7 +246,13 @@ async def _agent_and_finish(db: AsyncSession, report: Report, lexicon) -> None:
 
 
 async def _continue(db: AsyncSession, report: Report) -> None:
-    """Next pass after answers: no re-parsing, groups the agent has not decided are retried."""
+    """Next pass after answers: parses any newly added pending files, otherwise retries groups the agent has not decided."""
+    has_pending_files = await db.scalar(
+        select(func.count()).select_from(ReportFile).where(ReportFile.report_id == report.id, ReportFile.status == FileStatus.PENDING)
+    )
+    if has_pending_files:
+        await _execute(db, report)
+        return
     await ensure_seeded(db)
     lexicon = await service.load_lexicon(db)
     await db.execute(update(Classification).where(

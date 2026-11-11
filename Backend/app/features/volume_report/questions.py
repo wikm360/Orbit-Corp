@@ -310,10 +310,56 @@ async def skip_question(db: AsyncSession, context: UserContext, report: Report, 
     return _read(q)
 
 
-async def _supersede_resolved(db: AsyncSession, report: Report) -> None:
+async def _supersede_resolved(db: AsyncSession, report: Report, *, recomputed: bool = False) -> None:
+    from app.features.volume_report.models import Effect, Line, LineResult
+
     index = await GroupIndex.load(db, report)
+    report_sites = {
+        s.id: s for s in (await db.execute(
+            select(Site).join(Line, Line.site_id == Site.id).join(ReportFile, ReportFile.id == Line.report_file_id)
+            .where(ReportFile.report_id == report.id).distinct()
+        )).scalars()
+    }
+    report_files = {
+        str(f.id): f for f in (await db.execute(select(ReportFile).where(ReportFile.report_id == report.id))).scalars()
+    }
+    failing_pairs: set[tuple[str, str, Effect, str | None]] = set()
+    if recomputed:
+        for gk, site_id, effect, note in (await db.execute(
+            select(Line.group_key, Line.site_id, LineResult.effect, LineResult.note)
+            .join(LineResult, LineResult.line_id == Line.id).join(ReportFile, ReportFile.id == Line.report_file_id)
+            .where(ReportFile.report_id == report.id, LineResult.effect.in_([Effect.NO_CONVERSION, Effect.UNIT_MISMATCH]))
+        )).all():
+            failing_pairs.add((gk, str(site_id), effect, note if effect == Effect.NO_CONVERSION else None))
+
     for q in (await db.execute(select(Question).where(Question.report_id == report.id, Question.status == QuestionStatus.OPEN))).scalars():
-        if q.group_keys and all(index.by_key.get(k) is None or index.by_key[k].locked for k in q.group_keys):
+        system = q.spec.get("system")
+        if system == "site_kind":
+            try:
+                sid = uuid.UUID(str(q.spec.get("site_id") or ""))
+            except ValueError:
+                sid = None
+            site = report_sites.get(sid) if sid else None
+            if site is None or site.kind_confirmed:
+                q.status = QuestionStatus.SUPERSEDED
+        elif system == "layout":
+            rfile = report_files.get(str(q.spec.get("file_id") or ""))
+            sheet = q.spec.get("sheet")
+            still_unknown = rfile is not None and any(
+                e.get("sheet") == sheet and e.get("layout_unknown") for e in rfile.sheet_log
+            )
+            if not still_unknown:
+                q.status = QuestionStatus.SUPERSEDED
+        elif system in ("no_conversion", "unit_mismatch"):
+            if q.group_keys and all(index.by_key.get(k) is None for k in q.group_keys):
+                q.status = QuestionStatus.SUPERSEDED
+            elif recomputed:
+                effect = Effect.NO_CONVERSION if system == "no_conversion" else Effect.UNIT_MISMATCH
+                param = (q.spec.get("number") or {}).get("param_key") if effect == Effect.NO_CONVERSION else None
+                site_id = str(q.spec.get("site_id") or "")
+                if not any((gk, site_id, effect, param) in failing_pairs for gk in q.group_keys):
+                    q.status = QuestionStatus.SUPERSEDED
+        elif q.group_keys and all(index.by_key.get(k) is None or index.by_key[k].locked for k in q.group_keys):
             q.status = QuestionStatus.SUPERSEDED
 
 

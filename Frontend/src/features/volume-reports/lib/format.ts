@@ -64,3 +64,33 @@ export function formatBillionRial(value: string | null | undefined): string {
 
 /** CPI / SPI ratio string ("1.05") -> Persian digits; null -> "—". */
 export const formatRatio = (value: string | null | undefined): string => (value === null || value === undefined ? "—" : toFa(value.replace(".", "٫")));
+
+/** Quantity of a review group: the actual total, or — for a group that only exists in a forecast — the planned one, labelled. */
+export function formatGroupQuantity(group: { total_quantity: string; planned_quantity?: string; unit: string }, decimals = 2): string {
+  const actual = Number.parseFloat(group.total_quantity || "0");
+  const planned = Number.parseFloat(group.planned_quantity || "0");
+  if (actual === 0 && planned > 0) return `${formatQuantityWithUnit(group.planned_quantity, group.unit, decimals)} (برنامه/پیش‌بینی)`;
+  return formatQuantityWithUnit(group.total_quantity, group.unit, decimals);
+}
+
+const FA_DIGITS = "۰۱۲۳۴۵۶۷۸۹";
+
+/** Text typed in "میلیارد ریال" (Persian or Latin digits, "," / "٬" grouping, "." / "٫" decimal) -> rial as a decimal string, by
+ *  integer arithmetic. "" -> null (no value); anything else that is not a non-negative number -> undefined. */
+export function billionInputToRial(text: string): string | null | undefined {
+  const clean = text.trim().replace(/[۰-۹]/g, (d) => String(FA_DIGITS.indexOf(d))).replace(/[,٬،\s]/g, "").replace(/٫/g, ".");
+  if (clean === "") return null;
+  const m = /^(\d+)(?:\.(\d{0,9}))?$/.exec(clean);
+  if (!m) return undefined;
+  return (BigInt(m[1]!) * BigInt(1_000_000_000) + BigInt((m[2] ?? "").padEnd(9, "0"))).toString();
+}
+
+/** Rial decimal string -> the number of billions as plain text for an input ("104392021869.88" -> "104.39"). */
+export function rialToBillionInput(rial: string | null | undefined): string {
+  if (!rial) return "";
+  const m = /^(\d+)/.exec(rial.trim());
+  if (!m) return "";
+  const hundredths = (BigInt(m[1]!) * BigInt(100) + BigInt(500_000_000)) / BigInt(1_000_000_000);
+  const text = hundredths.toString().padStart(3, "0");
+  return `${text.slice(0, -2)}.${text.slice(-2)}`;
+}

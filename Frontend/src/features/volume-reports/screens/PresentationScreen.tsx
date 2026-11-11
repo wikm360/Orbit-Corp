@@ -1189,7 +1189,6 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
 
     // One page per company right after the scorecard: its EVM reading (SPI / CPI / PV / EV / AC).
     const evmByCompany = new Map((evm?.actual.companies ?? []).map((c) => [c.company_id, c]));
-    const evmPlannedByCompany = new Map((evm?.planned.companies ?? []).map((c) => [c.company_id, c]));
     const profileCompanies = [
       ...companies.map((c) => ({ id: c.id, name: c.name, rows: c.rows })),
       ...(evm?.actual.companies ?? []).filter((c) => !companies.some((x) => x.id === c.company_id)).map((c) => ({ id: c.company_id, name: c.company, rows: new Map<string, ResultRow>() })),
@@ -1208,7 +1207,6 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
           >
             <CompanyProfileBody
               evm={evmByCompany.get(comp.id) ?? null}
-              evmPlanned={evmPlannedByCompany.get(comp.id) ?? null}
             />
           </Slide>
         ),

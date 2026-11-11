@@ -10,6 +10,7 @@ from app.features.volume_report.extraction.income_totals import IncomeTotals, de
 
 from app.features.volume_report.extraction.income_parser import ParsedSheet, parse_income_sheet
 from app.features.volume_report.extraction.normalize import Lexicon
+from app.features.volume_report.extraction.pv_plan import ParsedPvPlan, parse_pv_plan
 from app.features.volume_report.extraction.probe import SheetProbe, probe_workbook, suggest_company
 from app.features.volume_report.extraction.workbook import open_workbook
 
@@ -20,6 +21,7 @@ class FileExtraction:
     sheets: list[ParsedSheet] = field(default_factory=list)
     evm_sheets: list[ParsedEvm] = field(default_factory=list)
     income_totals: list[tuple[str, str, IncomeTotals]] = field(default_factory=list)  # (sheet, basis, totals)
+    pv_plan: ParsedPvPlan | None = None
     suggested_company: str | None = None
     warnings: list[dict[str, Any]] = field(default_factory=list)
 
@@ -58,6 +60,7 @@ def _unreadable(rows: list[list[Any]]) -> bool:
 def extract_file(
     path: str, lexicon: Lexicon, period_label: str | None = None, layout_overrides: dict[str, dict] | None = None,
     force_planned: bool = False,
+    pv_only: bool = False,
 ) -> FileExtraction:
     """Blocking (file I/O): run in a worker/thread."""
     result = FileExtraction()
@@ -66,6 +69,17 @@ def extract_file(
         probes = probe_workbook(workbook)
         result.suggested_company = suggest_company(workbook, probes)
         for sheet, probe in zip(workbook.sheets, probes):
+            if pv_only:
+                # A monthly PV plan file: only its PV sheet is read (the company-wide EVM workbook has dozens of other sheets).
+                plan = None if sheet.is_hidden else parse_pv_plan(sheet.name, sheet.rows())
+                if plan is not None and result.pv_plan is None:
+                    result.pv_plan = plan
+                result.sheet_log.append({
+                    "sheet": probe.sheet, "visibility": probe.visibility, "kind": "pv_plan" if plan is not None else "other",
+                    "used": plan is not None, "reason": None if plan is not None else "not_pv_plan_sheet",
+                    "pv_rows": len(plan.rows) if plan is not None else None, "basis": "planned",
+                })
+                continue
             evm = None if sheet.is_hidden else parse_evm_sheet(sheet.name, sheet.rows(), os.path.basename(path))
             if evm is not None:
                 # The EVM summary (PV/EV/AC/CPI/SPI per project) is its own data set, never an income table.
@@ -123,11 +137,16 @@ def extract_file(
     return result
 
 
-def suggest_plan_month_for_file(path: str) -> int | None:
-    """Cheap probe for the wizard (blocking): the month of a monthly forecast, else None."""
+def suggest_kind_for_file(path: str) -> tuple[str, int | None]:
+    """Cheap probe for the wizard (blocking): ("monthly_pv" | "monthly_plan" | "period", Jalali month or None)."""
     from app.features.volume_report.extraction.plan_month import detect_plan_month
+    from app.features.volume_report.extraction.pv_plan import detect_pv_plan
 
-    return detect_plan_month(path)
+    pv_plan = detect_pv_plan(path)
+    if pv_plan is not None:
+        return "monthly_pv", pv_plan.month
+    month = detect_plan_month(path)
+    return ("monthly_plan", month) if month else ("period", None)
 
 
 def suggest_company_for_file(path: str) -> str | None:

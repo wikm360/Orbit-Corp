@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { useAuthStore } from "@/features/auth/hooks/useAuthStore";
 import { runSoon } from "../lib/defer";
-import { loadWorkspace } from "@/shared/lib/workspaceApi";
+import { hasProjectPermission, loadWorkspace } from "@/shared/lib/workspaceApi";
 import type { Project } from "@/shared/types";
 
 /**
@@ -14,6 +14,7 @@ import type { Project } from "@/shared/types";
 export function useWorkspaceProjects() {
   const user = useAuthStore((s) => s.user);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [managedTeamIds, setManagedTeamIds] = useState<Set<string>>(new Set());
   const [canEditSettings, setCanEditSettings] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
@@ -25,6 +26,7 @@ export function useWorkspaceProjects() {
     try {
       const overview = await loadWorkspace(user);
       setProjects(overview.projects);
+      setManagedTeamIds(overview.managedTeamIds);
       setCanEditSettings(user.role === "admin" || user.role === "super_admin" || overview.managedTeamIds.size > 0);
     } catch (e) {
       setError(e);
@@ -33,6 +35,14 @@ export function useWorkspaceProjects() {
     }
   }, [user]);
 
+  const canManageDocumentsFor = useCallback((projectId: string): boolean => {
+    if (!user) return false;
+    if (user.role === "admin" || user.role === "super_admin") return true;
+    const project = projects.find((p) => p.id === projectId);
+    if (!project) return false;
+    return managedTeamIds.has(project.team_id) || hasProjectPermission(project, "documents");
+  }, [user, projects, managedTeamIds]);
+
   useEffect(() => runSoon(() => void reload()), [reload]);
-  return { projects, canEditSettings, loading, error, reload };
+  return { projects, canEditSettings, canManageDocumentsFor, loading, error, reload };
 }

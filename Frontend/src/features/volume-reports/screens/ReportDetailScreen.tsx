@@ -12,6 +12,7 @@ import { friendlyErrorMessage } from "@/shared/lib/errorMessages";
 import { volumeReportApi, type ExportFormat } from "../api/volumeReportApi";
 import { Card, ErrorBox, LoadingBlock, ReportStatusBadge, Tabs } from "../components/common";
 import { ActivityPanel } from "../components/ActivityPanel";
+import { AddReportFilesModal } from "../components/AddReportFilesModal";
 import { EvmPanel } from "../components/EvmPanel";
 import { NarrativesPanel } from "../components/NarrativesPanel";
 import { PlanPanel } from "../components/PlanPanel";
@@ -24,7 +25,7 @@ import { useRunProgress } from "../hooks/useRunProgress";
 import { runSoon } from "../lib/defer";
 import { formatJalaliDate, formatJalaliDateTime, toFa } from "../lib/jalali";
 import { GATE_HINTS, PERIOD_LABELS, gateLabel, parseGateError } from "../lib/status";
-import type { CatalogItem, GateCause, Progress, ReportDetail } from "../types";
+import type { CatalogItem, GateCause, Progress, ReportDetail, SourceInfo } from "../types";
 
 type TabId = "results" | "evm" | "plan" | "narratives" | "review" | "sources" | "activity";
 
@@ -40,6 +41,8 @@ export function ReportDetailScreen({ reportId }: { reportId: string }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [gate, setGate] = useState<GateCause[] | null>(null);
+  const [filesModalOpen, setFilesModalOpen] = useState(false);
+  const [removingFileId, setRemovingFileId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -98,6 +101,22 @@ export function ReportDetailScreen({ reportId }: { reportId: string }) {
   async function download(format: ExportFormat) {
     await act(`export-${format}`, () => volumeReportApi.downloadExport(reportId, format));
   }
+  async function handleRemoveSource(source: SourceInfo) {
+    if (source.status === "parsed" && !window.confirm(`فایل «${source.filename}» قبلاً خوانده شده است. از گزارش حذف شود؟ (پس از حذف باید یک دور جدید اجرا کنید.)`)) {
+      return;
+    }
+    setRemovingFileId(source.id);
+    setNotice(null);
+    try {
+      await volumeReportApi.removeFile(reportId, source.id);
+      setNotice(`فایل «${source.filename}» از گزارش حذف شد.`);
+      await refresh();
+    } catch (e) {
+      setNotice(friendlyErrorMessage(e, "حذف فایل از گزارش ناموفق بود."));
+    } finally {
+      setRemovingFileId(null);
+    }
+  }
 
   if (error) return <div className="p-6"><ErrorBox error={error} onRetry={() => void load()} /></div>;
   if (!report) return <LoadingBlock />;
@@ -106,6 +125,7 @@ export function ReportDetailScreen({ reportId }: { reportId: string }) {
   const published = report.status === "published";
   const editable = !processing && !published;
   const canContinue = ["awaiting_user", "needs_review", "ready"].includes(report.status);
+  const pendingFilesCount = report.files.filter((f) => f.status === "pending").length;
 
   return (
     <div className="mx-auto max-w-6xl space-y-4 p-4 md:p-6">
@@ -123,7 +143,25 @@ export function ReportDetailScreen({ reportId }: { reportId: string }) {
         </div>
         <div className="flex flex-wrap gap-2">
           {report.status === "draft" && report.files.length === 0 && <Link href={`/volume-reports/new?report=${report.id}`} className="inline-flex items-center rounded-xl bg-gray-100 px-4 py-2 text-sm hover:bg-gray-200">انتخاب فایل‌ها</Link>}
-          {editable && report.files.length > 0 && <Button size="sm" variant="secondary" isLoading={busy === "run"} onClick={() => void start("run")}>{report.status === "draft" ? "اجرا" : "اجرای مجدد"}</Button>}
+          {editable && (
+            <Button size="sm" variant="secondary" onClick={() => setFilesModalOpen(true)}>
+              + افزودن فایل جدید
+            </Button>
+          )}
+          {editable && report.files.length > 0 && (
+            <Button
+              size="sm"
+              variant={pendingFilesCount > 0 && report.status !== "draft" ? "primary" : "secondary"}
+              isLoading={busy === "run"}
+              onClick={() => void start("run")}
+            >
+              {report.status === "draft"
+                ? "اجرا"
+                : pendingFilesCount > 0
+                  ? `اجرای دور جدید (${toFa(pendingFilesCount)} فایل جدید)`
+                  : "اجرای مجدد"}
+            </Button>
+          )}
           {!processing && report.status !== "draft" && report.status !== "failed" && <>
             <Link href={`/volume-reports/${report.id}/presentation`} className="inline-flex items-center rounded-xl bg-[#252850] px-4 py-2 text-sm font-medium text-white hover:bg-[#1e2246]">
               پرزنتیشن مدیریتی
@@ -139,6 +177,17 @@ export function ReportDetailScreen({ reportId }: { reportId: string }) {
 
       {notice && <p role="status" className="rounded-xl bg-slate-100 px-4 py-2 text-sm text-slate-700">{notice}</p>}
       {report.status === "failed" && <ErrorBox error={new Error(report.error_message ?? "")} fallback={`اجرا ناموفق بود${report.error_message ? `: ${report.error_message}` : "."}`} />}
+      {editable && pendingFilesCount > 0 && report.status !== "draft" && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-teal-200 bg-teal-50/80 px-4 py-2.5 text-xs text-teal-900">
+          <span>
+            {toFa(pendingFilesCount)} فایل جدید به گزارش اضافه شده و هنوز پردازش نشده است. برای پارس شدن فایل‌ها و به‌روزرسانی ارقام و تحلیل هوشمند، دور جدید را اجرا کنید.
+          </span>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="secondary" onClick={() => setFilesModalOpen(true)}>افزودن فایل بیشتر</Button>
+            <Button size="sm" isLoading={busy === "run"} onClick={() => void start("run")}>اجرای دور جدید</Button>
+          </div>
+        </div>
+      )}
       {report.issues.length > 0 && !published && !processing && (
         <p className="rounded-xl bg-amber-50 px-4 py-2 text-xs text-amber-900">
           موارد مانع انتشار: {report.issues.map((i) => `${gateLabel(i.code)} (${toFa(i.count)})`).join("، ")}
@@ -149,22 +198,40 @@ export function ReportDetailScreen({ reportId }: { reportId: string }) {
 
       {!processing && report.status !== "draft" && report.status !== "failed" && (
         <>
-          <Tabs<TabId> value={tab} onChange={setTab} tabs={[{ id: "results", label: "نتایج" }, { id: "evm", label: "شاخص‌های EVM" }, { id: "plan", label: "برنامه و پیش‌بینی" }, { id: "narratives", label: "عملکرد پروژه‌ها" }, { id: "review", label: "بازبینی", badge: openQuestions }, { id: "sources", label: "منابع و هشدارها" }, { id: "activity", label: "گزارش فعالیت" }]} />
+          <Tabs<TabId> value={tab} onChange={setTab} tabs={[{ id: "results", label: "نتایج" }, { id: "evm", label: "شاخص‌های EVM" }, { id: "plan", label: "برنامه و پیش‌بینی" }, { id: "narratives", label: "عملکرد پروژه‌ها" }, { id: "review", label: "بازبینی", badge: openQuestions }, { id: "sources", label: "منابع و هشدارها", badge: pendingFilesCount }, { id: "activity", label: "گزارش فعالیت" }]} />
           {tab === "results" && <ResultsView reportId={reportId} catalog={catalog} refreshKey={refreshKey} />}
-          {tab === "evm" && <EvmPanel reportId={reportId} refreshKey={refreshKey} />}
+          {tab === "evm" && <EvmPanel reportId={reportId} refreshKey={refreshKey} editable={editable} />}
           {tab === "plan" && <PlanPanel reportId={reportId} periodEnd={report.period_end} refreshKey={refreshKey} />}
           {tab === "narratives" && <NarrativesPanel reportId={reportId} refreshKey={refreshKey} />}
           {tab === "review" && (
-            <ReviewPanel reportId={reportId} catalog={catalog} editable={editable} canContinue={canContinue}
+            <ReviewPanel reportId={reportId} catalog={catalog} editable={editable} canContinue={canContinue} refreshKey={refreshKey}
               onChanged={() => void refresh()} onContinue={async () => { await volumeReportApi.continueRun(reportId); await load(); }} />
           )}
-          {tab === "sources" && <SourcesPanel reportId={reportId} refreshKey={refreshKey} />}
+          {tab === "sources" && (
+            <SourcesPanel
+              reportId={reportId}
+              refreshKey={refreshKey}
+              editable={editable}
+              removingId={removingFileId}
+              onOpenAddFiles={() => setFilesModalOpen(true)}
+              onRunPending={() => void start("run")}
+              onRemoveFile={(s) => void handleRemoveSource(s)}
+            />
+          )}
           {tab === "activity" && <ActivityPanel items={activity.items} loaded={activity.loaded} processing={false} />}
         </>
       )}
       {report.status === "draft" && report.files.length > 0 && (
         <Card title="فایل‌های انتخاب‌شده"><ul className="space-y-1 text-sm text-slate-700">{report.files.map((f) => <li key={f.id}>{f.filename}</li>)}</ul></Card>
       )}
+
+      <AddReportFilesModal
+        isOpen={filesModalOpen}
+        onClose={() => setFilesModalOpen(false)}
+        report={report}
+        onChanged={refresh}
+        onRunStarted={load}
+      />
 
       <Modal isOpen={gate !== null} onClose={() => setGate(null)} title="انتشار انجام نشد">
         <p className="text-sm text-slate-700">قفل انتشار (حالت سخت‌گیرانه) تا برطرف‌شدن این موارد فعال است:</p>

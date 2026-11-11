@@ -3,7 +3,7 @@ import { API_BASE_URL, ApiError, apiRequest, authorizedFetch, parseErrorMessage 
 import type {
   AnswerPayload, CatalogItem, Company, CompanyNarrative, ConfirmItem, Conversion, DecisionRow, FileSelection, ItemRule, ItemRuleWrite, LexiconEntry, LineRow, Question,
   ReportCreate, ReportDetail, ReportStatus, ReportSummary, ResultScope, ResultsResponse, ReviewGroup, SelectedFile, SettingsItem,
-  SettingsItemWrite, Site, SiteKind, SourceInfo, ProgressResponse, GateCause, ActivityResponse, PlanVsActual, EvmResponse,
+  SettingsItemWrite, Site, SiteKind, SourceInfo, ProgressResponse, GateCause, ActivityResponse, PlanVsActual, EvmResponse, PvEntry, PvMode,
 } from "../types";
 
 const BASE = "/volume-reports";
@@ -22,6 +22,8 @@ export const volumeReportApi = {
   get: (id: string) => apiRequest<ReportDetail>(`${BASE}/${id}`),
   remove: (id: string) => send<void>(`/${id}`, "DELETE"),
   setFiles: (id: string, files: FileSelection[]) => send<SelectedFile[]>(`/${id}/files`, "PUT", { files }),
+  addFiles: (id: string, files: FileSelection[]) => send<SelectedFile[]>(`/${id}/files`, "POST", { files }),
+  removeFile: (id: string, fileId: string) => send<void>(`/${id}/files/${fileId}`, "DELETE"),
   run: (id: string) => send<ReportSummary>(`/${id}/run`, "POST"),
   continueRun: (id: string) => send<ReportSummary>(`/${id}/continue`, "POST"),
   recompute: (id: string) => send<{ issues: GateCause[] }>(`/${id}/recompute`, "POST"),
@@ -37,6 +39,7 @@ export const volumeReportApi = {
     apiRequest<ResultsResponse>(`${BASE}/${id}/results${qs({ group_by: groupBy, include: include.join(","), basis })}`),
   planVsActual: (id: string, groupBy: ResultScope) => apiRequest<PlanVsActual>(`${BASE}/${id}/plan-vs-actual${qs({ group_by: groupBy })}`),
   evm: (id: string) => apiRequest<EvmResponse>(`${BASE}/${id}/evm`),
+  setPv: (id: string, mode: PvMode, values: PvEntry[]) => send<EvmResponse>(`/${id}/evm/pv`, "PUT", { mode, values }),
   lines: (id: string, filter: { site_id?: string; item_key?: string; effect?: string; limit?: number; offset?: number }) =>
     apiRequest<LineRow[]>(`${BASE}/${id}/lines${qs(filter)}`),
   trace: (id: string, itemKey: string, siteId?: string) => apiRequest<LineRow[]>(`${BASE}/${id}/trace${qs({ item_key: itemKey, site_id: siteId })}`),

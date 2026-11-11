@@ -296,7 +296,7 @@ function Deviation({ label, value }: { label: string; value: string | null }) {
 
 // ---- slide body ---------------------------------------------------------------------------------------------------
 
-export function CompanyProfileBody({ evm, evmPlanned }: { evm: EvmCompany | null; evmPlanned: EvmCompany | null }) {
+export function CompanyProfileBody({ evm }: { evm: EvmCompany | null }) {
   if (!evm) {
     return (
       <Card title="شاخص‌های ارزش کسب‌شده (EVM)" className="flex-1">
@@ -308,9 +308,9 @@ export function CompanyProfileBody({ evm, evmPlanned }: { evm: EvmCompany | null
   const read = verdict(num(t.spi), num(t.cpi));
   const sv = diffRial(t.ev, t.pv);
   const cv = diffRial(t.ev_net, t.ac);
-  const next = evmPlanned?.total ?? null;
-  const nextText = next && (num(next.ev) !== null || num(next.ac) !== null)
-    ? `پیش‌بینی دوره‌ی بعد${evmPlanned?.plan_source === "monthly" ? " (از برنامه‌ی ماهانه)" : ""} · EV ${formatBillionRial(next.ev)} · AC ${formatBillionRial(next.ac)} · SPI ${formatRatio(next.spi)} · CPI ${formatRatio(next.cpi)}`
+  const planned = evm.projects.filter((p) => p.pv_source && p.pv_source !== "file");
+  const pvNote = planned.length
+    ? `PV ${planned.length === evm.projects.length ? "همه‌ی پروژه‌ها" : `${toFa(planned.length)} از ${toFa(evm.projects.length)} پروژه`} از ${[...new Set(planned.map((p) => p.pv_source_label))].join(" و ")}`
     : null;
   const steps = buildSteps(evm.income, t);
   return (
@@ -345,7 +345,7 @@ export function CompanyProfileBody({ evm, evmPlanned }: { evm: EvmCompany | null
         <div className="min-w-0 flex-1">
           <p className="text-[21px] font-black" style={{ color: read?.color ?? NAVY }}>{read?.title ?? "خوانش مدیریتی"}</p>
           <p className="mt-0.5 text-[14px] leading-relaxed text-slate-600">{read?.text ?? "داده‌ی کافی برای ارزیابی در فایل ثبت نشده است."}</p>
-          {nextText && <p className="mt-1 text-[12.5px] font-semibold" style={{ color: GOLD_DARK }}>{nextText}</p>}
+          {pvNote && <p className="mt-1 text-[12.5px] font-semibold" style={{ color: GOLD_DARK }}>{pvNote}</p>}
         </div>
         <div className="flex shrink-0 divide-x divide-slate-200 divide-x-reverse">
           <Deviation label="انحراف زمانی (EV − PV)" value={sv} />

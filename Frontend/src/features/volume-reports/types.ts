@@ -24,7 +24,10 @@ export interface ReportSummary {
   updated_at: string;
 }
 
-export interface ReportFileInfo { id: string; document_id: string | null; filename: string; company_id: string; status: "pending" | "parsed" | "failed"; error_message: string | null }
+export interface ReportFileInfo {
+  id: string; document_id: string | null; filename: string; company_id: string; status: "pending" | "parsed" | "failed"; error_message: string | null;
+  kind?: FileKind; plan_start?: string | null; plan_end?: string | null; plan_month?: number | null;
+}
 export interface GateCause { code: string; count: number }
 export interface CompanyNarrative {
   company_name?: string;
@@ -40,15 +43,16 @@ export interface ReportDetail extends Omit<ReportSummary, "created_at" | "update
 
 export interface ReportCreate { project_id: string; title: string; period_type: PeriodType; period_start: string; period_end: string; period_label: string }
 export interface FileSelection { document_id: string; company_id: string; kind?: FileKind; plan_month?: number }
-/** period = a normal report file; monthly_plan = a forecast for a whole month, spread over the days of the next period. */
-export type FileKind = "period" | "monthly_plan";
+/** period = a normal report file; monthly_plan = a volume forecast for a whole month, spread over the days of the next period;
+ *  monthly_pv = a monthly PV plan per project, its share by days gives the PV of this report's own period. */
+export type FileKind = "period" | "monthly_plan" | "monthly_pv";
 /** Share of a monthly forecast that belongs to the next period: overlap_days / plan_days of the month. */
 export interface PlanInfo {
   plan_start: string; plan_end: string; period_start: string; period_end: string; overlap_days: number; plan_days: number; period_days: number; factor: string;
 }
 export interface SelectedFile {
-  id: string; document_id: string | null; filename: string; company_id: string; status: string; suggested_company: string | null;
-  kind?: FileKind; plan?: PlanInfo | null; suggested_kind?: FileKind; suggested_plan_month?: number | null;
+  id: string; document_id: string | null; filename: string; company_id: string; status: string; error_message?: string | null; suggested_company: string | null;
+  kind?: FileKind; plan_month?: number | null; plan?: PlanInfo | null; suggested_kind?: FileKind; suggested_plan_month?: number | null;
 }
 
 export interface ProgressResponse { status: ReportStatus; progress: Progress; error_message: string | null }
@@ -63,6 +67,8 @@ export interface SourceWarning { code: string; sheet?: string; row?: number; fou
 export interface SourceReads {
   income: { actual: number; planned: number };
   income_totals: { actual: number; planned: number };
+  pv_plan?: number;
+  forecast_period?: { start: string; end: string; is_this_period: boolean } | null;
   evm: { actual: { projects: number; has_total: boolean }; planned: { projects: number; has_total: boolean } };
 }
 export interface SourceInfo { reads?: SourceReads; kind?: FileKind; plan?: PlanInfo | null; id: string; filename: string; status: string; error_message: string | null; suggested_company: string | null; sheet_log: SheetLogEntry[]; warnings: SourceWarning[] }
@@ -170,16 +176,20 @@ export interface EvmFigures {
   contract_amount: string | null; bcws: string | null; pv: string | null; ev: string | null; ev_net: string | null; ac: string | null;
   cpi: string | null; spi: string | null;
 }
-export interface EvmProject extends EvmFigures { project: string | null; filename: string; plan_source?: "report" | "monthly" }
+export type PvSource = "file" | "forecast_file" | "previous_report" | "monthly_pv" | "manual";
+/** Where the PV (and so the SPI) of a project comes from; everything else is read from the project's own report file. */
+export interface EvmProject extends EvmFigures { project: string | null; filename: string; pv_source?: PvSource; pv_source_label?: string; pv_match?: "exact" | "fuzzy" | null; pv_share?: string | null; pv_auto?: string | null; pv_manual?: string | null }
 export interface EvmTotal extends EvmFigures { projects: number }
 /** Sum of the income sheets' totals blocks; a field is null unless every sheet printed it. */
 export interface EvmIncome {
   sheets: number; statement_base: string | null; statement_coef: string | null; adjustment: string | null; income_total: string | null; cumulative: string | null;
 }
 export interface EvmCompany {
-  company_id: string; company: string; projects: EvmProject[]; total: EvmTotal; income: EvmIncome | null; plan_source?: "report" | "monthly";
+  company_id: string; company: string; projects: EvmProject[]; total: EvmTotal; income: EvmIncome | null;
   /** The "جمع" row the file itself printed (only when exactly one file of the company has it). */
   reported_total: (EvmFigures & { projects: number; project: string | null }) | null;
 }
 export interface EvmBasis { companies: EvmCompany[]; holding: EvmTotal | null }
-export interface EvmResponse { report_id: string; actual: EvmBasis; planned: EvmBasis }
+export type PvMode = "auto" | "manual";
+export interface PvEntry { company_id: string; project: string; pv: string | null }
+export interface EvmResponse { report_id: string; pv_mode: PvMode; actual: EvmBasis }

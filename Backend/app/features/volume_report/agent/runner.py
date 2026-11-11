@@ -59,7 +59,17 @@ async def run_pass(db: AsyncSession, report: Report, provider: LLMProvider, lexi
     await db.commit()
     index = await GroupIndex.load(db, report)
     files = (await db.execute(select(ReportFile).where(ReportFile.report_id == report.id))).scalars().all()
-    layout_sheets = {e["sheet"]: f for f in files for e in f.sheet_log if e.get("layout_unknown")}
+    open_layout_sheets = {
+        (q.spec.get("file_id"), q.spec.get("sheet"))
+        for q in (await db.execute(select(Question).where(Question.report_id == report.id, Question.status == QuestionStatus.OPEN))).scalars()
+        if q.spec.get("system") == "layout"
+    }
+    layout_sheets = {
+        e["sheet"]: f
+        for f in files
+        for e in f.sheet_log
+        if e.get("layout_unknown") and (str(f.id), e.get("sheet")) not in open_layout_sheets
+    }
     registry = VrToolRegistry(with_layout=bool(layout_sheets))
     ctx = ToolContext(db=db, report=report, run_id=run.id, index=index, lexicon=lexicon, layout_sheets=layout_sheets)
     messages = [{"role": "system", "content": await build_system_prompt(db)}, {"role": "user", "content": _run_state(index, run.pass_no)}]

@@ -18,10 +18,11 @@ export const EFFECT_LABELS: Record<LineEffect, string> = {
 };
 
 export const GATE_LABELS: Record<string, string> = {
-  open_questions: "سؤال بی‌پاسخ", unconfirmed_counted: "ردیف شمرده‌شده‌ی تأییدنشده", needs_input: "گروه بدون تصمیم",
+  pending_files: "فایل در انتظار پردازش", open_questions: "سؤال بی‌پاسخ", unconfirmed_counted: "ردیف شمرده‌شده‌ی تأییدنشده", needs_input: "گروه بدون تصمیم",
   unit_mismatch: "ناسازگاری واحد", no_conversion: "پارامتر تبدیل ناموجود", site_kind_unconfirmed: "نوع کارگاه تأییدنشده",
 };
 export const GATE_HINTS: Record<string, string> = {
+  pending_files: "فایل‌های جدید هنوز پارس نشده‌اند؛ برای به‌روزرسانی ارقام و تحلیل‌ها دکمه‌ی «اجرای دور جدید» را بزنید.",
   open_questions: "در تب «بازبینی» به سؤال‌ها پاسخ دهید یا ردشان کنید.",
   unconfirmed_counted: "گروه‌های پیشنهادی agent را در «تأیید گروهی» تأیید یا اصلاح کنید.",
   needs_input: "برای این گروه‌ها آیتم یا دلیل حذف مشخص کنید.",

@@ -813,3 +813,61 @@ test('Jalali weekday and company scorecard period note format Wed-Tue and arbitr
   );
   assert.equal(pres.formatCompanyScorecardPeriodNote(null, null), null);
 });
+
+test('wizard helpers group folders, build file payloads, and seed resumed/appended report files', () => {
+  const wizard = load('features/volume-reports/lib/wizard.ts', {
+    '@/features/volume-reports/lib/jalali': jalali,
+  });
+  const companies = [
+    { id: 'c1', name: 'شرکت گلومک سازه' },
+    { id: 'c2', name: 'آبادگران رفاه' },
+  ];
+  const folders = [
+    { id: 'f1', parent_id: null, name: 'گلومک سازه', created_at: '2026-01-01' },
+    { id: 'f2', parent_id: 'f1', name: 'هفتگی', created_at: '2026-01-01' },
+  ];
+  const docs = [
+    { id: 'd1', filename: 'root.xlsx', content_type: 'x', status: 'ready', error_message: null, project_id: 'p1', conversation_id: null, folder_id: null, uploaded_by: null, created_at: '' },
+    { id: 'd2', filename: 'late.pdf', content_type: 'x', status: 'ready', error_message: null, project_id: 'p1', conversation_id: null, folder_id: 'f2', uploaded_by: null, created_at: '' },
+  ];
+  const groups = wizard.buildFolderGroups(docs, folders, companies);
+  assert.equal(groups.length, 2);
+  assert.equal(groups[0].id, '__root__');
+  assert.equal(groups[1].path, 'گلومک سازه / هفتگی');
+  assert.equal(groups[1].suggestedCompanyId, 'c1');
+
+  const filtered = wizard.filterFolderGroups(groups, 'late', true, { d2: 'c1' });
+  assert.equal(filtered.length, 1);
+  assert.deepEqual(filtered[0].docs.map((d) => d.id), ['d2']);
+
+  const seeded = wizard.seedSelectionFromReportFiles([
+    { id: 'rf1', document_id: 'd1', filename: 'root.xlsx', company_id: 'c2', status: 'parsed', error_message: null, kind: 'period' },
+    { id: 'rf2', document_id: 'd2', filename: 'late.pdf', company_id: 'c1', status: 'pending', error_message: null, kind: 'monthly_plan', plan_month: 8 },
+    { id: 'rf3', document_id: 'd3', filename: 'pv.xlsx', company_id: 'c1', status: 'pending', error_message: null, kind: 'monthly_pv', plan_month: 0 },
+  ]);
+  assert.deepEqual(seeded.selection, { d1: 'c2', d2: 'c1', d3: 'c1' });
+  assert.deepEqual(seeded.monthly, { d2: { kind: 'monthly_plan', month: 8 }, d3: { kind: 'monthly_pv', month: 0 } });
+
+  const payload = wizard.selectionToPayload(seeded.selection, seeded.monthly);
+  assert.deepEqual(payload, [
+    { document_id: 'd1', company_id: 'c2' },
+    { document_id: 'd2', company_id: 'c1', kind: 'monthly_plan', plan_month: 8 },
+    { document_id: 'd3', company_id: 'c1', kind: 'monthly_pv' },
+  ]);
+
+  assert.equal(status.GATE_LABELS.pending_files, 'فایل در انتظار پردازش');
+  assert.ok(status.GATE_HINTS.pending_files.includes('اجرای دور جدید'));
+});
+
+test('manual PV input: billions typed in Persian or Latin digits become exact rial strings, blank means no value', () => {
+  assert.equal(fmt.billionInputToRial('257.7'), '257700000000');
+  assert.equal(fmt.billionInputToRial('۲۵۷٫۷۳'), '257730000000');
+  assert.equal(fmt.billionInputToRial('1,104.392021869'), '1104392021869');
+  assert.equal(fmt.billionInputToRial('  '), null);
+  assert.equal(fmt.billionInputToRial('abc'), undefined);
+  assert.equal(fmt.billionInputToRial('-5'), undefined);
+  assert.equal(fmt.billionInputToRial('1.2345678901'), undefined); // more than 9 decimals = sub-rial precision
+  assert.equal(fmt.rialToBillionInput('257730000000'), '257.73');
+  assert.equal(fmt.rialToBillionInput('1104392021869.88'), '1104.39');
+  assert.equal(fmt.rialToBillionInput(null), '');
+});

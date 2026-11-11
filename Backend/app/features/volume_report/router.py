@@ -12,8 +12,8 @@ from app.features.usage.service import ensure_quota
 from app.features.volume_report import activity, export, memory, questions, service
 from app.features.volume_report.models import Company, Conversion, Item, ItemRule, Report, ReportStatus, Site
 from app.features.volume_report.schemas import (
-    CompanyWrite, ConfirmRequest, ConversionWrite, FilesUpdate, GenerateNarrativeRequest, ItemRuleWrite, ItemWrite,
-    LexiconWrite, NarrativesUpdate, ReportCreate, ReportRead, SiteUpdate,
+    CompanyWrite, ConfirmRequest, ConversionWrite, FilesAdd, FilesUpdate, GenerateNarrativeRequest, ItemRuleWrite, ItemWrite,
+    LexiconWrite, NarrativesUpdate, PvUpdate, ReportCreate, ReportRead, SiteUpdate,
 )
 from app.features.volume_report.extraction.normalize import normalize_text
 from app.features.volume_report.seed import bump_catalog_version, ensure_seeded
@@ -296,6 +296,17 @@ async def put_files(payload: FilesUpdate, report: Report = Depends(get_report_fo
     return await service.set_files(db, report, payload.files)
 
 
+@router.post("/{report_id}/files")
+async def post_files(payload: FilesAdd, report: Report = Depends(get_report_for_member), db: AsyncSession = Depends(get_db)):
+    return await service.add_files(db, report, payload.files)
+
+
+@router.delete("/{report_id}/files/{file_id}", status_code=204)
+async def delete_file(file_id: uuid.UUID, report: Report = Depends(get_report_for_member), db: AsyncSession = Depends(get_db)):
+    await service.remove_file(db, report, file_id)
+    return Response(status_code=204)
+
+
 @router.post("/{report_id}/run", response_model=ReportRead, status_code=202)
 async def run(report: Report = Depends(get_report_for_member), context: UserContext = Depends(get_current_user_context), db: AsyncSession = Depends(get_db)):
     ensure_quota(context.user)
@@ -380,6 +391,12 @@ async def plan_vs_actual(group_by: str = Query("holding", pattern="^(holding|com
 async def evm(report: Report = Depends(get_report_for_member), db: AsyncSession = Depends(get_db)):
     """PV / EV / AC / CPI / SPI per project and per company, read from the EVM summary page of each file (actual + planned)."""
     return await service.get_evm(db, report)
+
+
+@router.put("/{report_id}/evm/pv")
+async def set_pv(payload: PvUpdate, report: Report = Depends(get_report_for_member), db: AsyncSession = Depends(get_db)):
+    """Where the PV comes from (auto | manual) and the PV typed per project (rial). Returns the refreshed EVM."""
+    return await service.set_pv(db, report, payload)
 
 
 @router.get("/{report_id}/lines")

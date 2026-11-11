@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 
+import { Button } from "@/shared/components/ui/Button";
+
 import { volumeReportApi } from "../api/volumeReportApi";
 import { runSoon } from "../lib/defer";
 import { formatJalaliDate, toFa } from "../lib/jalali";
@@ -81,48 +83,94 @@ function ReadChecklist({ reads, plan }: { reads: SourceReads; plan?: PlanInfo | 
 }
 
 /** What the run read from each file: used sheets, skipped sheets with the reason, and non-blocking warnings. */
-export function SourceDetails({ sources, compact = false }: { sources: SourceInfo[]; compact?: boolean }) {
+export function SourceDetails({
+  sources,
+  compact = false,
+  editable = false,
+  removingId = null,
+  onRemoveFile,
+}: {
+  sources: SourceInfo[];
+  compact?: boolean;
+  editable?: boolean;
+  removingId?: string | null;
+  onRemoveFile?: (source: SourceInfo) => void;
+}) {
   if (!sources.length) return <EmptyState title="فایلی انتخاب نشده است" />;
   return (
     <div className="space-y-3">
       {sources.map((source) => {
         const used = source.sheet_log.filter((s) => s.used);
         const skipped = source.sheet_log.filter((s) => !s.used);
+        const statusTone =
+          source.status === "failed"
+            ? "bg-rose-50 text-rose-700"
+            : source.status === "parsed"
+              ? "bg-emerald-50 text-emerald-700"
+              : "bg-amber-50 text-amber-800";
+        const statusLabel = source.status === "failed" ? "ناموفق" : source.status === "parsed" ? "خوانده‌شده" : "در انتظار پردازش";
+
         return (
-          <Card key={source.id} title={source.filename} actions={<span className="text-xs text-slate-500">{source.status === "failed" ? "ناموفق" : source.status === "parsed" ? "خوانده‌شده" : "در انتظار"}</span>}>
-            {source.error_message && <p className="mb-2 text-xs text-red-600">{source.error_message}</p>}
-            {source.reads && <ReadChecklist reads={source.reads} plan={source.plan} />}
-            {source.warnings.length > 0 && (
-              <ul className="mb-3 space-y-1" aria-label="هشدارها">
-                {source.warnings.map((w, i) => <li key={i} className="rounded-lg bg-amber-50 px-3 py-1.5 text-xs text-amber-900">⚠ {describeWarning(w)}{w.sheet ? ` — ${w.sheet.trim()}` : ""}</li>)}
-              </ul>
-            )}
-            <div className="grid gap-3 md:grid-cols-2">
-              <div>
-                <h3 className="mb-1 text-xs font-medium text-emerald-700">شیت‌های خوانده‌شده ({toFa(used.length)})</h3>
-                <ul className="space-y-1 text-xs text-slate-700">
-                  {used.map((s) => (
-                    <li key={s.sheet}>
-                      {s.sheet.trim()} — {s.kind === "evm" ? "خلاصه مالی EVM" : s.site_name}
-                      {s.continuation && <span className="ms-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-600">ادامه‌ی جدول صفحه‌ی قبل</span>}
-                      {s.basis === "planned" && <span className="ms-1 rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] text-indigo-700">برنامه / پیش‌بینی</span>}{" "}
-                      <span className="text-slate-400">
-                        {s.kind === "evm" ? `(${toFa(s.evm_rows ?? 0)} ردیف)` : `(${toFa(s.rows_nonzero ?? 0)} ردیف دارای حجم)`}
-                      </span>
-                    </li>
-                  ))}
-                  {used.length === 0 && <li className="text-slate-400">هیچ شیتی خوانده نشد.</li>}
-                </ul>
+          <Card
+            key={source.id}
+            title={source.filename}
+            actions={
+              <div className="flex items-center gap-2">
+                <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${statusTone}`}>{statusLabel}</span>
+                {editable && onRemoveFile && (
+                  <button
+                    type="button"
+                    disabled={removingId === source.id}
+                    onClick={() => onRemoveFile(source)}
+                    className="rounded-lg px-2 py-0.5 text-xs text-rose-600 hover:bg-rose-50 disabled:opacity-50"
+                  >
+                    {removingId === source.id ? "در حال حذف..." : "حذف"}
+                  </button>
+                )}
               </div>
-              {!compact && (
-                <div>
-                  <h3 className="mb-1 text-xs font-medium text-slate-600">شیت‌های کنار گذاشته‌شده ({toFa(skipped.length)})</h3>
-                  <ul className="max-h-40 space-y-1 overflow-auto text-xs text-slate-600">
-                    {skipped.map((s) => <li key={s.sheet}>{s.sheet.trim()} <span className="text-slate-400">— {SHEET_REASON_LABELS[s.reason ?? ""] ?? s.reason}</span></li>)}
+            }
+          >
+            {source.error_message && <p className="mb-2 text-xs text-red-600">{source.error_message}</p>}
+            {source.status === "pending" ? (
+              <p className="rounded-xl border border-amber-200/80 bg-amber-50/70 px-3 py-2 text-xs text-amber-900">
+                این فایل تازه به گزارش اضافه شده است. برای خوانده‌شدن داده‌ها و به‌روزرسانی نتایج، «اجرای دور جدید» را بزنید.
+              </p>
+            ) : (
+              <>
+                {source.reads && <ReadChecklist reads={source.reads} plan={source.plan} />}
+                {source.warnings.length > 0 && (
+                  <ul className="mb-3 space-y-1" aria-label="هشدارها">
+                    {source.warnings.map((w, i) => <li key={i} className="rounded-lg bg-amber-50 px-3 py-1.5 text-xs text-amber-900">⚠ {describeWarning(w)}{w.sheet ? ` — ${w.sheet.trim()}` : ""}</li>)}
                   </ul>
+                )}
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div>
+                    <h3 className="mb-1 text-xs font-medium text-emerald-700">شیت‌های خوانده‌شده ({toFa(used.length)})</h3>
+                    <ul className="space-y-1 text-xs text-slate-700">
+                      {used.map((s) => (
+                        <li key={s.sheet}>
+                          {s.sheet.trim()} — {s.kind === "evm" ? "خلاصه مالی EVM" : s.site_name}
+                          {s.continuation && <span className="ms-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-600">ادامه‌ی جدول صفحه‌ی قبل</span>}
+                          {s.basis === "planned" && <span className="ms-1 rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] text-indigo-700">برنامه / پیش‌بینی</span>}{" "}
+                          <span className="text-slate-400">
+                            {s.kind === "evm" ? `(${toFa(s.evm_rows ?? 0)} ردیف)` : `(${toFa(s.rows_nonzero ?? 0)} ردیف دارای حجم)`}
+                          </span>
+                        </li>
+                      ))}
+                      {used.length === 0 && <li className="text-slate-400">هیچ شیتی خوانده نشد.</li>}
+                    </ul>
+                  </div>
+                  {!compact && (
+                    <div>
+                      <h3 className="mb-1 text-xs font-medium text-slate-600">شیت‌های کنار گذاشته‌شده ({toFa(skipped.length)})</h3>
+                      <ul className="max-h-40 space-y-1 overflow-auto text-xs text-slate-600">
+                        {skipped.map((s) => <li key={s.sheet}>{s.sheet.trim()} <span className="text-slate-400">— {SHEET_REASON_LABELS[s.reason ?? ""] ?? s.reason}</span></li>)}
+                      </ul>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
+              </>
+            )}
           </Card>
         );
       })}
@@ -130,7 +178,23 @@ export function SourceDetails({ sources, compact = false }: { sources: SourceInf
   );
 }
 
-export function SourcesPanel({ reportId, refreshKey }: { reportId: string; refreshKey: number }) {
+export function SourcesPanel({
+  reportId,
+  refreshKey,
+  editable = false,
+  removingId = null,
+  onOpenAddFiles,
+  onRunPending,
+  onRemoveFile,
+}: {
+  reportId: string;
+  refreshKey: number;
+  editable?: boolean;
+  removingId?: string | null;
+  onOpenAddFiles?: () => void;
+  onRunPending?: () => void;
+  onRemoveFile?: (source: SourceInfo) => void;
+}) {
   const [sources, setSources] = useState<SourceInfo[] | null>(null);
   const [error, setError] = useState<unknown>(null);
   useEffect(() => {
@@ -143,5 +207,36 @@ export function SourcesPanel({ reportId, refreshKey }: { reportId: string; refre
   }, [reportId, refreshKey]);
   if (error) return <ErrorBox error={error} />;
   if (!sources) return <LoadingBlock />;
-  return <SourceDetails sources={sources} />;
+
+  const pendingCount = sources.filter((s) => s.status === "pending").length;
+
+  return (
+    <div className="space-y-3">
+      {editable && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200/80 bg-white px-4 py-3">
+          <div className="text-xs text-slate-600">
+            مجموع فایل‌های گزارش: <span className="font-semibold text-slate-900">{toFa(sources.length)} فایل</span>
+            {pendingCount > 0 && (
+              <span className="ms-2 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800">
+                {toFa(pendingCount)} فایل جدید در انتظار پردازش
+              </span>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {onOpenAddFiles && (
+              <Button size="sm" variant="secondary" onClick={onOpenAddFiles}>
+                + افزودن فایل جدید
+              </Button>
+            )}
+            {pendingCount > 0 && onRunPending && (
+              <Button size="sm" onClick={onRunPending}>
+                اجرای دور جدید ({toFa(pendingCount)} فایل)
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+      <SourceDetails sources={sources} editable={editable} removingId={removingId} onRemoveFile={onRemoveFile} />
+    </div>
+  );
 }

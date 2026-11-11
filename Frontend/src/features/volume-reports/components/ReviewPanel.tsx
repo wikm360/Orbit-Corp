@@ -7,7 +7,7 @@ import { friendlyErrorMessage } from "@/shared/lib/errorMessages";
 
 import { volumeReportApi } from "../api/volumeReportApi";
 import { runSoon } from "../lib/defer";
-import { formatQuantityWithUnit } from "../lib/format";
+import { formatGroupQuantity } from "../lib/format";
 import { toFa } from "../lib/jalali";
 import { byImpact, formatSourceLocationText } from "../lib/questions";
 import {
@@ -22,6 +22,7 @@ interface Props {
   reportId: string;
   catalog: CatalogItem[];
   editable: boolean;
+  refreshKey?: number;
   /** Called after any change that can alter results/status (answer, skip, confirm). */
   onChanged: () => void;
   /** Starts the next agent pass (POST /continue). */
@@ -29,7 +30,7 @@ interface Props {
   canContinue: boolean;
 }
 
-export function ReviewPanel({ reportId, catalog, editable, onChanged, onContinue, canContinue }: Props) {
+export function ReviewPanel({ reportId, catalog, editable, refreshKey = 0, onChanged, onContinue, canContinue }: Props) {
   const [questions, setQuestions] = useState<Question[] | null>(null);
   const [groups, setGroups] = useState<ReviewGroup[] | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -50,7 +51,7 @@ export function ReviewPanel({ reportId, catalog, editable, onChanged, onContinue
       setError(e);
     }
   }, [reportId]);
-  useEffect(() => runSoon(() => void load()), [load]);
+  useEffect(() => runSoon(() => void load()), [load, refreshKey]);
 
   const groupMap = useMemo(() => new Map((groups ?? []).map((g) => [g.group_key, g])), [groups]);
   const pending = useMemo(() => pendingGroups(groups ?? []), [groups]);
@@ -173,7 +174,7 @@ export function ReviewPanel({ reportId, catalog, editable, onChanged, onContinue
                       <td className="px-2 py-2"><input type="checkbox" aria-label={`انتخاب ${g.description}`} checked={selected.has(g.group_key)} onChange={() => toggle(g.group_key)} className="accent-teal-600" /></td>
                       <td className="px-2 py-2">
                         <div className="font-medium text-slate-800">{g.description}</div>
-                        <div className="text-slate-400">{toFa(g.n_lines)} ردیف · {formatQuantityWithUnit(g.total_quantity, g.unit, 2)}{g.section_headings[0] ? ` · ${g.section_headings[0]}` : ""}</div>
+                        <div className="text-slate-400">{toFa(g.n_lines)} ردیف · {formatGroupQuantity(g, 2)}{g.section_headings[0] ? ` · ${g.section_headings[0]}` : ""}</div>
                         {g.locations && g.locations.length > 0 && (
                           <div className="mt-0.5 text-[11px] text-slate-500">
                             {g.locations.slice(0, 2).map((loc) => formatSourceLocationText(loc)).join(" | ")}

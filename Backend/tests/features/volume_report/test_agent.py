@@ -256,3 +256,95 @@ async def test_unknown_layout_inspect_masks_numbers_and_confirmed_layout_applies
     assert (await client.post(f"{API}/{rid}/run", headers=leader)).status_code == 202
     await pipeline.run_report(uuid.UUID(rid))
     assert len((await client.get(f"{API}/{rid}/review/groups?state=all", headers=leader)).json()) == 1
+
+
+async def test_late_file_with_unknown_layout_runs_agent_despite_existing_open_question(client, tmp_path, monkeypatch):
+    async def _answer_open_site_kinds():
+        for q in (await client.get(f"{API}/{rid}/questions?status=open", headers=leader)).json():
+            if q["spec"].get("system") == "site_kind":
+                assert (await client.post(f"{API}/{rid}/questions/{q['id']}/answer", json={"choice_keys": ["road"]}, headers=leader)).status_code == 200
+
+    _, leader, leader_id, project_id, _ = await _world(client, "late-agent")
+    c1 = await _company(client, leader, "co-first")
+    c2 = await _company(client, leader, "co-second")
+    doc1 = await _document(
+        tmp_path, project_id, leader_id,
+        rows=[(None, "اجرای زیراساس", "m3", 100), (None, "قشر آسفالتی نامشخص", "تن", 20)],
+        name="first.xlsx",
+    )
+    turns1 = [[
+        ("classify", {"items": [{"group_id": gid("اجرای زیراساس", "m3"), "item_key": "subbase", "role": "execute", "confidence": 0.9, "reason": "ok"}]}),
+        ("ask_user", {"kind": "choice", "prompt": "کدام لایه آسفالت است؟", "group_ids": [gid("قشر آسفالتی نامشخص", "t")],
+                      "options": [{"key": "asphalt_binder"}, {"key": "asphalt_topka"}], "default_remember": "line"}),
+        ("finish_pass", {}),
+    ]]
+    _use(monkeypatch, Scripted(turns1))
+    rid = await _new_report(client, leader, project_id, doc1, c1)
+    assert (await client.get(f"{API}/{rid}", headers=leader)).json()["status"] == "awaiting_user"
+
+    # Human confirms subbase and c1's site kind; agent choice question stays open.
+    g1 = await _groups_by_desc(client, leader, rid)
+    assert g1["قشر آسفالتی نامشخص"]["reason"] == "asked"
+    await client.post(
+        f"{API}/{rid}/review/confirm",
+        json={"items": [{"group_key": g1["اجرای زیراساس"]["group_key"], "item_key": "subbase", "role": "execute", "remember_scope": "line"}]},
+        headers=leader,
+    )
+    await _answer_open_site_kinds()
+    assert [q["spec"]["prompt"] for q in (await client.get(f"{API}/{rid}/questions?status=open", headers=leader)).json()] == ["کدام لایه آسفالت است؟"]
+
+    # Late file arrives with an unknown layout sheet; first open choice question is still OPEN.
+    doc2 = await _document(tmp_path, project_id, leader_id, rows=[(None, "اجرای اساس", "متر مکعب", 563)], qty_label="مقدار کل", name="late_unknown.xlsx")
+    added = await client.post(f"{API}/{rid}/files", json={"files": [{"document_id": doc2, "company_id": c2}]}, headers=leader)
+    assert added.status_code == 200
+    late_file_id = next(f["id"] for f in added.json() if f["filename"] == "late_unknown.xlsx")
+
+    # Even if user clicks `continue` instead of `run`, pending files trigger full parse + agent pass!
+    turns2 = [[
+        ("inspect_raw", {"sheet": "درآمد", "from_row": 1, "to_row": 8}),
+        ("propose_layout", {"sheet": "درآمد", "spec": {"header_row": 4, "desc_col": 2, "unit_col": 5, "qty_col": 6}}),
+        ("finish_pass", {}),
+    ]]
+    provider2 = Scripted(turns2)
+    _use(monkeypatch, provider2)
+    assert (await client.post(f"{API}/{rid}/continue", headers=leader)).status_code == 202
+    await pipeline.run_report(uuid.UUID(rid), "continue")
+
+    assert len(provider2.calls) >= 1  # agent actually ran despite pre-existing open question from first.xlsx
+    open_qs = (await client.get(f"{API}/{rid}/questions?status=open", headers=leader)).json()
+    assert len(open_qs) == 2
+    q_layout = next(q for q in open_qs if q["spec"].get("system") == "layout")
+    assert q_layout["locations"][0]["filename"] == "late_unknown.xlsx"
+
+    # Confirm the proposed layout and run again: both files contribute and human decision survived.
+    assert (await client.post(f"{API}/{rid}/questions/{q_layout['id']}/answer", json={"choice_keys": ["confirm"]}, headers=leader)).status_code == 200
+    turns3 = [[
+        ("classify", {"items": [{"group_id": gid("اجرای اساس", "m3"), "item_key": "base", "role": "execute", "confidence": 0.95, "reason": "ok"}]}),
+        ("finish_pass", {}),
+    ]]
+    _use(monkeypatch, Scripted(turns3))
+    assert (await client.post(f"{API}/{rid}/run", headers=leader)).status_code == 202
+    await pipeline.run_report(uuid.UUID(rid))
+
+    g3 = await _groups_by_desc(client, leader, rid)
+    assert g3["اجرای زیراساس"]["source"] == "human" and g3["اجرای زیراساس"]["confirmed"] is True
+    assert g3["اجرای اساس"]["item_key"] == "base"
+    assert (await client.post(
+        f"{API}/{rid}/review/confirm",
+        json={"items": [{"group_key": g3["اجرای اساس"]["group_key"], "item_key": "base", "role": "execute", "remember_scope": "line"}]},
+        headers=leader,
+    )).status_code == 200
+    await _answer_open_site_kinds()
+
+    # Removing first.xlsx and re-running supersedes the orphan open choice question cleanly without invoking the LLM.
+    first_file_id = next(f["id"] for f in (await client.get(f"{API}/{rid}", headers=leader)).json()["files"] if f["filename"] == "first.xlsx")
+    assert (await client.delete(f"{API}/{rid}/files/{first_file_id}", headers=leader)).status_code == 204
+    provider4 = Scripted([])
+    _use(monkeypatch, provider4)
+    assert (await client.post(f"{API}/{rid}/run", headers=leader)).status_code == 202
+    await pipeline.run_report(uuid.UUID(rid))
+    assert provider4.calls == []
+    assert (await client.get(f"{API}/{rid}/questions?status=open", headers=leader)).json() == []
+    superseded = (await client.get(f"{API}/{rid}/questions?status=superseded", headers=leader)).json()
+    assert any(q["spec"]["prompt"] == "کدام لایه آسفالت است؟" for q in superseded)
+    assert late_file_id != first_file_id

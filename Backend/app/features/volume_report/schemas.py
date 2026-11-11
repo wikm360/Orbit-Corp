@@ -1,4 +1,5 @@
 import uuid
+from decimal import Decimal
 from datetime import date, datetime
 from typing import Literal
 
@@ -36,16 +37,31 @@ class ReportRead(BaseModel):
     updated_at: datetime
 
 
+class PvEntry(BaseModel):
+    company_id: uuid.UUID
+    project: str = Field(min_length=1, max_length=1000)
+    pv: Decimal | None = Field(default=None, ge=0)  # rial; None / omitted = no value for this project
+
+
+class PvUpdate(BaseModel):
+    mode: Literal["auto", "manual"]
+    values: list[PvEntry] = Field(default_factory=list, max_length=500)
+
+
 class FileSelection(BaseModel):
     document_id: uuid.UUID
     company_id: uuid.UUID
-    kind: Literal["period", "monthly_plan"] = "period"
+    kind: Literal["period", "monthly_plan", "monthly_pv"] = "period"
     plan_month: int | None = Field(default=None, ge=1, le=12)  # Jalali month of a monthly forecast; detected from the title when omitted
     plan_year: int | None = Field(default=None, ge=1300, le=1500)  # default: the occurrence closest to the report period
 
 
 class FilesUpdate(BaseModel):
     files: list[FileSelection] = Field(max_length=50)
+
+
+class FilesAdd(BaseModel):
+    files: list[FileSelection] = Field(min_length=1, max_length=50)
 
 
 class ConfirmItem(BaseModel):

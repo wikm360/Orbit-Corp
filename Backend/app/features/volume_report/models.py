@@ -209,6 +209,8 @@ class Report(Base):
     )
     progress: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
     narratives: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False, server_default=text("'{}'::jsonb"))
+    # Where the period's PV comes from: auto = the forecast / PV-plan sources, manual = the values typed per project (vr_pv_overrides).
+    pv_mode: Mapped[str] = mapped_column(String(10), nullable=False, default="auto", server_default="auto")
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     supersedes_id: Mapped[uuid.UUID | None] = _fk("vr_reports", "SET NULL", nullable=True)
     created_by: Mapped[uuid.UUID | None] = _fk("users", "SET NULL", nullable=True)
@@ -292,6 +294,37 @@ class EvmRow(Base):
     ac: Mapped[Decimal | None] = mapped_column(Numeric(24, 2), nullable=True)
     cpi: Mapped[Decimal | None] = mapped_column(Numeric(10, 3), nullable=True)
     spi: Mapped[Decimal | None] = mapped_column(Numeric(10, 3), nullable=True)
+    # The period the sheet's title names (forecast sheets: "از 1405/08/18 الی 1405/08/24"); NULL when it names none.
+    period_start: Mapped[date | None] = mapped_column(Date, nullable=True)
+    period_end: Mapped[date | None] = mapped_column(Date, nullable=True)
+    created_at: Mapped[datetime] = _now()
+
+
+class PvOverride(Base):
+    """PV typed by the user for one project of one report (rial). Only used while the report's `pv_mode` is "manual"."""
+
+    __tablename__ = "vr_pv_overrides"
+    __table_args__ = (UniqueConstraint("report_id", "company_id", "project_key", name="uq_vr_pv_overrides_project"),)
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    report_id: Mapped[uuid.UUID] = _fk("vr_reports", "CASCADE", index=True)
+    company_id: Mapped[uuid.UUID] = _fk("vr_companies", "CASCADE")
+    project_key: Mapped[str] = mapped_column(Text, nullable=False)  # normalized project name (how EVM rows are matched)
+    project_name: Mapped[str] = mapped_column(Text, nullable=False)
+    pv: Mapped[Decimal] = mapped_column(Numeric(24, 2), nullable=False)
+    created_at: Mapped[datetime] = _now()
+
+
+class PvPlanRow(Base):
+    """One project of a monthly PV plan file: the month's planned work value (rial). The period's PV is its share by days."""
+
+    __tablename__ = "vr_pv_plan_rows"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    report_file_id: Mapped[uuid.UUID] = _fk("vr_report_files", "CASCADE", index=True)
+    row_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    project_name: Mapped[str] = mapped_column(Text, nullable=False)
+    pv_month: Mapped[Decimal] = mapped_column(Numeric(24, 2), nullable=False)
     created_at: Mapped[datetime] = _now()
 
 

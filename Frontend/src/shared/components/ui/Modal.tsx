@@ -7,9 +7,10 @@ interface ModalProps {
   onClose: () => void;
   title: string;
   children: ReactNode;
+  maxWidthClassName?: string;
 }
 
-export function Modal({ isOpen, onClose, title, children }: ModalProps) {
+export function Modal({ isOpen, onClose, title, children, maxWidthClassName = "max-w-md" }: ModalProps) {
   const titleId = useId();
   const closeButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -58,7 +59,7 @@ export function Modal({ isOpen, onClose, title, children }: ModalProps) {
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl sm:p-6"
+        className={`w-full ${maxWidthClassName} rounded-2xl bg-white p-5 shadow-2xl sm:p-6`}
       >
         <div className="mb-4 flex items-center justify-between">
           <h2 id={titleId} className="text-lg font-semibold text-gray-900">{title}</h2>

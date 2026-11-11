@@ -462,47 +462,125 @@ async def _evm_document(tmp_path, project_id, uploader_id, rows, title="گزار
         return str(doc.id)
 
 
-async def test_evm_rows_are_read_per_project_company_and_holding_with_forecast_apart(client, tmp_path):
+async def _evm_report(client, leader, project_id, docs, start, end):
+    report = (await client.post(API, json={"project_id": project_id, "title": "e", "period_type": "week", "period_start": start,
+                                           "period_end": end, "period_label": "هفته"}, headers=leader)).json()
+    r = await client.put(f"{API}/{report['id']}/files", json={"files": docs}, headers=leader)
+    assert r.status_code == 200, r.text
+    assert (await client.post(f"{API}/{report['id']}/run", headers=leader)).status_code == 202
+    await pipeline.run_report(uuid.UUID(report["id"]))
+    return report["id"]
+
+
+async def _evm(client, leader, rid):
+    return (await client.get(f"{API}/{rid}/evm", headers=leader)).json()
+
+
+def _project(data, company, name):
+    c = next(x for x in data["actual"]["companies"] if x["company"] == company)
+    return c, next(p for p in c["projects"] if p["project"] == name)
+
+
+B = 10**9
+
+
+async def test_evm_is_read_per_project_company_and_holding_without_any_forecast_section(client, tmp_path):
     _, leader, leader_id, project_id, _ = await _world(client, "evm")
     alef, be = await _company(client, leader, "شرکت الف"), await _company(client, leader, "شرکت ب")
     docs = [
         await _evm_document(tmp_path, project_id, leader_id, [
-            [1, "پروژه ۱", 1_000_000_000_000, 100e9, 100e9, 80e9, 60e9, 50e9, 1.2, 0.8], [2, "پروژه ۲", 500_000_000_000, 50e9, 50e9, 20e9, 15e9, 30e9, 0.5, 0.4],
+            [1, "پروژه الف", 1_000 * B, 100e9, 100e9, 80e9, 60e9, 50e9, 1.2, 0.8], [2, "پروژه ب", 500 * B, 50e9, 50e9, 20e9, 15e9, 30e9, 0.5, 0.4],
             ["جمع", None, None, 150e9, 150e9, 100e9, 75e9, 80e9, 0.94, 0.67]]),
-        await _evm_document(tmp_path, project_id, leader_id, [[1, "پروژه ۳", 9_000_000_000_000, 10e9, 10e9, 10e9, 8e9, 4e9, 2.0, 1.0]]),
-        await _evm_document(tmp_path, project_id, leader_id, [[1, "پروژه ۱", 1_000_000_000_000, 120e9, 120e9, 120e9, 90e9, 60e9, 1.5, 1.0]], title="پیش بینی مدیریت ارزش کسب شده (EVM)"),
+        await _evm_document(tmp_path, project_id, leader_id, [[1, "پروژه ج", 9_000 * B, 10e9, 10e9, 10e9, 8e9, 4e9, 2.0, 1.0]]),
     ]
-    report = (await client.post(API, json={"project_id": project_id, "title": "e", "period_type": "week", "period_start": "2026-11-01",
-                                           "period_end": "2026-11-07", "period_label": "هفته"}, headers=leader)).json()
-    files = [{"document_id": docs[0], "company_id": alef}, {"document_id": docs[1], "company_id": be}, {"document_id": docs[2], "company_id": alef}]
-    assert (await client.put(f"{API}/{report['id']}/files", json={"files": files}, headers=leader)).status_code == 200
-    assert (await client.post(f"{API}/{report['id']}/run", headers=leader)).status_code == 202
-    await pipeline.run_report(uuid.UUID(report["id"]))
-
-    data = (await client.get(f"{API}/{report['id']}/evm", headers=leader)).json()
-    companies = {c["company"]: c for c in data["actual"]["companies"]}
-    a = companies["شرکت الف"]
-    assert [p["project"] for p in a["projects"]] == ["پروژه 1", "پروژه 2"]
-    assert Decimal(a["projects"][0]["pv"]) == 100 * 10**9 and Decimal(a["projects"][0]["cpi"]) == Decimal("1.2") and Decimal(a["projects"][0]["spi"]) == Decimal("0.8")
-    assert Decimal(a["total"]["ev"]) == 100 * 10**9 and Decimal(a["total"]["ac"]) == 80 * 10**9 and Decimal(a["total"]["cpi"]) == Decimal("0.94")  # 75 / 80
-    assert Decimal(a["total"]["spi"]) == Decimal("0.67") and a["reported_total"]["spi"] == "0.67"
-    assert Decimal(data["actual"]["holding"]["ev"]) == 110 * 10**9 and Decimal(data["actual"]["holding"]["ac"]) == 84 * 10**9
-    assert companies["شرکت ب"]["reported_total"] is None
-    plan = data["planned"]["companies"]
-    assert len(plan) == 1 and plan[0]["company"] == "شرکت الف" and Decimal(plan[0]["total"]["spi"]) == 1  # the forecast never mixes into the actuals
-    sources = (await client.get(f"{API}/{report['id']}/sources", headers=leader)).json()
-    assert all(set(x["reads"]) == {"income", "income_totals", "evm"} for x in sources)
-    assert sorted(x["reads"]["evm"]["actual"]["projects"] for x in sources) == [0, 1, 2] or sum(x["reads"]["evm"]["actual"]["projects"] for x in sources) == 3
-    assert sum(x["reads"]["evm"]["planned"]["projects"] for x in sources) == 1
-    assert next(x for x in sources if x["reads"]["evm"]["actual"]["projects"] == 2)["reads"]["evm"]["actual"]["has_total"] is True
-    # re-running replaces (never duplicates) the rows
-    assert (await client.post(f"{API}/{report['id']}/run", headers=leader)).status_code == 202
-    await pipeline.run_report(uuid.UUID(report["id"]))
-    again = (await client.get(f"{API}/{report['id']}/evm", headers=leader)).json()
-    assert len(again["actual"]["companies"][0]["projects"]) + len(again["actual"]["companies"][1]["projects"]) == 3
-    # a non-member is refused
+    rid = await _evm_report(client, leader, project_id, [{"document_id": docs[0], "company_id": alef}, {"document_id": docs[1], "company_id": be}],
+                            "2026-11-02", "2026-11-08")
+    data = await _evm(client, leader, rid)
+    assert set(data) == {"report_id", "pv_mode", "actual"}  # no forecast EVM is reported
+    a, first = _project(data, "شرکت الف", "پروژه الف")
+    assert Decimal(first["pv"]) == 100 * B and first["pv_source"] == "file" and first["cpi"] == "1.20" and first["spi"] == "0.80"
+    assert Decimal(a["total"]["ev"]) == 100 * B and a["total"]["cpi"] == "0.94" and a["total"]["spi"] == "0.67"  # ratios of sums
+    assert a["reported_total"]["spi"] == "0.67"
+    assert Decimal(data["actual"]["holding"]["ev"]) == 110 * B and Decimal(data["actual"]["holding"]["ac"]) == 84 * B
+    # re-running replaces (never duplicates) the rows; a non-member is refused
+    assert (await client.post(f"{API}/{rid}/run", headers=leader)).status_code == 202
+    await pipeline.run_report(uuid.UUID(rid))
+    again = await _evm(client, leader, rid)
+    assert sum(len(c["projects"]) for c in again["actual"]["companies"]) == 3
     outsider, _ = await _register(client, "evm-outsider@example.com")
-    assert (await client.get(f"{API}/{report['id']}/evm", headers=outsider)).status_code == 403
+    assert (await client.get(f"{API}/{rid}/evm", headers=outsider)).status_code == 403
+
+
+async def test_pv_comes_from_the_forecast_of_the_same_period_and_never_from_the_next_one(client, tmp_path):
+    _, leader, leader_id, project_id, _ = await _world(client, "pv-forecast")
+    company = await _company(client, leader)
+    row = lambda ev: [[1, "پروژه الف", 1_000 * B, 100e9, 100e9, 80e9, 60e9, 50e9, 1.2, 0.8]] if ev is None else [[1, "پروژه الف", 1_000 * B, 100e9, 100e9, ev, ev * 0.75, 50e9, 1.2, 1.0]]  # noqa: E731
+    actual = await _evm_document(tmp_path, project_id, leader_id, row(None), title="گزارش مدیریت ارزش کسب شده (EVM) (11 - 17 آبان ماه)")
+    same = await _evm_document(tmp_path, project_id, leader_id, row(200e9), title="پیش بینی گزارش مدیریت ارزش کسب شده (EVM) (11 - 17 آبان ماه)")
+    nxt = await _evm_document(tmp_path, project_id, leader_id, row(999e9), title="پیش بینی گزارش مدیریت ارزش کسب شده (EVM) (18 - 24 آبان ماه)")
+    docs = [{"document_id": d, "company_id": company} for d in (actual, same, nxt)]
+    rid = await _evm_report(client, leader, project_id, docs, "2026-11-02", "2026-11-08")  # Aban 11..17
+    _, project = _project(await _evm(client, leader, rid), "محورگستر", "پروژه الف")
+    assert Decimal(project["pv"]) == 200 * B and project["pv_source"] == "forecast_file"  # the EV of the forecast, not the 999 of next week
+    assert Decimal(project["ev"]) == 80 * B and project["spi"] == "0.40" and project["cpi"] == "1.20"  # EV / AC / CPI stay the file's own
+
+
+async def test_pv_falls_back_to_the_previous_reports_forecast(client, tmp_path):
+    _, leader, leader_id, project_id, _ = await _world(client, "pv-prev")
+    company = await _company(client, leader)
+    first_actual = await _evm_document(tmp_path, project_id, leader_id, [[1, "پروژه الف", 1_000 * B, 100e9, 100e9, 80e9, 60e9, 50e9, 1.2, 0.8]],
+                                       title="گزارش مدیریت ارزش کسب شده (EVM) (11 - 17 آبان ماه)")
+    forecast = await _evm_document(tmp_path, project_id, leader_id, [[1, "پروژه الف", 1_000 * B, 100e9, 100e9, 160e9, 120e9, 50e9, 1.2, 1.0]],
+                                   title="پیش بینی گزارش مدیریت ارزش کسب شده (EVM) (18 - 24 آبان ماه)")
+    await _evm_report(client, leader, project_id, [{"document_id": d, "company_id": company} for d in (first_actual, forecast)], "2026-11-02", "2026-11-08")
+    second_actual = await _evm_document(tmp_path, project_id, leader_id, [[1, "پروژه الف", 1_000 * B, 100e9, 100e9, 120e9, 90e9, 60e9, 1.5, 0.75]],
+                                        title="گزارش مدیریت ارزش کسب شده (EVM) (18 - 24 آبان ماه)")
+    rid2 = await _evm_report(client, leader, project_id, [{"document_id": second_actual, "company_id": company}], "2026-11-09", "2026-11-15")
+    _, project = _project(await _evm(client, leader, rid2), "محورگستر", "پروژه الف")
+    assert Decimal(project["pv"]) == 160 * B and project["pv_source"] == "previous_report" and project["spi"] == "0.75"  # 120 / 160
+
+
+async def _pv_plan_document(tmp_path, project_id, uploader_id, rows):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "PVF"
+    ws.append(["شرکت نمونه"])
+    ws.append(["درآمد برنامه ای پروژه های شرکت نمونه در ماه آبان"])
+    ws.append(["ردیف", "نام پروژه", "مبلغ قرارداد", "کارکرد ماهانه طبق برنامه‌ی کارگاه(PV) (ریال)", "PV ماه پیش"])
+    for index, (name, pv) in enumerate(rows, start=1):
+        ws.append([index, name, 1_000 * B, pv, 5e9])
+    path = save(wb, tmp_path, f"{uuid.uuid4().hex}.xlsx")
+    async with async_session_factory() as db:
+        doc = Document(filename="pv.xlsx", file_path=path, content_type="application/octet-stream", status=DocumentStatus.READY,
+                       content_hash=uuid.uuid4().hex + uuid.uuid4().hex, project_id=uuid.UUID(project_id), uploaded_by=uuid.UUID(uploader_id))
+        db.add(doc)
+        await db.commit()
+        return str(doc.id)
+
+
+async def test_monthly_pv_plan_gives_the_days_share_of_the_month(client, tmp_path):
+    _, leader, leader_id, project_id, _ = await _world(client, "pv-month")
+    company = await _company(client, leader)
+    actual = await _evm_document(tmp_path, project_id, leader_id, [[1, "احداث باند دوم محور زرند - سیریز", 1_000 * B, None, None, 80e9, 60e9, 50e9, 1.2, 0.0],
+                                                                   [2, "پروژه کاملاً جدا", 5 * B, 1e9, 1e9, 1e9, 1e9, 1e9, 1.0, 1.0]])
+    plan = await _pv_plan_document(tmp_path, project_id, leader_id, [("احداث باند دوم محور زرند-بافق", 300e9), ("پروژه دیگر", 7e9)])
+    # the PV file is recognised by its content: kind and month are suggested, nothing else is needed
+    report = (await client.post(API, json={"project_id": project_id, "title": "pv", "period_type": "week", "period_start": "2026-11-02",
+                                           "period_end": "2026-11-08", "period_label": "هفته"}, headers=leader)).json()
+    files = (await client.put(f"{API}/{report['id']}/files", json={"files": [
+        {"document_id": actual, "company_id": company}, {"document_id": plan, "company_id": company, "kind": "monthly_pv"}]}, headers=leader)).json()
+    pv_file = next(f for f in files if f["kind"] == "monthly_pv")
+    assert pv_file["suggested_kind"] == "monthly_pv" and pv_file["suggested_plan_month"] == 8
+    assert pv_file["plan"]["overlap_days"] == 7 and pv_file["plan"]["plan_days"] == 30  # the report's OWN week, not the next one
+    assert (await client.post(f"{API}/{report['id']}/run", headers=leader)).status_code == 202
+    await pipeline.run_report(uuid.UUID(report["id"]))
+    data = await _evm(client, leader, report["id"])
+    _, project = _project(data, "محورگستر", "احداث باند دوم محور زرند - سیریز")
+    assert Decimal(project["pv"]) == Decimal(300 * B) * 7 / 30 and project["pv_source"] == "monthly_pv" and project["pv_match"] == "fuzzy"
+    assert project["spi"] == "1.14" and project["pv_share"] == "7/30"  # EV 80B / PV 70B
+    _, other = _project(data, "محورگستر", "پروژه کاملاً جدا")
+    assert other["pv_source"] == "file"  # nothing in the plan matches it: the file's own PV stays
+
 
 
 async def _monthly_report(client, leader, project_id, company, docs, start, end):
@@ -575,28 +653,66 @@ async def test_monthly_forecast_needs_a_month(client, tmp_path):
     assert ok.status_code == 200 and ok.json()[0]["plan_start"] == "2026-10-23"
 
 
-@pytest.mark.skipif(not __import__("pathlib").Path("eval/volume_report/پیش بینی آبان معابر.xls").exists(), reason="sample not present")
-async def test_real_monthly_xls_scales_evm_and_volumes(client, tmp_path):
+_ZARAND = "eval/volume_report/second-aban/گزارش درآمد و هزینه هفتگی از 11 آبان الی 17 آبان پروژه زرند-سیریز.pdf"
+_TOTAL_EVM = "eval/Total EVM Rep-MGSH SHAHRIVAR V4.xls"
+
+
+@pytest.mark.skipif(not (__import__("pathlib").Path(_ZARAND).exists() and __import__("pathlib").Path(_TOTAL_EVM).exists()), reason="samples not present")
+async def test_real_zarand_week_takes_its_pv_from_the_pvf_sheet_of_the_company_workbook(client, tmp_path):
     import shutil
 
-    _, leader, leader_id, project_id, _ = await _world(client, "monthly-real")
+    _, leader, leader_id, project_id, _ = await _world(client, "pv-real")
     company = await _company(client, leader)
-    path = tmp_path / f"{uuid.uuid4().hex}.xls"
-    shutil.copy("eval/volume_report/پیش بینی آبان معابر.xls", path)
-    async with async_session_factory() as db:
-        doc = Document(filename="پیش بینی آبان معابر.xls", file_path=str(path), content_type="application/octet-stream", status=DocumentStatus.READY,
-                       content_hash=uuid.uuid4().hex + uuid.uuid4().hex, project_id=uuid.UUID(project_id), uploaded_by=uuid.UUID(leader_id))
-        db.add(doc)
-        await db.commit()
-        doc_id = str(doc.id)
-    rid, files = await _monthly_report(client, leader, project_id, company, [{"document_id": doc_id, "company_id": company, "kind": "monthly_plan"}],
-                                       "2026-11-01", "2026-11-07")
-    assert files[0]["suggested_kind"] == "monthly_plan" and files[0]["suggested_plan_month"] == 8
-    evm = (await client.get(f"{API}/{rid}/evm", headers=leader)).json()
-    plan = evm["planned"]["companies"][0]
-    assert plan["plan_source"] == "monthly" and evm["actual"]["companies"] == []
-    project = plan["projects"][0]
-    assert Decimal(project["ev"]) == (Decimal("112752231806") * 7 / 30).quantize(Decimal("0.01"))  # month x 7/30
-    assert project["cpi"] == "0.81" and project["spi"] == "2.31"  # ratios are not scaled
-    assert Decimal(project["contract_amount"]) == Decimal("1623534593647")
-    assert Decimal(plan["income"]["income_total"]) == (Decimal("112752231805") * 7 / 30).quantize(Decimal("0.01"))
+    ids = []
+    for source, suffix in ((_ZARAND, ".pdf"), (_TOTAL_EVM, ".xls")):
+        path = tmp_path / f"{uuid.uuid4().hex}{suffix}"
+        shutil.copy(source, path)
+        async with async_session_factory() as db:
+            doc = Document(filename=path.name, file_path=str(path), content_type="application/octet-stream", status=DocumentStatus.READY,
+                           content_hash=uuid.uuid4().hex + uuid.uuid4().hex, project_id=uuid.UUID(project_id), uploaded_by=uuid.UUID(leader_id))
+            db.add(doc)
+            await db.commit()
+            ids.append(str(doc.id))
+    rid = await _evm_report(client, leader, project_id, [{"document_id": ids[0], "company_id": company},
+                                                        {"document_id": ids[1], "company_id": company, "kind": "monthly_pv"}], "2026-11-02", "2026-11-08")  # 11-17 Aban
+    c = (await _evm(client, leader, rid))["actual"]["companies"][0]
+    project = c["projects"][0]
+    assert project["pv_source"] == "monthly_pv" and project["pv_match"] == "fuzzy" and project["pv_share"] == "7/30"
+    assert Decimal(project["pv"]) == (Decimal("1104392021869.88") * 7 / 30).quantize(Decimal("0.01"))  # PVF "زرند-بافق", Aban
+    assert Decimal(project["ev"]) == Decimal("182553272695") and project["cpi"] == "1.36"  # EV / ev / AC / CPI: the project's own file
+    assert project["spi"] == "0.71"
+
+
+async def test_manual_pv_mode_uses_the_typed_values_and_blank_means_the_files_own_pv(client, tmp_path):
+    _, leader, leader_id, project_id, _ = await _world(client, "pv-manual")
+    company = await _company(client, leader)
+    actual = await _evm_document(tmp_path, project_id, leader_id, [
+        [1, "احداث باند دوم محور زرند - سیریز", 1_000 * B, 90e9, 90e9, 80e9, 60e9, 50e9, 1.2, 0.89],
+        [2, "پروژه دوم", 500 * B, 40e9, 40e9, 20e9, 15e9, 30e9, 0.5, 0.5]])
+    plan = await _pv_plan_document(tmp_path, project_id, leader_id, [("احداث باند دوم محور زرند-بافق", 300e9)])
+    rid = await _evm_report(client, leader, project_id, [{"document_id": actual, "company_id": company},
+                                                        {"document_id": plan, "company_id": company, "kind": "monthly_pv"}], "2026-11-02", "2026-11-08")
+    data = await _evm(client, leader, rid)
+    assert data["pv_mode"] == "auto"
+    _, first = _project(data, "محورگستر", "احداث باند دوم محور زرند - سیریز")
+    assert Decimal(first["pv"]) == 70 * B and first["pv_source"] == "monthly_pv"
+
+    # manual mode: the typed value wins, the automatic one stays as the suggestion, a blank project keeps the file's PV
+    body = {"mode": "manual", "values": [{"company_id": company, "project": "احداث باند دوم محور زرند - سیریز", "pv": "100000000000"}]}
+    done = await client.put(f"{API}/{rid}/evm/pv", json=body, headers=leader)
+    assert done.status_code == 200, done.text
+    c, first = _project(done.json(), "محورگستر", "احداث باند دوم محور زرند - سیریز")
+    assert done.json()["pv_mode"] == "manual" and Decimal(first["pv"]) == 100 * B and first["pv_source"] == "manual" and first["spi"] == "0.80"
+    assert Decimal(first["pv_auto"]) == 70 * B and Decimal(first["pv_manual"]) == 100 * B
+    _, second = _project(done.json(), "محورگستر", "پروژه دوم")
+    assert Decimal(second["pv"]) == 40 * B and second["pv_source"] == "file"
+    assert c["total"]["spi"] == "0.71"  # (80 + 20) / (100 + 40)
+
+    # back to auto: the typed values are kept for later but ignored
+    back = (await client.put(f"{API}/{rid}/evm/pv", json={"mode": "auto", "values": body["values"]}, headers=leader)).json()
+    assert Decimal(_project(back, "محورگستر", "احداث باند دوم محور زرند - سیریز")[1]["pv"]) == 70 * B
+    # invalid values and a published/foreign report are refused
+    bad = await client.put(f"{API}/{rid}/evm/pv", json={"mode": "manual", "values": [{"company_id": company, "project": "x", "pv": "-5"}]}, headers=leader)
+    assert bad.status_code == 422
+    outsider, _ = await _register(client, "pv-outsider@example.com")
+    assert (await client.put(f"{API}/{rid}/evm/pv", json=body, headers=outsider)).status_code == 403

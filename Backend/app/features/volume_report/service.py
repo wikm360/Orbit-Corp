@@ -22,7 +22,7 @@ from app.features.projects.models import Project
 from app.features.volume_report import compute, jalali, memory
 from app.features.volume_report.extraction.normalize import Lexicon, LexiconEntry as LexEntry, normalize_text
 from app.features.volume_report.models import (
-    Classification, ClassificationSource, Company, Conversion, Decision, EvmRow, IncomeTotal, ItemRule, DecisionSource, Disposition, Effect,
+    Classification, ClassificationSource, Company, Conversion, Decision, EvmRow, FileStatus, IncomeTotal, ItemRule, PvPlanRow, PvOverride, DecisionSource, Disposition, Effect,
     Dimension, ExcludeReason, Item, Line, LexiconKind, LineResult, Question, QuestionStatus, Report, ReportFile, ReportStatus, Result,
     ResultScope, Role, Site, SiteKind, Snapshot, LexiconEntry,
 )
@@ -115,10 +115,14 @@ def next_period(report: Report) -> tuple[date, date]:
 
 
 def plan_info(report: Report, f: ReportFile) -> dict | None:
-    """For a monthly forecast: how many days of the next period fall inside the month, and the resulting share of the month."""
-    if f.kind != "monthly_plan" or f.plan_start is None or f.plan_end is None:
+    """For a monthly file: how many days of the period it serves fall inside its month, and the resulting share of the month.
+    monthly_plan (volume forecast) serves the NEXT period; monthly_pv (PV plan) serves the report's OWN period."""
+    if f.kind not in ("monthly_plan", "monthly_pv") or f.plan_start is None or f.plan_end is None:
         return None
-    start, end = next_period(report)
+    if f.kind == "monthly_pv":
+        start, end = report.period_start, report.period_end
+    else:
+        start, end = next_period(report)
     overlap = max(0, (min(end, f.plan_end) - max(start, f.plan_start)).days + 1)
     plan_days = (f.plan_end - f.plan_start).days + 1
     period_days = (end - start).days + 1
@@ -131,13 +135,15 @@ def plan_factor(report: Report, f: ReportFile) -> Decimal:
     return Decimal(1) if info is None else Decimal(info["overlap_days"]) / Decimal(info["plan_days"])
 
 
-async def set_files(db: AsyncSession, report: Report, selections: list[FileSelection]) -> list[dict]:
-    from app.features.volume_report.extraction.runner import suggest_company_for_file, suggest_plan_month_for_file
+async def _build_file_selections(
+    db: AsyncSession, report: Report, selections: list[FileSelection]
+) -> tuple[dict[uuid.UUID, ReportFile], dict[uuid.UUID, str | None], dict[uuid.UUID, tuple[str, int | None]]]:
+    from app.features.volume_report.extraction.runner import suggest_company_for_file, suggest_kind_for_file
 
     _require_editable(report)
     wanted: dict[uuid.UUID, ReportFile] = {}
     suggestions: dict[uuid.UUID, str | None] = {}
-    month_suggestions: dict[uuid.UUID, int | None] = {}
+    kind_suggestions: dict[uuid.UUID, tuple[str, int | None]] = {}
     for sel in selections:
         document = await db.get(Document, sel.document_id)
         if document is None or document.project_id != report.project_id:
@@ -158,17 +164,50 @@ async def set_files(db: AsyncSession, report: Report, selections: list[FileSelec
         try:
             path = resolve_document_path(document)
             suggestions[document.id] = await asyncio.to_thread(suggest_company_for_file, path)
-            month_suggestions[document.id] = await asyncio.to_thread(suggest_plan_month_for_file, path)
+            kind_suggestions[document.id] = await asyncio.to_thread(suggest_kind_for_file, path)
         except Exception:  # a suggestion is optional; the run reports real read errors
             suggestions.setdefault(document.id, None)
-            month_suggestions.setdefault(document.id, None)
-        if sel.kind == "monthly_plan":
-            month = sel.plan_month or month_suggestions.get(document.id)
+            kind_suggestions.setdefault(document.id, ("period", None))
+        if sel.kind in ("monthly_plan", "monthly_pv"):
+            month = sel.plan_month or kind_suggestions.get(document.id, ("period", None))[1]
             if month is None:
                 raise BadRequestError("plan_month is required for a monthly forecast (it is not named in the file's title)")
             start, end = jalali.month_range(sel.plan_year, month) if sel.plan_year else jalali.nearest_month_range(month, report.period_end)
             wanted[sel.document_id].plan_start, wanted[sel.document_id].plan_end = start, end
+    return wanted, suggestions, kind_suggestions
 
+
+def _apply_file_selection(existing_file: ReportFile, updated: ReportFile) -> None:
+    existing_file.company_id = updated.company_id
+    existing_file.kind = updated.kind
+    existing_file.plan_start = updated.plan_start
+    existing_file.plan_end = updated.plan_end
+
+
+async def _serialize_report_files(
+    db: AsyncSession,
+    report: Report,
+    suggestions: dict[uuid.UUID, str | None] | None = None,
+    kind_suggestions: dict[uuid.UUID, tuple[str, int | None]] | None = None,
+) -> list[dict]:
+    suggestions = suggestions or {}
+    kind_suggestions = kind_suggestions or {}
+    files = (await db.execute(select(ReportFile).where(ReportFile.report_id == report.id).order_by(ReportFile.created_at))).scalars().all()
+    return [
+        {"id": f.id, "document_id": f.document_id, "filename": f.filename, "company_id": f.company_id,
+         "status": f.status.value, "error_message": f.error_message,
+         "suggested_company": suggestions.get(f.document_id) or f.suggested_company,
+         "kind": f.kind, "plan_start": f.plan_start, "plan_end": f.plan_end,
+         "plan_month": jalali.to_jalali(f.plan_start)[1] if f.kind in ("monthly_plan", "monthly_pv") and f.plan_start else None,
+         "plan": plan_info(report, f),
+         "suggested_kind": kind_suggestions.get(f.document_id, ("period", None))[0],
+         "suggested_plan_month": kind_suggestions.get(f.document_id, ("period", None))[1]}
+        for f in files
+    ]
+
+
+async def set_files(db: AsyncSession, report: Report, selections: list[FileSelection]) -> list[dict]:
+    wanted, suggestions, kind_suggestions = await _build_file_selections(db, report, selections)
     existing = (await db.execute(select(ReportFile).where(ReportFile.report_id == report.id))).scalars().all()
     keep = {f.document_id: f for f in existing if f.document_id in wanted}
     for f in existing:
@@ -176,20 +215,37 @@ async def set_files(db: AsyncSession, report: Report, selections: list[FileSelec
             await db.delete(f)
     for doc_id, new in wanted.items():
         if doc_id in keep:
-            keep[doc_id].company_id = new.company_id
-            keep[doc_id].kind, keep[doc_id].plan_start, keep[doc_id].plan_end = new.kind, new.plan_start, new.plan_end
+            _apply_file_selection(keep[doc_id], new)
         else:
             db.add(new)
     await db.commit()
-    files = (await db.execute(select(ReportFile).where(ReportFile.report_id == report.id))).scalars().all()
-    return [
-        {"id": f.id, "document_id": f.document_id, "filename": f.filename, "company_id": f.company_id,
-         "status": f.status.value, "suggested_company": suggestions.get(f.document_id) or f.suggested_company,
-         "kind": f.kind, "plan_start": f.plan_start, "plan_end": f.plan_end, "plan": plan_info(report, f),
-         "suggested_kind": "monthly_plan" if month_suggestions.get(f.document_id) else "period",
-         "suggested_plan_month": month_suggestions.get(f.document_id)}
-        for f in files
-    ]
+    return await _serialize_report_files(db, report, suggestions, kind_suggestions)
+
+
+async def add_files(db: AsyncSession, report: Report, selections: list[FileSelection]) -> list[dict]:
+    """Appends new files (or updates metadata for already attached ones) without removing existing files or human work."""
+    wanted, suggestions, kind_suggestions = await _build_file_selections(db, report, selections)
+    existing_list = (await db.execute(select(ReportFile).where(ReportFile.report_id == report.id))).scalars().all()
+    existing = {f.document_id: f for f in existing_list if f.document_id is not None}
+    new_count = sum(1 for doc_id in wanted if doc_id not in existing)
+    if len(existing_list) + new_count > 50:
+        raise BadRequestError("Maximum 50 files per report exceeded")
+    for doc_id, new in wanted.items():
+        if doc_id in existing:
+            _apply_file_selection(existing[doc_id], new)
+        else:
+            db.add(new)
+    await db.commit()
+    return await _serialize_report_files(db, report, suggestions, kind_suggestions)
+
+
+async def remove_file(db: AsyncSession, report: Report, file_id: uuid.UUID) -> None:
+    _require_editable(report)
+    rf = await db.get(ReportFile, file_id)
+    if rf is None or rf.report_id != report.id:
+        raise NotFoundError("File not found")
+    await db.delete(rf)
+    await db.commit()
 
 
 def _enqueue(report_id: uuid.UUID, mode: str = "full", user_id: uuid.UUID | None = None) -> None:
@@ -391,6 +447,10 @@ async def gate_causes(db: AsyncSession, report: Report) -> list[dict]:
 
     line_result = select(func.count()).select_from(LineResult).join(Line, Line.id == LineResult.line_id).join(
         ReportFile, ReportFile.id == Line.report_file_id).where(ReportFile.report_id == report.id)
+    pending_files = await count(select(func.count()).select_from(ReportFile).where(
+        ReportFile.report_id == report.id, ReportFile.status == FileStatus.PENDING))
+    if pending_files:
+        causes.append({"code": "pending_files", "count": pending_files})
     open_q = await count(select(func.count()).select_from(Question).where(Question.report_id == report.id, Question.status == QuestionStatus.OPEN))
     if open_q:
         causes.append({"code": "open_questions", "count": open_q})
@@ -654,7 +714,13 @@ def _opt(value: Decimal | None, step: str = "0.01") -> str | None:
     return None if value is None else f"{value.quantize(Decimal(step)):f}"
 
 
-def _evm_total(rows: list[EvmRow]) -> dict:
+def _ratio(numerator: Decimal | None, denominator: Decimal | None) -> Decimal | None:
+    if numerator is None or denominator is None or denominator <= 0:
+        return None
+    return (numerator / denominator).quantize(Decimal("0.01"))
+
+
+def _evm_total(rows: list[Any]) -> dict:
     """Sum of the projects; CPI/SPI are ratios of sums (ev / AC, EV / PV) over the projects that carry both operands,
     so a project with no cost or no programme yet does not drag the ratio."""
     total: dict = {}
@@ -686,86 +752,145 @@ def _income_read(rows: list[IncomeTotal]) -> dict | None:
     }
 
 
-_SCALED_AMOUNTS = ("bcws", "pv", "ev", "ev_net", "ac")
-_SCALED_INCOME = ("statement_base", "statement_coef", "adjustment", "income_total", "cumulative")
+_PV_SOURCE_LABELS = {"manual": "ورود دستی", "file": "فایل گزارش", "forecast_file": "پیش‌بینیِ همین دوره (EV پیش‌بینی)", "previous_report": "پیش‌بینیِ گزارش قبلی (EV پیش‌بینی)",
+                     "monthly_pv": "برنامه‌ی PV ماهانه"}
 
 
-def _scaled(row: Any, factor: Decimal, fields: tuple[str, ...]) -> SimpleNamespace:
-    """A copy of an EVM / income row with the amounts times `factor` (ratios, contract amount and names are untouched)."""
-    columns = {c.name: getattr(row, c.name) for c in row.__table__.columns}
-    for name in fields:
-        if columns.get(name) is not None:
-            columns[name] = columns[name] * factor
-    return SimpleNamespace(**columns)
+def _name_tokens(name: str | None) -> set[str]:
+    return {w for w in normalize_text(name or "").split() if len(w) > 1 and w not in {"پروژه", "عملیات", "اجرایی"}}
+
+
+def _match_project(name: str | None, candidates: list[str | None]) -> tuple[int, str] | None:
+    """Index of the candidate that is the same project: identical normalized name, else a unique best word overlap >= 0.7."""
+    key = normalize_text(name or "")
+    if not key:
+        return None
+    for index, candidate in enumerate(candidates):
+        if normalize_text(candidate or "") == key:
+            return index, "exact"
+    tokens = _name_tokens(name)
+    scored = sorted(((len(tokens & _name_tokens(c)) / len(tokens | _name_tokens(c)), i) for i, c in enumerate(candidates) if tokens and _name_tokens(c)), reverse=True)
+    if scored and scored[0][0] >= 0.7 and (len(scored) == 1 or scored[1][0] < scored[0][0]):
+        return scored[0][1], "fuzzy"
+    return None
+
+
+async def _adjacent_previous_planned_rows(db: AsyncSession, report: Report) -> list[tuple[Any, uuid.UUID]]:
+    """Forecast EVM rows (with the company id) of the report that ends right before this one: its next-period forecast is this period's."""
+    candidates = (await db.execute(
+        select(Report).where(Report.project_id == report.project_id, Report.id != report.id, Report.period_end < report.period_start,
+                             Report.status.notin_((ReportStatus.DRAFT, ReportStatus.FAILED)))
+        .order_by(Report.period_end.desc(), Report.version.desc())
+    )).scalars().all()
+    for cand in candidates:
+        if (report.period_start - cand.period_end).days > 1:
+            break  # not adjacent: its forecast is for another week
+        rows = (await db.execute(
+            select(EvmRow, ReportFile.company_id).join(ReportFile, ReportFile.id == EvmRow.report_file_id)
+            .where(ReportFile.report_id == cand.id, EvmRow.basis == "planned", EvmRow.is_total.is_(False))
+        )).all()
+        if rows:
+            return [(r, cid) for r, cid in rows if r.period_start is None or (r.period_start, r.period_end) == (report.period_start, report.period_end)]
+    return []
 
 
 async def get_evm(db: AsyncSession, report: Report) -> dict:
-    """Per basis (actual | planned): the companies with their projects, the company total and the holding total.
-    `total` is computed from the project rows; `reported_total` is the "جمع" row the file itself printed (if any).
-    Planned rows of a monthly forecast file are scaled to the next period (days inside the month / days of the month) and
-    only used for projects that have no forecast of their own in a normal file."""
+    """The period's EVM per company: projects, company total, holding total. Everything but PV comes from the project's own
+    report file. PV (and so SPI = EV / PV) comes from, in this order: the EV of the project's forecast for this very period
+    (a forecast file of this report whose title names this period, else the previous report's forecast), the monthly PV plan
+    (its share by days), else what the file itself prints. No forecast EVM is reported: forecasts only supply PV."""
     rows = (await db.execute(
         select(EvmRow, ReportFile, Company.name)
         .join(ReportFile, ReportFile.id == EvmRow.report_file_id).join(Company, Company.id == ReportFile.company_id)
         .where(ReportFile.report_id == report.id).order_by(Company.name, ReportFile.created_at, EvmRow.sheet_name, EvmRow.row_no)
     )).all()
     income_rows = (await db.execute(
-        select(IncomeTotal, ReportFile).join(ReportFile, ReportFile.id == IncomeTotal.report_file_id).where(ReportFile.report_id == report.id)
+        select(IncomeTotal, ReportFile).join(ReportFile, ReportFile.id == IncomeTotal.report_file_id).where(ReportFile.report_id == report.id, IncomeTotal.basis == "actual")
     )).all()
-    body: dict = {"report_id": report.id}
-    for basis in ("actual", "planned"):
-        # (row, file, company name, scaled?) after the monthly-forecast rules
-        own_projects = {(f.company_id, normalize_text(r.project_name or "")) for r, f, _ in rows
-                        if r.basis == basis and not r.is_total and f.kind == "period"}
-        selected: list[tuple[Any, ReportFile, str, bool]] = []
-        for row, f, company_name in rows:
-            if row.basis != basis:
-                continue
-            if f.kind == "monthly_plan":
-                factor = plan_factor(report, f)
-                if factor == 0 or (not row.is_total and (f.company_id, normalize_text(row.project_name or "")) in own_projects):
-                    continue
-                if row.is_total and any(c == f.company_id for c, _ in own_projects):
-                    continue  # the company already has projects from normal forecast files: a monthly "جمع" would double count
-                selected.append((_scaled(row, factor, _SCALED_AMOUNTS), f, company_name, True))
-            else:
-                selected.append((row, f, company_name, False))
-        companies: dict[uuid.UUID, dict] = {}
-        for row, f, company_name, monthly in selected:
-            company = companies.setdefault(f.company_id, {"company_id": f.company_id, "company": company_name, "projects": [], "_rows": [], "_reported": [],
-                                                           "plan_source": "report"})
-            if monthly:
-                company["plan_source"] = "monthly"
-            if row.is_total:
-                company["_reported"].append(row)
-            else:
-                company["projects"].append({**_evm_row_read(row), "filename": f.filename, "plan_source": "monthly" if monthly else "report"})
-                company["_rows"].append(row)
-        out = []
-        for company in companies.values():
-            project_rows, reported = company.pop("_rows"), company.pop("_reported")
-            company["total"] = _evm_total(project_rows)
-            income = []
-            for r, f in income_rows:
-                if f.company_id != company["company_id"] or r.basis != basis:
-                    continue
-                if f.kind == "monthly_plan":
-                    if plan_factor(report, f) == 0 or any(rr.basis == basis and ff.kind == "period" and ff.company_id == f.company_id for rr, ff in income_rows):
-                        continue
-                    income.append(_scaled(r, plan_factor(report, f), _SCALED_INCOME))
-                else:
-                    income.append(r)
-            company["income"] = _income_read(income)
-            company["reported_total"] = {**_evm_total(reported), **_evm_row_read(reported[0])} if len(reported) == 1 else None
-            out.append(company)
-        flat = [row for row, _, _, _ in selected if not row.is_total]
-        body[basis] = {"companies": out, "holding": _evm_total(flat) if flat else None}
-    return body
+    pv_rows = (await db.execute(
+        select(PvPlanRow, ReportFile).join(ReportFile, ReportFile.id == PvPlanRow.report_file_id).where(ReportFile.report_id == report.id)
+        .order_by(ReportFile.created_at, PvPlanRow.row_no)
+    )).all()
+    overrides = {(o.company_id, o.project_key): o.pv for o in (await db.execute(select(PvOverride).where(PvOverride.report_id == report.id))).scalars()}
+    manual_mode = report.pv_mode == "manual"
+    period = (report.period_start, report.period_end)
+    same_period_forecast = [(r, f.company_id) for r, f, _ in rows
+                            if r.basis == "planned" and not r.is_total and f.kind == "period" and (r.period_start, r.period_end) == period]
+    previous_forecast = await _adjacent_previous_planned_rows(db, report)
+
+    def pv_for(row: EvmRow, company_id: uuid.UUID) -> tuple[Decimal | None, str, str | None, str | None]:
+        """(pv, source, match kind, note)"""
+        for source, candidates in (("forecast_file", same_period_forecast), ("previous_report", previous_forecast)):
+            mine = [(r, c) for r, c in candidates if c == company_id and r.ev is not None]
+            hit = _match_project(row.project_name, [r.project_name for r, _ in mine])
+            if hit:
+                return mine[hit[0]][0].ev, source, hit[1], None
+        monthly = [(r, f) for r, f in pv_rows if plan_factor(report, f) > 0]
+        hit = _match_project(row.project_name, [r.project_name for r, _ in monthly])
+        if hit:
+            plan_row, plan_file = monthly[hit[0]]
+            info = plan_info(report, plan_file)
+            return plan_row.pv_month * plan_factor(report, plan_file), "monthly_pv", hit[1], f"{info['overlap_days']}/{info['plan_days']}" if info else None
+        return row.pv, "file", None, None
+
+    companies: dict[uuid.UUID, dict] = {}
+    overridden: set[uuid.UUID] = set()
+    for row, f, company_name in rows:
+        if row.basis != "actual":
+            continue
+        company = companies.setdefault(f.company_id, {"company_id": f.company_id, "company": company_name, "projects": [], "_rows": [], "_reported": []})
+        if row.is_total:
+            company["_reported"].append(row)
+            continue
+        auto_pv, auto_source, auto_match, auto_note = pv_for(row, f.company_id)
+        manual = overrides.get((f.company_id, normalize_text(row.project_name or "")))
+        # manual mode: only the typed value counts (blank = the file's own PV); the automatic value stays as the suggestion
+        pv, source, match, note = (manual, "manual", None, None) if manual_mode and manual is not None else \
+            ((row.pv, "file", None, None) if manual_mode else (auto_pv, auto_source, auto_match, auto_note))
+        item = SimpleNamespace(**{c.name: getattr(row, c.name) for c in row.__table__.columns})
+        if source != "file":
+            overridden.add(f.company_id)
+            item.pv = pv
+            item.spi = _ratio(item.ev, pv)
+        company["projects"].append({**_evm_row_read(item), "filename": f.filename, "pv_source": source, "pv_source_label": _PV_SOURCE_LABELS[source],
+                                    "pv_match": match, "pv_share": note,
+                                    "pv_auto": _opt(auto_pv) if auto_source != "file" else None, "pv_manual": _opt(manual)})
+        company["_rows"].append(item)
+    out = []
+    for company in companies.values():
+        project_rows, reported = company.pop("_rows"), company.pop("_reported")
+        company["total"] = _evm_total(project_rows)
+        company["income"] = _income_read([r for r, f in income_rows if f.company_id == company["company_id"]])
+        # the file's own "جمع" row carries the file's own PV / SPI: it is only shown while those are still the ones in use
+        company["reported_total"] = ({**_evm_total(reported), **_evm_row_read(reported[0])}
+                                     if len(reported) == 1 and company["company_id"] not in overridden else None)
+        out.append(company)
+    all_rows = [SimpleNamespace(**{k: p[k] and Decimal(p[k]) for k in ("pv", "ev", "ev_net", "ac", "contract_amount", "bcws")}) for c in out for p in c["projects"]]
+    return {"report_id": report.id, "pv_mode": report.pv_mode, "actual": {"companies": out, "holding": _evm_total(all_rows) if all_rows else None}}
+
+
+async def set_pv(db: AsyncSession, report: Report, payload) -> dict:
+    """Choose where PV comes from (auto | manual) and store the PV typed per project (rial; a missing value is deleted)."""
+    _require_editable(report)
+    known = {(c.id) for c in (await db.execute(select(Company))).scalars()}
+    await db.execute(delete(PvOverride).where(PvOverride.report_id == report.id))
+    for entry in payload.values:
+        if entry.pv is None:
+            continue
+        if entry.company_id not in known:
+            raise NotFoundError("Company not found")
+        key = normalize_text(entry.project)
+        if not key:
+            raise BadRequestError("Project name is empty")
+        db.add(PvOverride(report_id=report.id, company_id=entry.company_id, project_key=key, project_name=entry.project.strip(), pv=entry.pv))
+    report.pv_mode = payload.mode
+    await db.commit()
+    return await get_evm(db, report)
 
 
 async def report_detail(db: AsyncSession, report: Report) -> dict:
     causes = await gate_causes(db, report) if report.status != ReportStatus.PUBLISHED else []
-    files = (await db.execute(select(ReportFile).where(ReportFile.report_id == report.id))).scalars().all()
+    files = (await db.execute(select(ReportFile).where(ReportFile.report_id == report.id).order_by(ReportFile.created_at))).scalars().all()
     return {
         "id": report.id, "project_id": report.project_id, "title": report.title, "period_type": report.period_type.value,
         "period_start": report.period_start, "period_end": report.period_end, "period_label": report.period_label,
@@ -774,7 +899,8 @@ async def report_detail(db: AsyncSession, report: Report) -> dict:
         "supersedes_id": report.supersedes_id, "published_at": report.published_at, "error_message": report.error_message,
         "files": [{"id": f.id, "document_id": f.document_id, "filename": f.filename, "company_id": f.company_id,
                    "status": f.status.value, "error_message": f.error_message, "kind": f.kind, "plan_start": f.plan_start,
-                   "plan_end": f.plan_end} for f in files],
+                   "plan_end": f.plan_end,
+                   "plan_month": jalali.to_jalali(f.plan_start)[1] if f.kind in ("monthly_plan", "monthly_pv") and f.plan_start else None} for f in files],
         "issues": causes,
     }
 
@@ -792,6 +918,13 @@ async def sources(db: AsyncSession, report: Report) -> list[dict]:
         select(IncomeTotal.report_file_id, IncomeTotal.basis, func.count()).where(IncomeTotal.report_file_id.in_(ids)).group_by(IncomeTotal.report_file_id, IncomeTotal.basis)
     )).all():
         totals[(fid, basis)] = n
+    pv_counts = {fid: n for fid, n in (await db.execute(
+        select(PvPlanRow.report_file_id, func.count()).where(PvPlanRow.report_file_id.in_(ids)).group_by(PvPlanRow.report_file_id)
+    )).all()}
+    forecast_periods = {fid: (a, b) for fid, a, b in (await db.execute(
+        select(EvmRow.report_file_id, func.min(EvmRow.period_start), func.min(EvmRow.period_end))
+        .where(EvmRow.report_file_id.in_(ids), EvmRow.basis == "planned").group_by(EvmRow.report_file_id)
+    )).all()}
     out = []
     for f in files:
         # Projects, not pages: a project's table (and its totals block) may run over several pages with the same site name.
@@ -801,6 +934,11 @@ async def sources(db: AsyncSession, report: Report) -> list[dict]:
             "income": income,
             "income_totals": {b: totals.get((f.id, b), 0) for b in ("actual", "planned")},
             "evm": {b: {"projects": evm.get((f.id, b, False), 0), "has_total": bool(evm.get((f.id, b, True)))} for b in ("actual", "planned")},
+            "pv_plan": pv_counts.get(f.id, 0),
+            # the period a forecast EVM sheet names, and whether it is this report's own period (then its EV is the PV)
+            "forecast_period": ({"start": forecast_periods[f.id][0], "end": forecast_periods[f.id][1],
+                                 "is_this_period": (forecast_periods[f.id][0], forecast_periods[f.id][1]) == (report.period_start, report.period_end)}
+                                if forecast_periods.get(f.id) and forecast_periods[f.id][0] else None),
         }
         out.append({"id": f.id, "filename": f.filename, "status": f.status.value, "error_message": f.error_message,
                     "suggested_company": f.suggested_company, "sheet_log": f.sheet_log, "warnings": f.warnings, "reads": reads,
@@ -824,6 +962,8 @@ async def publish(db: AsyncSession, context: UserContext, report: Report) -> Rep
         raise ConflictError("The report is already published")
     if report.status not in (ReportStatus.READY, ReportStatus.NEEDS_REVIEW, ReportStatus.AWAITING_USER):
         raise ConflictError("Run the report before publishing")
+    if not await db.scalar(select(func.count()).select_from(ReportFile).where(ReportFile.report_id == report.id)):
+        raise ConflictError("Select at least one file before publishing")
     causes = await recompute(db, report)
     if causes and settings.vr_publish_gate == "strict":
         await db.commit()
@@ -866,10 +1006,12 @@ async def reopen(db: AsyncSession, context: UserContext, report: Report) -> Repo
     fresh = Report(
         project_id=report.project_id, title=report.title, period_type=report.period_type, period_start=report.period_start,
         period_end=report.period_end, period_label=report.period_label, version=report.version + 1,
-        supersedes_id=report.id, created_by=context.id, progress={},
+        supersedes_id=report.id, created_by=context.id, progress={}, pv_mode=report.pv_mode,
     )
     db.add(fresh)
     await db.flush()
+    for o in (await db.execute(select(PvOverride).where(PvOverride.report_id == report.id))).scalars():
+        db.add(PvOverride(report_id=fresh.id, company_id=o.company_id, project_key=o.project_key, project_name=o.project_name, pv=o.pv))
     for f in (await db.execute(select(ReportFile).where(ReportFile.report_id == report.id))).scalars():
         db.add(ReportFile(report_id=fresh.id, document_id=f.document_id, filename=f.filename, content_hash=f.content_hash, company_id=f.company_id,
                           kind=f.kind, plan_start=f.plan_start, plan_end=f.plan_end))

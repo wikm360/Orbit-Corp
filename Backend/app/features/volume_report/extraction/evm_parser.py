@@ -16,6 +16,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from app.features.volume_report.extraction.normalize import normalize_text
+from app.features.volume_report.extraction.period_range import PeriodRange, find_period_range
 
 _HEADER_SCAN_ROWS = 20
 _AMOUNT = re.compile(r"^\d{1,3}(?:,\d{3})+$")
@@ -53,6 +54,7 @@ class ParsedEvm:
     rows: list[EvmRowData] = field(default_factory=list)
     header_row: int = 0
     warnings: list[dict[str, Any]] = field(default_factory=list)
+    period: PeriodRange | None = None  # the period the title names ("از 1405/08/18 الی 1405/08/24"), if any
 
 
 def _digits(value: str) -> str:
@@ -236,6 +238,7 @@ def parse_evm_sheet(sheet_name: str, rows: list[list[Any]], file_name: str | Non
     if header is None:
         return _parse_budget_template(sheet_name, rows, file_name)
     parsed = ParsedEvm(sheet_name=sheet_name, basis=_basis(rows, header, sheet_name, file_name), header_row=header + 1)
+    parsed.period = find_period_range(" ".join(str(c) for row in rows[:header] for c in row if isinstance(c, str)))
     pending: list[str] = []  # name fragments seen since the previous numeric row
     last_row: EvmRowData | None = None
     for offset, raw in enumerate(rows[header + 1:], start=header + 2):

@@ -5,7 +5,7 @@ import { useState } from "react";
 import { Button } from "@/shared/components/ui/Button";
 import { cn } from "@/shared/lib/utils";
 
-import { formatQuantityWithUnit } from "../lib/format";
+import { formatGroupQuantity } from "../lib/format";
 import { toFa } from "../lib/jalali";
 import {
   allowedScopes, buildAnswer, emptyDraft, formatRowNumbersLabel, isPdfFilename, locationsForQuestion,
@@ -98,7 +98,7 @@ export function QuestionCard({ question, groups, busy = false, onAnswer, onSkip 
             <li key={g.group_key} className="flex flex-wrap items-baseline gap-x-2">
               <span className="font-medium">{g.description}</span>
               <span className="text-slate-500">
-                {toFa(g.n_lines)} ردیف · {formatQuantityWithUnit(g.total_quantity, g.unit, 2)} · {SITE_KIND_LABELS[g.site_kind]}
+                {toFa(g.n_lines)} ردیف · {formatGroupQuantity(g, 2)} · {SITE_KIND_LABELS[g.site_kind]}
                 {g.section_headings[0] ? ` · ${g.section_headings[0]}` : ""}
               </span>
             </li>
