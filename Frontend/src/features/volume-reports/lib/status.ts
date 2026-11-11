@@ -32,10 +32,12 @@ export const GATE_HINTS: Record<string, string> = {
 export const gateLabel = (code: string) => GATE_LABELS[code] ?? code;
 
 export const SHEET_REASON_LABELS: Record<string, string> = {
-  hidden: "شیت پنهان", planned_sheet: "شیت برنامه‌ای", expense_sheet: "شیت هزینه", not_income_sheet: "شیت درآمد نیست", layout_unknown: "چیدمان ناشناخته", planned_layout_unknown: "برنامه‌ی پیش‌بینی با چیدمان ناشناخته",
+  hidden: "شیت پنهان", planned_sheet: "شیت برنامه‌ای", expense_sheet: "شیت هزینه", not_income_sheet: "شیت درآمد نیست", layout_unknown: "چیدمان ناشناخته", planned_layout_unknown: "برنامه‌ی پیش‌بینی با چیدمان ناشناخته", unreadable_font: "متن صفحه قابل‌خواندن نیست (فونت PDF خراب)",
 };
 export const WARNING_LABELS: Record<string, string> = {
   period_label_mismatch: "ماه عنوان شیت با دوره‌ی واردشده نمی‌خواند", unit_missing: "ردیف بدون واحد", cached_values_missing: "مقدار فرمول‌ها ذخیره نشده است",
+  unreadable_pdf_font: "متن این PDF قابل‌خواندن نیست (فونت خراب). فایل Excel همین گزارش را بدهید یا PDF را دوباره از Excel بسازید",
+  budget_template_pv_spi_skipped: "قالب بودجه‌ی سالانه: فقط EV، ev، AC و CPI خوانده شد (PV و SPI در این قالب معتبر نیست)",
 };
 
 export const STEP_LABELS: Record<string, string> = {

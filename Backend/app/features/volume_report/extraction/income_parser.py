@@ -77,7 +77,8 @@ def find_layout(rows: list[list[Any]]) -> tuple[int, dict[str, int | None]] | No
         unit = next((i for i, label in enumerate(labels) if label == "واحد"), None)
         if qty is None or unit is None:
             continue
-        activity = next((i for i, label in enumerate(labels) if label == "فعالیت"), None)
+        # "فعالی" + "ت": a PDF whose letters come out separated leaves the last letter of the header in the next cell
+        activity = next((i for i, label in enumerate(labels) if label in ("فعالیت", "فعالی")), None)
         sharh = next((i for i, label in enumerate(labels) if label == "شرح"), None)
         desc_compound = next(
             (i for i, label in enumerate(labels) if label in {"شرح فعالیت", "شرح عملیات", "شرح کار", "شرح آیتم", "آیتم", "موضوع"}),

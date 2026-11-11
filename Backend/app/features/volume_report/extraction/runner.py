@@ -4,6 +4,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.features.volume_report.extraction.continuation import continuation_grid
 from app.features.volume_report.extraction.evm_parser import ParsedEvm, parse_evm_sheet
 from app.features.volume_report.extraction.income_totals import IncomeTotals, detect_basis, parse_income_totals
 
@@ -48,11 +49,18 @@ def _log_entry(probe: SheetProbe, parsed: ParsedSheet | None) -> dict[str, Any]:
     return entry
 
 
+def _unreadable(rows: list[list[Any]]) -> bool:
+    text = "".join(str(c) for row in rows for c in row if c is not None)
+    controls = sum(1 for ch in text if ord(ch) < 32 and ch not in "\n\t\r")
+    return len(text) >= 20 and controls / len(text) > 0.15
+
+
 def extract_file(
     path: str, lexicon: Lexicon, period_label: str | None = None, layout_overrides: dict[str, dict] | None = None
 ) -> FileExtraction:
     """Blocking (file I/O): run in a worker/thread."""
     result = FileExtraction()
+    last_income: ParsedSheet | None = None
     with open_workbook(path) as workbook:
         probes = probe_workbook(workbook)
         result.suggested_company = suggest_company(workbook, probes)
@@ -71,10 +79,27 @@ def extract_file(
                 totals = parse_income_totals(sheet.rows())
                 if totals is not None:
                     result.income_totals.append((sheet.name, detect_basis(sheet.name, sheet.rows(), os.path.basename(path)), totals))
+            if not sheet.is_hidden and probe.kind == "other" and _unreadable(sheet.rows()):
+                # Broken font encoding: the PDF holds control characters instead of letters, nothing can be read from it.
+                if not any(w.get("code") == "unreadable_pdf_font" for w in result.warnings):
+                    result.warnings.append({"code": "unreadable_pdf_font"})
+                result.sheet_log.append({"sheet": probe.sheet, "visibility": probe.visibility, "kind": "other", "used": False, "reason": "unreadable_font"})
+                continue
+            # A forecast file ("پیش بینی" in its name or title) keeps plain "درآمد …" sheet names: those are still the forecast.
+            basis = "planned" if probe.kind == "planned" or detect_basis(sheet.name, sheet.rows(), os.path.basename(path)) == "planned" else "actual"
             parsed = parse_income_sheet(
-                sheet.name, sheet.rows(), lexicon, period_label, (layout_overrides or {}).get(sheet.name),
-                "planned" if probe.kind == "planned" else "actual",
+                sheet.name, sheet.rows(), lexicon, period_label, (layout_overrides or {}).get(sheet.name), basis,
             ) if probe.used else None
+            continuation = False
+            if (parsed is None or parsed.status == "layout_unknown") and last_income is not None:
+                # A headerless page that carries on the previous project's table (whatever its name says: "هزینه", "صفحه", …).
+                grid = continuation_grid(sheet.rows())
+                if grid is not None:
+                    parsed = parse_income_sheet(sheet.name, grid, lexicon, None, None, last_income.basis)
+                    parsed.site_name, parsed.site_name_norm, parsed.site_kind_guess = last_income.site_name, last_income.site_name_norm, last_income.site_kind_guess
+                    continuation = True
+            if parsed is not None and parsed.status == "ok" and not continuation:
+                last_income = parsed
             if parsed is not None and probe.kind == "planned" and parsed.status != "ok":
                 # A forecast sheet we cannot read is never worth a layout question: the actuals do not depend on it.
                 entry = _log_entry(probe, parsed)
@@ -86,6 +111,8 @@ def extract_file(
                 result.sheets.append(parsed)
                 result.warnings.extend({**w, "sheet": sheet.name} for w in parsed.warnings)
             entry = _log_entry(probe, parsed)
+            if continuation:
+                entry.update(kind="planned" if parsed.basis == "planned" else "income", continuation=True)
             if probe.used and (layout_overrides or {}).get(sheet.name):
                 entry["layout_override"] = layout_overrides[sheet.name]  # kept so a re-run applies the confirmed layout again
             result.sheet_log.append(entry)

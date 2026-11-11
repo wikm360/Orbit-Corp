@@ -22,7 +22,7 @@ interface ReadRow { label: string; state: ReadState; detail: string }
 /** The parameters a file was expected to give, one line each: ✓ read, ⚠ read only for part of the sheets, — not found. */
 function readRows(reads: SourceReads): ReadRow[] {
   const rows: ReadRow[] = [];
-  const sheets = (n: number) => `${toFa(n)} شیت`;
+  const sheets = (n: number) => `${toFa(n)} پروژه`;
   rows.push({ label: "حجم عملیات (درآمد)", state: reads.income.actual > 0 ? "ok" : "none", detail: reads.income.actual > 0 ? sheets(reads.income.actual) : "شیت درآمد خوانده نشد" });
   rows.push({ label: "برنامه / پیش‌بینی حجم‌ها", state: reads.income.planned > 0 ? "ok" : "none", detail: reads.income.planned > 0 ? sheets(reads.income.planned) : "در این فایل نیست" });
   for (const basis of ["actual", "planned"] as const) {
@@ -41,7 +41,7 @@ function readRows(reads: SourceReads): ReadRow[] {
     rows.push({
       label: `جمع‌های درآمد ${basis === "actual" ? "واقعی" : "پیش‌بینی"} (صورت‌وضعیت · تعدیل · درآمد کل)`,
       state: found === 0 ? "none" : found < incomeSheets ? "partial" : "ok",
-      detail: found === 0 ? "بلوک جمع پیدا نشد" : `${toFa(found)} از ${toFa(Math.max(incomeSheets, found))} شیت`,
+      detail: found === 0 ? "بلوک جمع پیدا نشد" : `${toFa(found)} از ${toFa(Math.max(incomeSheets, found))} پروژه`,
     });
   }
   return rows;
@@ -94,6 +94,7 @@ export function SourceDetails({ sources, compact = false }: { sources: SourceInf
                   {used.map((s) => (
                     <li key={s.sheet}>
                       {s.sheet.trim()} — {s.kind === "evm" ? "خلاصه مالی EVM" : s.site_name}
+                      {s.continuation && <span className="ms-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-600">ادامه‌ی جدول صفحه‌ی قبل</span>}
                       {s.basis === "planned" && <span className="ms-1 rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] text-indigo-700">برنامه / پیش‌بینی</span>}{" "}
                       <span className="text-slate-400">
                         {s.kind === "evm" ? `(${toFa(s.evm_rows ?? 0)} ردیف)` : `(${toFa(s.rows_nonzero ?? 0)} ردیف دارای حجم)`}

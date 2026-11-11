@@ -197,11 +197,42 @@ def _join(tokens: list[str]) -> str:
     return " ".join(tokens).strip()
 
 
+def _parse_budget_template(sheet_name: str, rows: list[list[Any]], file_name: str | None) -> ParsedEvm | None:
+    """The annual "بودجه عملیاتی" summary of one project (Sirjan roads): "Y-BCWS  M-BCWS  PV  EV  ev  AC  CPI  CPI  SPI" with no
+    contract column and the budgets in million rial. Only EV / ev / AC (the last three rial amounts) and CPI = ev / AC are
+    trusted: its PV cell holds a placeholder (10), so SPI stays empty."""
+    for index, row in enumerate(rows[:_HEADER_SCAN_ROWS]):
+        squashed = re.sub(r"[\s\-]", "", " ".join(str(c) for c in row if c is not None).lower())
+        if "ybcws" in squashed and "mbcws" in squashed and "cpi" in squashed and "spi" in squashed:
+            header = index
+            break
+    else:
+        return None
+    for offset, raw in enumerate(rows[header + 1:], start=header + 2):
+        tokens = _row_tokens(raw)
+        big = [t for t in tokens if _AMOUNT.match(t) and len(t.replace(",", "")) >= 9]
+        if len(big) < 3:
+            continue
+        ev, ev_net, ac = (_to_decimal(t) for t in big[-3:])
+        project = None
+        for title in rows[:header]:
+            text = " ".join(str(c) for c in title if c is not None)
+            if "پروژه" in text:
+                project = re.sub(r"\s+", " ", text.split("پروژه", 1)[1]).strip(" :-") or None
+                break
+        basis = _basis(rows, header, sheet_name, file_name)
+        data = EvmRowData(row_no=offset, project_name=project, is_total=False, ev=ev, ev_net=ev_net, ac=ac, cpi=_ratio(ev_net, ac))
+        parsed = ParsedEvm(sheet_name=sheet_name, basis=basis, header_row=header + 1, rows=[data])
+        parsed.warnings.append({"row": offset, "code": "budget_template_pv_spi_skipped"})
+        return parsed
+    return None
+
+
 def parse_evm_sheet(sheet_name: str, rows: list[list[Any]], file_name: str | None = None) -> ParsedEvm | None:
     """None when the sheet is not an EVM summary at all."""
     header = _find_header(rows)
     if header is None:
-        return None
+        return _parse_budget_template(sheet_name, rows, file_name)
     parsed = ParsedEvm(sheet_name=sheet_name, basis=_basis(rows, header, sheet_name, file_name), header_row=header + 1)
     pending: list[str] = []  # name fragments seen since the previous numeric row
     last_row: EvmRowData | None = None

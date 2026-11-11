@@ -47,7 +47,7 @@ export interface ProgressResponse { status: ReportStatus; progress: Progress; er
 export interface SheetLogEntry {
   sheet: string; visibility: string; kind: string; used: boolean; reason: string | null;
   site_name?: string; rows_total?: number; rows_nonzero?: number; rows_nonphysical?: number; evm_rows?: number; header_row?: number | null;
-  layout_unknown?: boolean; basis?: "actual" | "planned";
+  layout_unknown?: boolean; basis?: "actual" | "planned"; continuation?: boolean;
 }
 export interface SourceWarning { code: string; sheet?: string; row?: number; found?: string[]; expected?: string[]; rows?: number }
 /** What the run managed to read from one file, per basis (actual = this period, planned = forecast for the next). */

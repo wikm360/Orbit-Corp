@@ -693,7 +693,9 @@ async def sources(db: AsyncSession, report: Report) -> list[dict]:
         totals[(fid, basis)] = n
     out = []
     for f in files:
-        income = {b: sum(1 for e in f.sheet_log if e.get("used") and e.get("kind") in ("income", "planned") and (e.get("basis") or "actual") == b) for b in ("actual", "planned")}
+        # Projects, not pages: a project's table (and its totals block) may run over several pages with the same site name.
+        income = {b: len({e.get("site_name") or e.get("sheet") for e in f.sheet_log
+                          if e.get("used") and e.get("kind") in ("income", "planned") and (e.get("basis") or "actual") == b}) for b in ("actual", "planned")}
         reads = {
             "income": income,
             "income_totals": {b: totals.get((f.id, b), 0) for b in ("actual", "planned")},
