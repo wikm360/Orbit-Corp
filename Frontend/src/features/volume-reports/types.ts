@@ -192,4 +192,4 @@ export interface EvmCompany {
 export interface EvmBasis { companies: EvmCompany[]; holding: EvmTotal | null }
 export type PvMode = "auto" | "manual";
 export interface PvEntry { company_id: string; project: string; pv: string | null }
-export interface EvmResponse { report_id: string; pv_mode: PvMode; actual: EvmBasis }
+export interface EvmResponse { report_id: string; pv_mode: PvMode; pv_manual_unmatched?: PvEntry[]; actual: EvmBasis }

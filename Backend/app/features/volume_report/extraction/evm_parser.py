@@ -250,6 +250,106 @@ def _notes_columns(rows: list[list[Any]], header: int) -> set[int]:
     return cols
 
 
+_MONEY_FIELDS = ("bcws", "pv", "ev", "ev_net", "ac")
+_MILLION_LIMIT = Decimal(10) ** 8
+
+
+def _header_columns(rows: list[list[Any]], header: int) -> dict[str, int] | None:
+    """Excel: the column of every figure by its own header label ("(PV)", "(EV)", "(ev)", "(AC)", "BCWS", "CPI=…", "SPI=…").
+    The labels may wrap over the next two rows. None unless EV, ev and AC sit in three different cells (a PDF header is merged)."""
+    labels: dict[int, str] = {}
+    for row in rows[header: header + 3]:
+        for index, cell in enumerate(row):
+            if isinstance(cell, str) and cell.strip():
+                labels[index] = f"{labels.get(index, '')} {cell}"
+    found: dict[str, int] = {}
+    for index, text in sorted(labels.items()):
+        low = text.lower()
+        if "cpi" in low:
+            found.setdefault("cpi", index)
+        elif "spi" in low:
+            found.setdefault("spi", index)
+        elif "bcws" in low:
+            found.setdefault("bcws", index)
+        elif re.search(r"(?<![A-Za-z])PV(?![A-Za-z])", text) or re.search(r"(?<![A-Za-z])pv(?![A-Za-z])", text) and "ev" not in low:
+            found.setdefault("pv", index)
+        elif re.search(r"(?<![A-Za-z])EV(?![A-Za-z])", text):
+            found.setdefault("ev", index)
+        elif re.search(r"(?<![A-Za-z])ev(?![A-Za-z])", text):
+            found.setdefault("ev_net", index)
+        elif re.search(r"(?<![A-Za-z])(AC|ac)(?![A-Za-z])", text):
+            found.setdefault("ac", index)
+        if "نام پروژه" in normalize_text(text):
+            found.setdefault("name", index)
+        elif "قرارداد" in normalize_text(text) and "مدت" not in normalize_text(text) and "contract" not in found:
+            found["contract"] = index
+    if not {"ev", "ev_net", "ac", "name"} <= found.keys() or len({found[k] for k in ("ev", "ev_net", "ac")}) < 3:
+        return None
+    return found
+
+
+def _decimal_cell(value: Any) -> Decimal | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return Decimal(str(value))
+    text = _digits(str(value).replace("،", ",")).replace(",", "").strip()
+    try:
+        return Decimal(text)
+    except InvalidOperation:
+        return None  # "#DIV/0!", notes
+
+
+def _parse_by_columns(parsed: ParsedEvm, rows: list[list[Any]], header: int, columns: dict[str, int]) -> ParsedEvm | None:
+    def cell(row: list[Any], key: str) -> Decimal | None:
+        index = columns.get(key)
+        return _decimal_cell(row[index]) if index is not None and index < len(row) else None
+
+    # the header block ends where the first data row starts: skip the wrapped label rows
+    for offset, row in enumerate(rows[header + 1:], start=header + 2):
+        first = row[0] if row else None
+        is_total = isinstance(first, str) and normalize_text(first).startswith(_TOTAL_WORDS)
+        name = row[columns["name"]] if columns["name"] < len(row) else None
+        if not is_total and not (isinstance(name, str) and name.strip()):
+            continue
+        if not is_total and (_is_header_text([str(name)]) or _is_legend(str(name).split())):
+            continue
+        money = {k: cell(row, k) for k in _MONEY_FIELDS}
+        if not any(v is not None for v in money.values()):
+            continue  # a project listed with no figures yet
+        data = EvmRowData(row_no=offset, project_name=None if is_total else re.sub(r"\s+", " ", str(name)).strip(), is_total=is_total,
+                          contract_amount=None if is_total else cell(row, "contract"), **{k: _q(v) for k, v in money.items()})
+        data.cpi = _ratio_cell(cell(row, "cpi")) if data.ev_net is not None and data.ac is not None and data.ac > 0 else None
+        data.spi = _ratio_cell(cell(row, "spi")) if data.ev is not None and data.pv is not None and data.pv > 0 else None
+        data.contract_amount = _q(data.contract_amount)
+        parsed.rows.append(data)
+        if is_total:
+            break
+    return parsed if parsed.rows else None
+
+
+def _q(value: Decimal | None) -> Decimal | None:
+    return None if value is None else value.quantize(Decimal("0.01"))
+
+
+def _ratio_cell(value: Decimal | None) -> Decimal | None:
+    return None if value is None else value.quantize(Decimal("0.01"))
+
+
+def _scale_million_rial(parsed: ParsedEvm) -> None:
+    """Some companies fill the sheet in million rial under a "(ریال)" header (contract 2,500,000 = 2.5 trillion rial). When every
+    monetary figure of the sheet is below 100 million rial, no weekly/monthly figure of these companies is that small in rial."""
+    values = [getattr(r, f) for r in parsed.rows for f in _MONEY_FIELDS if getattr(r, f) is not None]
+    if not values or max(values) <= 0 or max(values) >= _MILLION_LIMIT:
+        return
+    for row in parsed.rows:
+        for field_name in (*_MONEY_FIELDS, "contract_amount"):
+            value = getattr(row, field_name)
+            if value is not None:
+                setattr(row, field_name, value * 1_000_000)
+    parsed.warnings.append({"row": parsed.header_row, "code": "million_rial_scaled"})
+
+
 def parse_evm_sheet(sheet_name: str, rows: list[list[Any]], file_name: str | None = None) -> ParsedEvm | None:
     """None when the sheet is not an EVM summary at all."""
     header = _find_header(rows)
@@ -258,6 +358,12 @@ def parse_evm_sheet(sheet_name: str, rows: list[list[Any]], file_name: str | Non
     notes_cols = _notes_columns(rows, header)
     parsed = ParsedEvm(sheet_name=sheet_name, basis=_basis(rows, header, sheet_name, file_name), header_row=header + 1)
     parsed.period = find_period_range(" ".join(str(c) for row in rows[:header] for c in row if isinstance(c, str)))
+    columns = _header_columns(rows, header)
+    if columns is not None:
+        by_columns = _parse_by_columns(parsed, rows, header, columns)
+        if by_columns is not None:
+            _scale_million_rial(by_columns)
+        return by_columns
     pending: list[str] = []  # name fragments seen since the previous numeric row
     last_row: EvmRowData | None = None
     for offset, raw in enumerate(rows[header + 1:], start=header + 2):
@@ -294,6 +400,7 @@ def parse_evm_sheet(sheet_name: str, rows: list[list[Any]], file_name: str | Non
         last_row.project_name = _join([last_row.project_name or "", *pending]) or None  # the name's second line sits below the numbers
     if not parsed.rows:
         return None
+    _scale_million_rial(parsed)
     return parsed
 
 

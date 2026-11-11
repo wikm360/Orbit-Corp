@@ -496,7 +496,7 @@ async def test_evm_is_read_per_project_company_and_holding_without_any_forecast_
     rid = await _evm_report(client, leader, project_id, [{"document_id": docs[0], "company_id": alef}, {"document_id": docs[1], "company_id": be}],
                             "2026-11-02", "2026-11-08")
     data = await _evm(client, leader, rid)
-    assert set(data) == {"report_id", "pv_mode", "actual"}  # no forecast EVM is reported
+    assert set(data) == {"report_id", "pv_mode", "pv_manual_unmatched", "actual"}  # no forecast EVM is reported
     a, first = _project(data, "شرکت الف", "پروژه الف")
     assert Decimal(first["pv"]) == 100 * B and first["pv_source"] == "file" and first["cpi"] == "1.20" and first["spi"] == "0.80"
     assert Decimal(a["total"]["ev"]) == 100 * B and a["total"]["cpi"] == "0.94" and a["total"]["spi"] == "0.67"  # ratios of sums
@@ -716,3 +716,34 @@ async def test_manual_pv_mode_uses_the_typed_values_and_blank_means_the_files_ow
     assert bad.status_code == 422
     outsider, _ = await _register(client, "pv-outsider@example.com")
     assert (await client.put(f"{API}/{rid}/evm/pv", json=body, headers=outsider)).status_code == 403
+
+
+async def test_reparse_evm_rereads_the_files_and_keeps_the_typed_pv(client, tmp_path):
+    from sqlalchemy import delete
+    from app.features.volume_report.models import EvmRow
+
+    _, leader, leader_id, project_id, _ = await _world(client, "reparse")
+    company = await _company(client, leader)
+    actual = await _evm_document(tmp_path, project_id, leader_id, [
+        [1, "پروژه الف", 1_000 * B, 100e9, 100e9, 80e9, 60e9, 50e9, 1.2, 0.8], [2, "پروژه ب", 500 * B, 50e9, 50e9, 20e9, 15e9, 30e9, 0.5, 0.4]])
+    rid = await _evm_report(client, leader, project_id, [{"document_id": actual, "company_id": company}], "2026-11-02", "2026-11-08")
+    body = {"mode": "manual", "values": [{"company_id": company, "project": "پروژه الف", "pv": "90000000000"},
+                                         {"company_id": company, "project": "پروژه که نیست", "pv": "5000000000"}]}
+    assert (await client.put(f"{API}/{rid}/evm/pv", json=body, headers=leader)).status_code == 200
+
+    # the rows are lost (as after a parser fix that has not been applied yet) ...
+    async with async_session_factory() as db:
+        await db.execute(delete(EvmRow))
+        await db.commit()
+    assert (await _evm(client, leader, rid))["actual"]["companies"] == []
+    # ... one call reads the files again; the typed PV stays, and a typed PV with no project to go to is reported
+    done = await client.post(f"{API}/{rid}/evm/reparse", headers=leader)
+    assert done.status_code == 200, done.text
+    data = done.json()
+    _, first = _project(data, "محورگستر", "پروژه الف")
+    assert data["pv_mode"] == "manual" and Decimal(first["pv"]) == 90 * B and first["spi"] == "0.89" and Decimal(first["ev"]) == 80 * B
+    assert [u["project"] for u in data["pv_manual_unmatched"]] == ["پروژه که نیست"]
+    assert (await client.get(f"{API}/{rid}/review/groups?state=all", headers=leader)).status_code == 200  # the review is untouched
+    outsider, _ = await _register(client, "reparse-outsider@example.com")
+    assert (await client.post(f"{API}/{rid}/evm/reparse", headers=outsider)).status_code == 403
+    assert (await client.post(f"{API}/{uuid.uuid4()}/evm/reparse", headers=leader)).status_code == 404

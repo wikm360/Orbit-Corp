@@ -393,6 +393,12 @@ async def evm(report: Report = Depends(get_report_for_member), db: AsyncSession 
     return await service.get_evm(db, report)
 
 
+@router.post("/{report_id}/evm/reparse")
+async def reparse_evm(report: Report = Depends(get_report_for_member), db: AsyncSession = Depends(get_db)):
+    """Reads the EVM / income totals / PV plan from the files again (no new run); the PV typed per project is kept."""
+    return await service.reparse_evm(db, report)
+
+
 @router.put("/{report_id}/evm/pv")
 async def set_pv(payload: PvUpdate, report: Report = Depends(get_report_for_member), db: AsyncSession = Depends(get_db)):
     """Where the PV comes from (auto | manual) and the PV typed per project (rial). Returns the refreshed EVM."""

@@ -147,6 +147,7 @@ export function EvmPanel({ reportId, refreshKey, editable }: { reportId: string;
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [rereading, setRereading] = useState(false);
 
   const adopt = useCallback((next: EvmResponse) => {
     setData(next);
@@ -180,7 +181,14 @@ export function EvmPanel({ reportId, refreshKey, editable }: { reportId: string;
     try { adopt(await volumeReportApi.setPv(reportId, mode, values)); } catch (e) { setSaveError(e instanceof Error ? e.message : "ذخیره ناموفق بود."); } finally { setSaving(false); }
   }
 
+  async function reread() {
+    setRereading(true);
+    setSaveError(null);
+    try { adopt(await volumeReportApi.reparseEvm(reportId)); } catch (e) { setSaveError(e instanceof Error ? e.message : "بازخوانی ناموفق بود."); } finally { setRereading(false); }
+  }
+
   const manual = mode === "manual";
+  const orphans = data.pv_manual_unmatched ?? [];
   return (
     <div className="space-y-4">
       {editable && data.actual.companies.length > 0 && (
@@ -193,8 +201,14 @@ export function EvmPanel({ reportId, refreshKey, editable }: { reportId: string;
           </div>
           {manual && <span className="text-xs text-slate-500">PV هر پروژه را به میلیارد ریال بنویسید؛ عدد خاکستری پیشنهاد خودکار است و خانه‌ی خالی یعنی PV خودِ فایل پروژه.</span>}
           <Button size="sm" isLoading={saving} onClick={() => void save()} disabled={mode === data.pv_mode && !manual}>ذخیره</Button>
+          <Button size="sm" variant="secondary" isLoading={rereading} onClick={() => void reread()}>بازخوانی از فایل‌ها</Button>
           {saveError && <span role="alert" className="text-xs text-red-600">{saveError}</span>}
         </div>
+      )}
+      {orphans.length > 0 && (
+        <p role="status" className="rounded-xl bg-amber-50 px-4 py-2 text-xs text-amber-900">
+          PVِ دستیِ این پروژه‌ها دیگر پروژه‌ی هم‌نامی در فایل‌ها ندارد و به‌کار نمی‌رود: {orphans.map((o) => o.project).join("، ")}
+        </p>
       )}
       <BasisView data={data.actual} manual={manual && editable} draft={draft} setDraft={(key, text) => setDraft((d) => ({ ...d, [key]: text }))} />
     </div>

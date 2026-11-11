@@ -15,7 +15,6 @@ from app.features.documents.models import Document
 from app.features.volume_report import activity, questions, service
 from app.features.volume_report.agent import runner as agent_runner
 from app.features.volume_report.extraction.normalize import group_key
-from app.features.volume_report.extraction.period_range import resolve_period
 from app.features.volume_report.extraction.runner import extract_file
 from app.features.volume_report.models import (
     Classification, ClassificationSource, Company, Decision, Dimension, Disposition, EvmRow, ExcludeReason, IncomeTotal, PvPlanRow, FileStatus, Item, Line,
@@ -69,26 +68,7 @@ async def _parse_files(db: AsyncSession, report: Report, lexicon, overrides: dic
             await activity.log_activity(db, report.id, "parse", f"فایل «{rfile.filename}» خوانده نشد: {rfile.error_message}", kind="error", commit=False)
             continue
         rfile.sheet_log, rfile.warnings, rfile.suggested_company = extraction.sheet_log, extraction.warnings, extraction.suggested_company
-        if extraction.pv_plan is not None:
-            for pv_row in extraction.pv_plan.rows:
-                db.add(PvPlanRow(report_file_id=rfile.id, row_no=pv_row.row_no, project_name=pv_row.project_name, pv_month=pv_row.pv_month))
-            await activity.log_activity(db, report.id, "parse", f"فایل «{rfile.filename}»: برنامه‌ی PV ماهانه‌ی {len(extraction.pv_plan.rows)} پروژه خوانده شد",
-                                        kind="success", commit=False)
-        for evm in extraction.evm_sheets:
-            period = resolve_period(evm.period, report.period_end) if evm.period is not None else None
-            for row in evm.rows:
-                db.add(EvmRow(
-                    report_file_id=rfile.id, sheet_name=evm.sheet_name, row_no=row.row_no, basis=evm.basis, project_name=row.project_name,
-                    is_total=row.is_total, contract_amount=row.contract_amount, bcws=row.bcws, pv=row.pv, ev=row.ev, ev_net=row.ev_net,
-                    ac=row.ac, cpi=row.cpi, spi=row.spi, period_start=period[0] if period else None, period_end=period[1] if period else None,
-                ))
-        for sheet_name, basis, totals in extraction.income_totals:
-            db.add(IncomeTotal(report_file_id=rfile.id, sheet_name=sheet_name, basis=basis, statement_base=totals.statement_base,
-                               statement_coef=totals.statement_coef, adjustment=totals.adjustment, income_total=totals.income_total,
-                               cumulative=totals.cumulative))
-        if extraction.evm_sheets:
-            n = sum(len(e.rows) for e in extraction.evm_sheets)
-            await activity.log_activity(db, report.id, "parse", f"فایل «{rfile.filename}»: {n} ردیف EVM (PV/EV/AC/CPI/SPI) خوانده شد", kind="success", commit=False)
+        await service.store_evm_extraction(db, report, rfile, extraction)
         ok_sheets = [sh for sh in extraction.sheets if sh.status == "ok"]
         skipped = [e["sheet"] for e in extraction.sheet_log if not e.get("used")]
         await activity.log_activity(

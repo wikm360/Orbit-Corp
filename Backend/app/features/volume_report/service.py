@@ -794,6 +794,63 @@ async def _adjacent_previous_planned_rows(db: AsyncSession, report: Report) -> l
     return []
 
 
+async def store_evm_extraction(db: AsyncSession, report: Report, rfile: ReportFile, extraction) -> None:
+    """Stores the EVM rows, income totals and PV-plan rows an extraction found in one file (the run and the EVM re-read share it)."""
+    from app.features.volume_report import activity
+    from app.features.volume_report.extraction.period_range import resolve_period
+
+    if extraction.pv_plan is not None:
+        for pv_row in extraction.pv_plan.rows:
+            db.add(PvPlanRow(report_file_id=rfile.id, row_no=pv_row.row_no, project_name=pv_row.project_name, pv_month=pv_row.pv_month))
+        await activity.log_activity(db, report.id, "parse", f"فایل «{rfile.filename}»: برنامه‌ی PV ماهانه‌ی {len(extraction.pv_plan.rows)} پروژه خوانده شد",
+                                    kind="success", commit=False)
+    for evm in extraction.evm_sheets:
+        period = resolve_period(evm.period, report.period_end) if evm.period is not None else None
+        for row in evm.rows:
+            db.add(EvmRow(
+                report_file_id=rfile.id, sheet_name=evm.sheet_name, row_no=row.row_no, basis=evm.basis, project_name=row.project_name,
+                is_total=row.is_total, contract_amount=row.contract_amount, bcws=row.bcws, pv=row.pv, ev=row.ev, ev_net=row.ev_net,
+                ac=row.ac, cpi=row.cpi, spi=row.spi, period_start=period[0] if period else None, period_end=period[1] if period else None,
+            ))
+    for sheet_name, basis, totals in extraction.income_totals:
+        db.add(IncomeTotal(report_file_id=rfile.id, sheet_name=sheet_name, basis=basis, statement_base=totals.statement_base,
+                           statement_coef=totals.statement_coef, adjustment=totals.adjustment, income_total=totals.income_total,
+                           cumulative=totals.cumulative))
+    if extraction.evm_sheets:
+        n = sum(len(e.rows) for e in extraction.evm_sheets)
+        await activity.log_activity(db, report.id, "parse", f"فایل «{rfile.filename}»: {n} ردیف EVM (PV/EV/AC/CPI/SPI) خوانده شد", kind="success", commit=False)
+
+
+async def reparse_evm(db: AsyncSession, report: Report) -> dict:
+    """Reads the EVM rows, income totals and PV plan of every file again, without a new run: the lines, the review and the PV the
+    user typed are untouched. Typed PVs are matched by project name, so they survive as long as the name is read the same."""
+    from app.features.volume_report.extraction.normalize import Lexicon
+    from app.features.volume_report.extraction.runner import extract_file
+
+    _require_editable(report)
+    files = (await db.execute(select(ReportFile).where(ReportFile.report_id == report.id).order_by(ReportFile.created_at))).scalars().all()
+    fresh: list[tuple[ReportFile, Any]] = []
+    for rfile in files:
+        document = await db.get(Document, rfile.document_id) if rfile.document_id else None
+        if document is None or document.project_id != report.project_id:
+            raise BadRequestError(f"The source document of «{rfile.filename}» is no longer available")
+        try:
+            extraction = await asyncio.to_thread(
+                extract_file, resolve_document_path(document), Lexicon([]), None, None, rfile.kind == "monthly_plan", rfile.kind == "monthly_pv", True)
+        except Exception as exc:  # noqa: BLE001 - a file that cannot be read must not wipe the rows we already have
+            raise BadRequestError(f"«{rfile.filename}» could not be read: {getattr(exc, 'detail', None) or exc}") from exc
+        fresh.append((rfile, extraction))
+    ids = [f.id for f in files]
+    if ids:
+        await db.execute(delete(EvmRow).where(EvmRow.report_file_id.in_(ids)))
+        await db.execute(delete(IncomeTotal).where(IncomeTotal.report_file_id.in_(ids)))
+        await db.execute(delete(PvPlanRow).where(PvPlanRow.report_file_id.in_(ids)))
+    for rfile, extraction in fresh:
+        await store_evm_extraction(db, report, rfile, extraction)
+    await db.commit()
+    return await get_evm(db, report)
+
+
 async def get_evm(db: AsyncSession, report: Report) -> dict:
     """The period's EVM per company: projects, company total, holding total. Everything but PV comes from the project's own
     report file. PV (and so SPI = EV / PV) comes from, in this order: the EV of the project's forecast for this very period
@@ -811,7 +868,9 @@ async def get_evm(db: AsyncSession, report: Report) -> dict:
         select(PvPlanRow, ReportFile).join(ReportFile, ReportFile.id == PvPlanRow.report_file_id).where(ReportFile.report_id == report.id)
         .order_by(ReportFile.created_at, PvPlanRow.row_no)
     )).all()
-    overrides = {(o.company_id, o.project_key): o.pv for o in (await db.execute(select(PvOverride).where(PvOverride.report_id == report.id))).scalars()}
+    override_rows = (await db.execute(select(PvOverride).where(PvOverride.report_id == report.id))).scalars().all()
+    overrides = {(o.company_id, o.project_key): o.pv for o in override_rows}
+    overrides_named = {(o.company_id, o.project_key): (o.project_name, o.pv) for o in override_rows}
     manual_mode = report.pv_mode == "manual"
     period = (report.period_start, report.period_end)
     same_period_forecast = [(r, f.company_id) for r, f, _ in rows
@@ -866,7 +925,10 @@ async def get_evm(db: AsyncSession, report: Report) -> dict:
                                      if len(reported) == 1 and company["company_id"] not in overridden else None)
         out.append(company)
     all_rows = [SimpleNamespace(**{k: p[k] and Decimal(p[k]) for k in ("pv", "ev", "ev_net", "ac", "contract_amount", "bcws")}) for c in out for p in c["projects"]]
-    return {"report_id": report.id, "pv_mode": report.pv_mode, "actual": {"companies": out, "holding": _evm_total(all_rows) if all_rows else None}}
+    known = {(c["company_id"], normalize_text(p["project"] or "")) for c in out for p in c["projects"]}
+    unmatched = [{"company_id": cid, "project": o_name, "pv": _opt(pv)} for (cid, key), (o_name, pv) in overrides_named.items() if (cid, key) not in known]
+    return {"report_id": report.id, "pv_mode": report.pv_mode, "pv_manual_unmatched": unmatched,
+            "actual": {"companies": out, "holding": _evm_total(all_rows) if all_rows else None}}
 
 
 async def set_pv(db: AsyncSession, report: Report, payload) -> dict:

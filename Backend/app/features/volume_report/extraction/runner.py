@@ -61,6 +61,7 @@ def extract_file(
     path: str, lexicon: Lexicon, period_label: str | None = None, layout_overrides: dict[str, dict] | None = None,
     force_planned: bool = False,
     pv_only: bool = False,
+    evm_only: bool = False,
 ) -> FileExtraction:
     """Blocking (file I/O): run in a worker/thread."""
     result = FileExtraction()
@@ -104,6 +105,8 @@ def extract_file(
                 result.sheet_log.append({"sheet": probe.sheet, "visibility": probe.visibility, "kind": "other", "used": False, "reason": "unreadable_font"})
                 continue
             # A forecast file ("پیش بینی" in its name or title) keeps plain "درآمد …" sheet names: those are still the forecast.
+            if evm_only:
+                continue  # re-reading only the EVM / income-totals / PV-plan rows: no income lines, nothing for the classification
             basis = "planned" if force_planned or probe.kind == "planned" or detect_basis(sheet.name, sheet.rows(), os.path.basename(path)) == "planned" else "actual"
             parsed = parse_income_sheet(
                 sheet.name, sheet.rows(), lexicon, period_label, (layout_overrides or {}).get(sheet.name), basis,

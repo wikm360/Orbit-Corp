@@ -39,6 +39,7 @@ export const volumeReportApi = {
     apiRequest<ResultsResponse>(`${BASE}/${id}/results${qs({ group_by: groupBy, include: include.join(","), basis })}`),
   planVsActual: (id: string, groupBy: ResultScope) => apiRequest<PlanVsActual>(`${BASE}/${id}/plan-vs-actual${qs({ group_by: groupBy })}`),
   evm: (id: string) => apiRequest<EvmResponse>(`${BASE}/${id}/evm`),
+  reparseEvm: (id: string) => send<EvmResponse>(`/${id}/evm/reparse`, "POST"),
   setPv: (id: string, mode: PvMode, values: PvEntry[]) => send<EvmResponse>(`/${id}/evm/pv`, "PUT", { mode, values }),
   lines: (id: string, filter: { site_id?: string; item_key?: string; effect?: string; limit?: number; offset?: number }) =>
     apiRequest<LineRow[]>(`${BASE}/${id}/lines${qs(filter)}`),

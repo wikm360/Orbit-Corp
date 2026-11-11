@@ -40,7 +40,7 @@ def test_excel_numeric_cells_full_row_and_total():
 
 
 def test_missing_programme_gives_null_spi_and_planned_basis_from_title():
-    rows = _sheet([[1, "پروژه", 4_831_009_049_701, 24, 266_028_243_112, 204_841_747_196, 161_295_922_668, 1.27, 0.0, None]],
+    rows = _sheet([[1, "پروژه", 4_831_009_049_701, 24, None, None, 266_028_243_112, 204_841_747_196, 161_295_922_668, 1.27, 0.0, None]],
                   title="پیش بینی گزارش مدیریت ارزش کسب شده (EVM)")
     parsed = parse_evm_sheet("EVM", rows)
     row = parsed.rows[0]
@@ -74,6 +74,8 @@ def _evm_of(name):
 
     with open_workbook(str(SAMPLES / name)) as wb:
         for sheet in wb.sheets:
+            if sheet.is_hidden:
+                continue
             parsed = parse_evm_sheet(sheet.name, sheet.rows(), name)
             if parsed:
                 return parsed
@@ -222,3 +224,17 @@ def test_excel_notes_column_with_numbers_does_not_affect_amounts_or_name():
     assert parsed is not None and len(parsed.rows) == 1
     row = parsed.rows[0]
     assert row.project_name == "پروژه اول" and row.ac == Decimal(50_000_000) and row.spi == Decimal("0.80")
+
+
+@pytest.mark.skipif(not (SAMPLES / "ابادگران هفته دوم.xlsx").exists(), reason="sample not present")
+def test_excel_in_million_rial_is_read_by_header_columns_and_scaled():
+    parsed = _evm_of("ابادگران هفته دوم.xlsx")
+    first = parsed.rows[0]
+    assert parsed.basis == "actual" and len([r for r in parsed.rows if not r.is_total]) == 11 and parsed.rows[-1].is_total
+    # figures with decimals (million rial) are amounts too; the sheet is ×1,000,000 because everything in it is below 100 million
+    assert (first.pv, first.ev, first.ev_net, first.ac, first.cpi, first.spi) == (
+        Decimal(40_000_000_000), Decimal(43_217_510_000), Decimal(33_277_480_000), Decimal(34_000_000_000), Decimal("0.98"), Decimal("1.08"))
+    assert first.contract_amount == Decimal(2_500_000_000_000)
+    assert {"code": "million_rial_scaled", "row": parsed.header_row} in parsed.warnings
+    second = parsed.rows[1]
+    assert second.ev == Decimal(16_027_810_000) and second.pv == Decimal(25_000_000_000)  # row 2 lost its EV before
