@@ -94,7 +94,8 @@ function groupByProject(rows: ResultRow[], extraRows: ResultRow[] = []): Scoreca
       if (!g.companyName && row.company) g.companyName = row.company;
     }
   }
-  return Array.from(groups.values()).sort((a, b) => a.name.localeCompare(b.name, "fa"));
+  // grouped by company (the order of the company scorecard), then by project name: one company's projects, then the next company's
+  return Array.from(groups.values()).sort((a, b) => (a.companyName ?? "").localeCompare(b.companyName ?? "", "fa") || a.name.localeCompare(b.name, "fa"));
 }
 
 interface SlideSpec { key: string; render: (page: string) => ReactNode }
@@ -105,7 +106,6 @@ function Slide({
   titleAside,
   headerRight,
   page,
-  period,
   children,
 }: {
   title: string;
@@ -137,8 +137,7 @@ function Slide({
           </div>
         </div>
         <div className="flex min-h-0 flex-1 flex-col">{children}</div>
-        <div className="mt-2.5 flex shrink-0 items-center justify-between text-[13px] text-slate-400">
-          <span>جهاد نصر کرمان · {period}</span>
+        <div className="mt-2.5 flex shrink-0 items-center justify-end text-[13px] text-slate-400">
           <span className="tabular-nums">{page}</span>
         </div>
       </div>

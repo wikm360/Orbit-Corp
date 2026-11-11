@@ -2,7 +2,7 @@
 
 import { formatBillionRial, formatRatio } from "../lib/format";
 import { toFa } from "../lib/jalali";
-import type { EvmCompany, EvmFigures, EvmIncome } from "../types";
+import type { EvmCompany, EvmFigures } from "../types";
 
 /** Per-company page of the management presentation, built on the company TOTAL only (so the layout never depends on how many
  *  projects the company has): figure tiles, SPI / CPI dials, PV · EV · ev · AC columns, an SPI×CPI map where every project is
@@ -54,109 +54,6 @@ function Card({ title, note, children, className = "" }: { title: string; note?:
   );
 }
 
-// ---- income → profit waterfall ------------------------------------------------------------------------------------
-
-interface Step { label: string; value: number; kind: "up" | "down" | "total" }
-
-const big = (v: string | null): number | null => num(v);
-
-/** statement → coefficients → price adjustment = total income → share deduction → overhead → cost = profit.
- *  EV / ev / AC come from the EVM total, the rest from the income sheets; a step whose figure is missing is left out. */
-function buildSteps(income: EvmIncome | null, t: EvmFigures): Step[] | null {
-  const total = big(income?.income_total ?? null);
-  const ev = big(t.ev), evNet = big(t.ev_net), ac = big(t.ac);
-  if (total === null || ev === null || evNet === null || ac === null) return null;
-  const adj = big(income?.adjustment ?? null) ?? 0;
-  const base = big(income?.statement_base ?? null);
-  const steps: Step[] = [];
-  if (base !== null) {
-    steps.push({ label: "صورت‌وضعیت پایه", value: base, kind: "up" });
-    steps.push({ label: "اعمال ضرایب", value: total - adj - base, kind: "up" });
-  } else {
-    steps.push({ label: "صورت‌وضعیت", value: total - adj, kind: "up" });
-  }
-  steps.push({ label: "تعدیل", value: adj, kind: "up" });
-  steps.push({ label: "درآمد کل", value: total, kind: "total" });
-  steps.push({ label: "سهم جهاد نصر", value: -(total - ev), kind: "down" });
-  steps.push({ label: "بالاسری", value: -(ev - evNet), kind: "down" });
-  steps.push({ label: "هزینه‌ی واقعی", value: -ac, kind: "down" });
-  steps.push({ label: evNet - ac >= 0 ? "سود پروژه‌ها" : "زیان پروژه‌ها", value: evNet - ac, kind: "total" });
-  return steps;
-}
-
-const fmtB = (v: number): string => formatBillionRial(Math.round(v).toString());
-
-function Waterfall({ steps }: { steps: Step[] }) {
-  const W = 1000, H = 250, top = 34, base = 196;
-  const slot = W / steps.length, bw = Math.min(84, slot - 22);
-  // running level before each step; totals restart from zero
-  const bars: { s: Step; lo: number; hi: number }[] = [];
-  let level = 0;
-  for (const s of steps) {
-    const from = s.kind === "total" ? 0 : level;
-    level = s.kind === "total" ? s.value : level + s.value;
-    bars.push({ s, lo: Math.min(from, level), hi: Math.max(from, level) });
-  }
-  const max = Math.max(1, ...bars.map((b) => b.hi));
-  const min = Math.min(0, ...bars.map((b) => b.lo));
-  const y = (v: number) => base - ((v - min) / (max - min || 1)) * (base - top);
-  const color = (s: Step) => (s.kind === "total" ? (s.value >= 0 ? NAVY : BAD) : s.kind === "up" ? "#8d91b8" : GOLD);
-  return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="min-h-0 w-full flex-1" style={{ direction: "ltr" }} role="img" aria-label="مسیر درآمد تا سود">
-      <line x1={8} x2={W - 8} y1={y(0)} y2={y(0)} stroke="#cfcbbf" strokeWidth={1.5} />
-      {bars.map((b, i) => {
-        const x = slot * (steps.length - 1 - i) + (slot - bw) / 2; // right-to-left, like the deck
-        const h = Math.max(3, y(b.lo) - y(b.hi));
-        const next = bars[i + 1];
-        const endLevel = b.s.kind === "total" ? b.s.value : b.s.value >= 0 ? b.hi : b.lo;
-        return (
-          <g key={`${b.s.label}-${i}`}>
-            <rect x={x} y={y(b.hi)} width={bw} height={h} rx={6} fill={color(b.s)} />
-            {next && <line x1={x} x2={x - (slot - bw)} y1={y(endLevel)} y2={y(endLevel)} stroke="#b8b4a6" strokeDasharray="3 3" />}
-            <text x={x + bw / 2} y={y(b.hi) - 8} textAnchor="middle" fontSize={19} fontWeight={800} fill={b.s.kind === "total" && b.s.value < 0 ? BAD : NAVY}>
-              {b.s.kind === "down" ? "−" : b.s.kind === "up" && i > 0 ? "+" : ""}{fmtB(Math.abs(b.s.value))}
-            </text>
-            <text x={x + bw / 2} y={base + 26} textAnchor="middle" fontSize={15} fontWeight={800} fill={NAVY}>{b.s.label}</text>
-          </g>
-        );
-      })}
-    </svg>
-  );
-}
-
-function Fact({ label, value, hint, accent }: { label: string; value: string; hint: string; accent?: string }) {
-  return (
-    <div className="border-b border-slate-100 py-1.5 last:border-b-0">
-      <div className="flex items-baseline justify-between gap-3">
-        <span className="text-[14px] font-bold text-slate-600">{label}</span>
-        <span className="text-[25px] font-black leading-none tabular-nums" style={{ color: accent ?? NAVY }} dir="ltr">{value}</span>
-      </div>
-      <p className="mt-0.5 text-[11.5px] text-slate-400">{hint}</p>
-    </div>
-  );
-}
-
-const pct = (part: number | null, whole: number | null): string | null =>
-  part === null || whole === null || whole <= 0 ? null : `${toFa(((part / whole) * 100).toFixed(1).replace(".", "٫"))}٪`;
-
-function Facts({ income, t }: { income: EvmIncome | null; t: EvmFigures }) {
-  const total = big(income?.income_total ?? null), adj = big(income?.adjustment ?? null);
-  const evNet = big(t.ev_net), ac = big(t.ac), ev = big(t.ev);
-  const profit = evNet !== null && ac !== null ? evNet - ac : null;
-  const margin = pct(profit, evNet);
-  const adjShare = pct(adj, total);
-  const share = total !== null && ev !== null && total > 0 ? pct(total - ev, total) : null;
-  const cumulative = income?.cumulative ?? null;
-  return (
-    <div className="flex min-h-0 flex-1 flex-col justify-around">
-      <Fact label="حاشیه‌ی سود" value={margin ?? "—"} hint={profit === null ? "داده‌ی کافی نیست" : `${signedBillion(Math.round(profit).toString())} میلیارد ریال · سود ÷ کارکرد بدون بالاسری`} accent={profit !== null && profit < 0 ? BAD : GOOD} />
-      <Fact label="سهم تعدیل در درآمد" value={adjShare ?? "—"} hint="تعدیل ÷ درآمد کل پروژه‌ها" accent={GOLD_DARK} />
-      {share && <Fact label="سهم جهاد نصر از درآمد" value={share} hint="کسر پیش از محاسبه‌ی EV" />}
-      {cumulative && <Fact label="درآمد تجمعی از آغاز" value={formatBillionRial(cumulative)} hint="میلیارد ریال · صورت‌وضعیت‌های تجمعی" />}
-    </div>
-  );
-}
-
 // ---- dials --------------------------------------------------------------------------------------------------------
 
 const DIAL_MAX = 2;
@@ -202,7 +99,7 @@ function Columns({ t }: { t: EvmFigures }) {
     { label: "AC", sub: "هزینه‌ی واقعی", value: t.ac, color: GOLD },
   ];
   const max = Math.max(1, ...series.map((s) => num(s.value) ?? 0));
-  const W = 560, H = 330, base = 262, top = 44, slot = W / series.length, bw = 84;
+  const W = 560, H = 520, base = 440, top = 50, slot = W / series.length, bw = 84;
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="min-h-0 w-full flex-1" style={{ direction: "ltr" }} role="img" aria-label="PV EV ev AC">
       {[0.25, 0.5, 0.75, 1].map((g) => <line key={g} x1={10} x2={W - 10} y1={base - (base - top) * g} y2={base - (base - top) * g} stroke="#efede6" strokeWidth={1} />)}
@@ -227,7 +124,7 @@ function Columns({ t }: { t: EvmFigures }) {
 // ---- SPI × CPI map ------------------------------------------------------------------------------------------------
 
 function RatioMap({ company }: { company: EvmCompany }) {
-  const W = 560, H = 330, L = 52, R = 14, T = 12, B = 42;
+  const W = 560, H = 520, L = 52, R = 14, T = 12, B = 44;
   const MAX = 2;
   const x = (v: number) => L + (Math.min(Math.max(v, 0), MAX) / MAX) * (W - L - R);
   const y = (v: number) => H - B - (Math.min(Math.max(v, 0), MAX) / MAX) * (H - T - B);
@@ -308,27 +205,11 @@ export function CompanyProfileBody({ evm }: { evm: EvmCompany | null }) {
   const read = verdict(num(t.spi), num(t.cpi));
   const sv = diffRial(t.ev, t.pv);
   const cv = diffRial(t.ev_net, t.ac);
-  const planned = evm.projects.filter((p) => p.pv_source && p.pv_source !== "file");
-  const pvNote = planned.length
-    ? `PV ${planned.length === evm.projects.length ? "همه‌ی پروژه‌ها" : `${toFa(planned.length)} از ${toFa(evm.projects.length)} پروژه`} از ${[...new Set(planned.map((p) => p.pv_source_label))].join(" و ")}`
-    : null;
-  const steps = buildSteps(evm.income, t);
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
-      {steps && (
-        <div className="grid shrink-0 gap-4" style={{ gridTemplateColumns: "1fr 400px", height: 308 }}>
-          <Card title="مسیر درآمد تا سود" note="میلیارد ریال · جمع پروژه‌های شرکت">
-            <Waterfall steps={steps} />
-          </Card>
-          <Card title="شاخص‌های مالی">
-            <Facts income={evm.income} t={t} />
-          </Card>
-        </div>
-      )}
-
-      <div className="grid min-h-0 flex-1 gap-4" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
+      <div className="grid min-h-0 flex-1 gap-4" style={{ gridTemplateColumns: "340px 1fr 1fr" }}>
         <Card title="شاخص‌های عملکرد">
-          <div className="flex min-h-0 flex-1 items-center gap-2">
+          <div className="flex min-h-0 flex-1 flex-col justify-evenly">
             <Dial label="SPI" caption="برنامه زمانی · EV ÷ PV" value={t.spi} />
             <Dial label="CPI" caption="هزینه · ev ÷ AC" value={t.cpi} />
           </div>
@@ -345,7 +226,6 @@ export function CompanyProfileBody({ evm }: { evm: EvmCompany | null }) {
         <div className="min-w-0 flex-1">
           <p className="text-[21px] font-black" style={{ color: read?.color ?? NAVY }}>{read?.title ?? "خوانش مدیریتی"}</p>
           <p className="mt-0.5 text-[14px] leading-relaxed text-slate-600">{read?.text ?? "داده‌ی کافی برای ارزیابی در فایل ثبت نشده است."}</p>
-          {pvNote && <p className="mt-1 text-[12.5px] font-semibold" style={{ color: GOLD_DARK }}>{pvNote}</p>}
         </div>
         <div className="flex shrink-0 divide-x divide-slate-200 divide-x-reverse">
           <Deviation label="انحراف زمانی (EV − PV)" value={sv} />
