@@ -130,3 +130,78 @@ def test_weekly_pdf_reads_actual_page_and_forecast_page_separately():
         "قالب بندی": (Decimal("205"), "m2"), "بتن ریزی": (Decimal("137"), "m3"),
     }
     assert qty(result.sheets[1])["عملیات خاکبرداری"] == (Decimal("3500"), "m3") and qty(result.sheets[1])["بتن ریزی"] == (Decimal("150"), "m3")
+
+
+def test_to_logical_rtl_preserves_mixed_ltr_codes_and_brackets():
+    from app.features.volume_report.extraction.pdf_extractor import _to_logical_rtl
+
+    assert _to_logical_rtl("(لﺎﯾر)") == "(ریال)"
+    assert _to_logical_rtl("ﺮﺘﻣ 10 ﺎﺗ C16 5 ﻦﺘﺑ") == "بتن C16 5 تا 10 متر"
+    assert _to_logical_rtl("ﯽﻠﺻا ﯽﺳﺮﺘﺳد هدﺎﺟ- 1 عﻮﻧ ﻦﯿﻣز") == "زمین نوع 1 -جاده دسترسی اصلی"
+
+
+def test_wrapped_units_and_equipment_count_header_parse():
+    from app.features.volume_report.extraction.income_parser import parse_income_sheet
+    from app.features.volume_report.extraction.pdf_extractor import _attach_wrapped_units
+
+    body = [
+        [None, "مترمکعب-", None, None],
+        ["حمل خاک به دپو", None, "4,092", None],
+        [None, "کیلومتر", None, None],
+    ]
+    ys = [227.5, 222.7, 218.4]
+    rows_out, ys_out = _attach_wrapped_units(body, ys, qty_idx=2, unit_idx=1, desc_idx=0)
+    assert len(rows_out) == 1 and len(ys_out) == 1
+    assert rows_out[0] == ["حمل خاک به دپو", "مترمکعب- کیلومتر", "4,092", None]
+
+    rental_rows = [
+        ["شرکت نمونه"],
+        ["اجاره دستگاه در معدن 1"],
+        ["فعالیت", "تعداد دستگاه", "واحد"],
+        ["اجاره دستگاه بیل", "3", "عدد"],
+    ]
+    parsed = parse_income_sheet("درآمد اجاره دستگاه", rental_rows, Lexicon([]))
+    assert parsed.status == "ok"
+    assert len(parsed.lines) == 1
+    assert parsed.lines[0].quantity == Decimal("3")
+    assert parsed.lines[0].unit_norm == "ea" and parsed.lines[0].unit_dim == "nonphysical"
+
+
+_GOLOMAK_SECOND_ABAN = (
+    Path(__file__).resolve().parents[4] / "eval" / "volume_report" / "second-aban" / "EVm گلومک سازه از 11 تا 17 آبان.pdf"
+)
+
+
+@pytest.mark.skipif(not _GOLOMAK_SECOND_ABAN.exists(), reason="eval PDF not available")
+def test_foxit_golomak_pdf_extracts_evm_and_all_income_pages():
+    result = extract_file(str(_GOLOMAK_SECOND_ABAN), Lexicon.from_seed())
+    assert result.warnings == []
+    assert [s for s in result.sheet_log if s.get("layout_unknown")] == []
+    assert len(result.evm_sheets) == 1 and len(result.evm_sheets[0].rows) == 8
+    assert len(result.sheets) == 6
+
+    by_page = {s.sheet_name: s for s in result.sheets}
+    p2 = by_page["درآمد احداث قطعه (صفحه 2)"]
+    assert p2.status == "ok" and len(p2.lines) == 18
+    assert [(ln.quantity, ln.unit_norm) for ln in p2.lines[-3:]] == [
+        (Decimal("108"), "m3km"),
+        (Decimal("4092"), "m3km"),
+        (Decimal("432"), "m3km"),
+    ]
+    assert by_page["درآمد بارگیری دستگاه بیل HEC (صفحه 4)"].lines[0].quantity == Decimal("42000")
+    assert by_page["درآمد بارگیری و حمل کلوخه سنگ آهن معدن سنگان (صفحه 6)"].status == "ok"
+    assert by_page["درآمد بارگیری و حمل کلوخه سنگ آهن معدن سنگان (صفحه 6)"].lines == []
+    assert by_page["درآمد عملیات اجرایی احداث سد مخزنی آخران (صفحه 8)"].lines[0].quantity == Decimal("1000")
+    p10 = by_page["درآمد اجاره دستگاه  معدن (صفحه 10)"]
+    assert [(ln.quantity, ln.unit_norm) for ln in p10.lines] == [
+        (Decimal("3"), "ea"),
+        (Decimal("1"), "ea"),
+        (Decimal("2"), "ea"),
+    ]
+    p12 = by_page["درآمد معدن دولومیت (صفحه 12)"]
+    assert [(ln.description_raw, ln.quantity, ln.unit_norm) for ln in p12.lines] == [
+        ("شاتکریت لایه اول با بتن 300 کیلو سیمان به ازای هر سانت ضخامت", Decimal("270"), "m2"),
+        ("بوته کنی در زمین های پوشیده شده از بوته", Decimal("10000"), "m2"),
+        ("کانال کنی", Decimal("600"), "m3"),
+        ("بارگیری و تخلیه", Decimal("2000"), "m3"),
+    ]

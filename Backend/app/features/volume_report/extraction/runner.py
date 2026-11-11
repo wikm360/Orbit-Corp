@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.features.volume_report.extraction.evm_parser import ParsedEvm, parse_evm_sheet
+from app.features.volume_report.extraction.income_totals import IncomeTotals, detect_basis, parse_income_totals
 
 from app.features.volume_report.extraction.income_parser import ParsedSheet, parse_income_sheet
 from app.features.volume_report.extraction.normalize import Lexicon
@@ -17,6 +18,7 @@ class FileExtraction:
     sheet_log: list[dict[str, Any]] = field(default_factory=list)
     sheets: list[ParsedSheet] = field(default_factory=list)
     evm_sheets: list[ParsedEvm] = field(default_factory=list)
+    income_totals: list[tuple[str, str, IncomeTotals]] = field(default_factory=list)  # (sheet, basis, totals)
     suggested_company: str | None = None
     warnings: list[dict[str, Any]] = field(default_factory=list)
 
@@ -65,6 +67,10 @@ def extract_file(
                     "basis": evm.basis, "evm_rows": len(evm.rows), "header_row": evm.header_row,
                 })
                 continue
+            if not sheet.is_hidden:
+                totals = parse_income_totals(sheet.rows())
+                if totals is not None:
+                    result.income_totals.append((sheet.name, detect_basis(sheet.name, sheet.rows(), os.path.basename(path)), totals))
             parsed = parse_income_sheet(
                 sheet.name, sheet.rows(), lexicon, period_label, (layout_overrides or {}).get(sheet.name),
                 "planned" if probe.kind == "planned" else "actual",

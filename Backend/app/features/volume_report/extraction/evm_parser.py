@@ -129,6 +129,8 @@ def _ratio(numerator: Decimal | None, denominator: Decimal | None) -> Decimal | 
 
 def _assign(row: EvmRowData, amounts: list[Decimal], printed_cpi: Decimal | None) -> bool:
     """Roles by the number of amounts (after the contract amount). False when the shape is not understood."""
+    if len(amounts) > 5:
+        amounts = amounts[-5:]  # Excel adds a leading "متوسط کارکرد ماهیانه" amount column before M / PV / EV / ev / AC
     n = len(amounts)
     if n == 5:
         row.bcws, row.pv, row.ev, row.ev_net, row.ac = amounts

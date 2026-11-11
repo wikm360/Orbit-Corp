@@ -1,6 +1,7 @@
 /** Pure logic of the question cards: ordering, validation, building the answer payload. */
 
-import type { AnswerPayload, Question, QuestionOption, RememberScope, ReviewGroup } from "../types";
+import { toFa } from "./jalali";
+import type { AnswerPayload, Question, QuestionOption, RememberScope, ReviewGroup, SourceLocation } from "../types";
 
 export const FIXED_OPTION_KEYS = ["exclude", "unknown", "other"] as const;
 
@@ -70,6 +71,70 @@ export const showsRemember = (question: Question): boolean =>
 
 export function groupsForQuestion(question: Question, groups: Map<string, ReviewGroup>): ReviewGroup[] {
   return question.group_keys.map((key) => groups.get(key)).filter((g): g is ReviewGroup => Boolean(g));
+}
+
+function mergeSourceLocations(items: SourceLocation[]): SourceLocation[] {
+  const buckets = new Map<string, { loc: SourceLocation; rows: Set<number> }>();
+  for (const item of items) {
+    const key = [item.filename, item.company ?? "", item.site ?? "", item.sheet ?? "", item.section ?? ""].join("\u0000");
+    let bucket = buckets.get(key);
+    if (!bucket) {
+      bucket = {
+        loc: {
+          filename: item.filename,
+          company: item.company ?? null,
+          site: item.site ?? null,
+          sheet: item.sheet ?? null,
+          section: item.section ?? null,
+          row_nos: [],
+          n_lines: 0,
+        },
+        rows: new Set<number>(),
+      };
+      buckets.set(key, bucket);
+    }
+    bucket.loc.n_lines = (bucket.loc.n_lines ?? 0) + (item.n_lines ?? 0);
+    for (const r of item.row_nos ?? []) bucket.rows.add(r);
+  }
+  return Array.from(buckets.values()).map(({ loc, rows }) => ({
+    ...loc,
+    row_nos: Array.from(rows).sort((a, b) => a - b).slice(0, 8),
+  }));
+}
+
+/** Resolves unique file/sheet/section/row provenance for a question, with fallbacks to its matched groups or layout spec. */
+export function locationsForQuestion(question: Question, groups: ReviewGroup[]): SourceLocation[] {
+  if (question.locations && question.locations.length > 0) return mergeSourceLocations(question.locations);
+  const fromGroups = mergeSourceLocations(groups.flatMap((g) => g.locations ?? []));
+  if (fromGroups.length > 0) return fromGroups;
+  if (question.spec.system === "layout" && question.spec.sheet) {
+    return [{ filename: "", sheet: question.spec.sheet }];
+  }
+  return [];
+}
+
+export function isPdfFilename(filename: string | null | undefined): boolean {
+  return Boolean(filename && filename.trim().toLowerCase().endsWith(".pdf"));
+}
+
+export function formatRowNumbersLabel(rowNos?: number[], totalLines?: number): string | null {
+  const rows = (rowNos ?? []).filter((n) => Number.isFinite(n));
+  const total = totalLines ?? 0;
+  if (rows.length === 0) {
+    return total > 0 ? `${toFa(total)} ردیف` : null;
+  }
+  const base = rows.length === 1 ? `ردیف ${toFa(rows[0]!)}` : `ردیف‌های ${rows.map((r) => toFa(r)).join("، ")}`;
+  return total > rows.length ? `${base} و ${toFa(total - rows.length)} ردیف دیگر` : base;
+}
+
+export function formatSourceLocationText(loc: SourceLocation): string {
+  const parts: string[] = [];
+  if (loc.filename) parts.push(`فایل ${loc.filename}`);
+  if (loc.sheet) parts.push(`${isPdfFilename(loc.filename) ? "صفحه" : "شیت"} ${loc.sheet}`);
+  if (loc.section) parts.push(`بخش ${loc.section}`);
+  const rowsText = formatRowNumbersLabel(loc.row_nos, loc.n_lines);
+  if (rowsText) parts.push(rowsText);
+  return parts.join(" · ");
 }
 
 export const openCount = (questions: Question[]) => questions.filter((q) => q.status === "open").length;

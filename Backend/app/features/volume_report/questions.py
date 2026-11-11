@@ -67,9 +67,59 @@ class AnswerRequest(BaseModel):
     remember_scope: Literal["global", "line"] = "global"
 
 
-def _read(q: Question) -> dict:
-    return {"id": q.id, "kind": q.kind.value, "spec": q.spec, "group_keys": q.group_keys, "impact_score": q.impact_score,
-            "status": q.status.value, "answer": q.answer, "answered_at": q.answered_at, "created_at": q.created_at}
+def _read(q: Question, locations: list[dict] | None = None) -> dict:
+    return {
+        "id": q.id, "kind": q.kind.value, "spec": q.spec, "group_keys": q.group_keys, "impact_score": q.impact_score,
+        "status": q.status.value, "answer": q.answer, "answered_at": q.answered_at, "created_at": q.created_at,
+        "locations": locations if locations is not None else [],
+    }
+
+
+async def _enrich_questions(db: AsyncSession, report: Report, qs: list[Question]) -> list[dict]:
+    """Attaches source file/sheet/section/row provenance so reviewers know where each item or parameter came from."""
+    if not qs:
+        return []
+    line_rows = await service._report_lines_with_sources(db, report.id)
+    file_names = await service._report_file_names(db, report.id)
+    by_group: dict[str, list[tuple]] = {}
+    by_site: dict[str, list[tuple]] = {}
+    for line, site, filename, company_name in line_rows:
+        coord = (filename, company_name, site.name, line.sheet_name, line.section_heading, line.row_no)
+        by_group.setdefault(line.group_key, []).append(coord)
+        by_site.setdefault(str(site.id), []).append(coord)
+
+    out: list[dict] = []
+    for q in qs:
+        spec = q.spec or {}
+        if q.group_keys:
+            raw: list[tuple] = []
+            for gk in q.group_keys:
+                raw.extend(by_group.get(gk, []))
+            if not raw and spec.get("site_id"):
+                raw = by_site.get(str(spec["site_id"]), [])
+            locs = service.summarize_locations(raw)
+        elif spec.get("system") == "site_kind" and spec.get("site_id"):
+            locs = service.summarize_locations(by_site.get(str(spec["site_id"]), []))
+        elif spec.get("system") == "layout":
+            file_id = str(spec.get("file_id") or "")
+            file_info = file_names.get(file_id)
+            sheet = spec.get("sheet")
+            if file_info or sheet:
+                locs = [{
+                    "filename": file_info[0] if file_info else "",
+                    "company": file_info[1] if file_info else None,
+                    "site": None,
+                    "sheet": sheet,
+                    "section": None,
+                    "row_nos": [],
+                    "n_lines": 0,
+                }]
+            else:
+                locs = []
+        else:
+            locs = []
+        out.append(_read(q, locs))
+    return out
 
 
 async def create_from_spec(db: AsyncSession, report: Report, index: GroupIndex, raw: dict, run_id: uuid.UUID | None) -> Question:
@@ -140,7 +190,8 @@ async def list_questions(db: AsyncSession, report: Report, status: str | None) -
     query = select(Question).where(Question.report_id == report.id).order_by(Question.impact_score.desc(), Question.created_at)
     if status:
         query = query.where(Question.status == QuestionStatus(status))
-    return [_read(q) for q in (await db.execute(query)).scalars()]
+    rows = (await db.execute(query)).scalars().all()
+    return await _enrich_questions(db, report, rows)
 
 
 async def _get_open(db: AsyncSession, report: Report, question_id: uuid.UUID) -> Question:

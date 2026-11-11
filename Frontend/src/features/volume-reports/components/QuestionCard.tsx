@@ -8,7 +8,8 @@ import { cn } from "@/shared/lib/utils";
 import { formatQuantityWithUnit } from "../lib/format";
 import { toFa } from "../lib/jalali";
 import {
-  allowedScopes, buildAnswer, emptyDraft, orderedOptions, showsRemember, validateDraft, type Draft,
+  allowedScopes, buildAnswer, emptyDraft, formatRowNumbersLabel, isPdfFilename, locationsForQuestion,
+  orderedOptions, showsRemember, validateDraft, type Draft,
 } from "../lib/questions";
 import { SITE_KIND_LABELS } from "../lib/status";
 import type { AnswerPayload, Question, RememberScope, ReviewGroup } from "../types";
@@ -32,6 +33,7 @@ export function QuestionCard({ question, groups, busy = false, onAnswer, onSkip 
   const error = touched ? validateDraft(question, draft) : null;
   const scopes = allowedScopes(question);
   const options = orderedOptions(spec.options ?? []);
+  const locations = locationsForQuestion(question, groups);
   const multiple = question.kind === "multi_choice";
   const choiceKind = ["choice", "multi_choice", "confirm_group"].includes(question.kind);
 
@@ -47,6 +49,48 @@ export function QuestionCard({ question, groups, busy = false, onAnswer, onSkip 
   return (
     <article aria-label="سؤال" className="rounded-2xl border border-amber-200 bg-white p-4 shadow-sm">
       <p className="text-sm font-medium leading-7 text-slate-900">{spec.prompt}</p>
+
+      {locations.length > 0 && (
+        <div
+          aria-label="منبع در فایل‌ها"
+          className="mt-2 rounded-xl border border-slate-200/80 bg-slate-50/90 px-3 py-2 text-xs text-slate-700"
+        >
+          <p className="mb-1 text-[11px] font-semibold text-slate-500">محل در فایل‌های گزارش:</p>
+          <ul className="space-y-1">
+            {locations.slice(0, 5).map((loc, idx) => {
+              const rowLabel = formatRowNumbersLabel(loc.row_nos, loc.n_lines);
+              return (
+                <li key={`${loc.filename}-${loc.sheet ?? ""}-${loc.section ?? ""}-${idx}`} className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                  {loc.filename && (
+                    <span className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-0.5 font-medium text-slate-800">
+                      <span className="text-slate-400">فایل:</span>
+                      <span dir="auto">{loc.filename}</span>
+                    </span>
+                  )}
+                  {loc.sheet && (
+                    <span className="text-slate-700">
+                      <span className="text-slate-400">{isPdfFilename(loc.filename) ? "صفحه:" : "شیت:"}</span>{" "}
+                      <span className="font-medium">{loc.sheet}</span>
+                    </span>
+                  )}
+                  {loc.section && (
+                    <span className="text-slate-600">
+                      <span className="text-slate-400">بخش:</span> {loc.section}
+                    </span>
+                  )}
+                  {loc.site && (
+                    <span className="text-slate-500">کارگاه {loc.site}</span>
+                  )}
+                  {rowLabel && (
+                    <span className="text-slate-500">{rowLabel}</span>
+                  )}
+                </li>
+              );
+            })}
+            {locations.length > 5 && <li className="text-slate-500">و {toFa(locations.length - 5)} محل دیگر</li>}
+          </ul>
+        </div>
+      )}
 
       {groups.length > 0 && (
         <ul className="mt-2 space-y-1 rounded-xl bg-slate-50 p-3 text-xs text-slate-700" aria-label="ردیف‌های مربوط">

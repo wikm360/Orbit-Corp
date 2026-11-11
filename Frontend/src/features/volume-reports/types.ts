@@ -46,11 +46,17 @@ export interface ProgressResponse { status: ReportStatus; progress: Progress; er
 
 export interface SheetLogEntry {
   sheet: string; visibility: string; kind: string; used: boolean; reason: string | null;
-  site_name?: string; rows_total?: number; rows_nonzero?: number; rows_nonphysical?: number; header_row?: number | null;
+  site_name?: string; rows_total?: number; rows_nonzero?: number; rows_nonphysical?: number; evm_rows?: number; header_row?: number | null;
   layout_unknown?: boolean; basis?: "actual" | "planned";
 }
 export interface SourceWarning { code: string; sheet?: string; row?: number; found?: string[]; expected?: string[]; rows?: number }
-export interface SourceInfo { id: string; filename: string; status: string; error_message: string | null; suggested_company: string | null; sheet_log: SheetLogEntry[]; warnings: SourceWarning[] }
+/** What the run managed to read from one file, per basis (actual = this period, planned = forecast for the next). */
+export interface SourceReads {
+  income: { actual: number; planned: number };
+  income_totals: { actual: number; planned: number };
+  evm: { actual: { projects: number; has_total: boolean }; planned: { projects: number; has_total: boolean } };
+}
+export interface SourceInfo { reads?: SourceReads; id: string; filename: string; status: string; error_message: string | null; suggested_company: string | null; sheet_log: SheetLogEntry[]; warnings: SourceWarning[] }
 
 export type ResultScope = "holding" | "company" | "site";
 export interface ResultRow {
@@ -81,10 +87,19 @@ export interface CatalogItem {
 }
 
 export type Role = "supply" | "execute" | "combined" | "na";
+export interface SourceLocation {
+  filename: string;
+  company?: string | null;
+  site?: string | null;
+  sheet?: string | null;
+  section?: string | null;
+  row_nos?: number[];
+  n_lines?: number;
+}
 export interface ReviewGroup {
   group_key: string; description: string; unit: string; site_kind: SiteKind; n_lines: number; section_headings: string[]; tokens: string[];
   total_quantity: string; planned_quantity?: string; disposition: string | null; item_key: string | null; role: Role | null; exclude_reason: string | null;
-  source: string | null; confirmed: boolean; reason: string | null; confidence: number | null;
+  source: string | null; confirmed: boolean; reason: string | null; confidence: number | null; locations?: SourceLocation[];
 }
 export interface ConfirmItem {
   group_key: string; item_key?: string | null; exclude_reason?: string | null; disposition?: "unmatched" | "nonphysical" | null;
@@ -105,7 +120,7 @@ export interface QuestionSpec {
 }
 export interface Question {
   id: string; kind: QuestionKind; spec: QuestionSpec; group_keys: string[]; impact_score: number; status: QuestionStatus;
-  answer: AnswerPayload | null; answered_at: string | null; created_at: string;
+  answer: AnswerPayload | null; answered_at: string | null; created_at: string; locations?: SourceLocation[];
 }
 export interface AnswerPayload { choice_keys: string[]; number?: number | null; text?: string | null; remember_scope: RememberScope }
 
@@ -148,8 +163,12 @@ export interface EvmFigures {
 }
 export interface EvmProject extends EvmFigures { project: string | null; filename: string }
 export interface EvmTotal extends EvmFigures { projects: number }
+/** Sum of the income sheets' totals blocks; a field is null unless every sheet printed it. */
+export interface EvmIncome {
+  sheets: number; statement_base: string | null; statement_coef: string | null; adjustment: string | null; income_total: string | null; cumulative: string | null;
+}
 export interface EvmCompany {
-  company_id: string; company: string; projects: EvmProject[]; total: EvmTotal;
+  company_id: string; company: string; projects: EvmProject[]; total: EvmTotal; income: EvmIncome | null;
   /** The "جمع" row the file itself printed (only when exactly one file of the company has it). */
   reported_total: (EvmFigures & { projects: number; project: string | null }) | null;
 }

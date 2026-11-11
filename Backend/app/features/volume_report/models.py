@@ -291,6 +291,24 @@ class EvmRow(Base):
     created_at: Mapped[datetime] = _now()
 
 
+class IncomeTotal(Base):
+    """The totals block of one income sheet (one project): statement before/after the coefficients, price adjustment, total
+    income and the cumulative statement. Rial. A value the sheet does not print is NULL."""
+
+    __tablename__ = "vr_income_totals"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    report_file_id: Mapped[uuid.UUID] = _fk("vr_report_files", "CASCADE", index=True)
+    sheet_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    basis: Mapped[str] = mapped_column(String(10), nullable=False, default="actual", server_default="actual")
+    statement_base: Mapped[Decimal | None] = mapped_column(Numeric(24, 2), nullable=True)
+    statement_coef: Mapped[Decimal | None] = mapped_column(Numeric(24, 2), nullable=True)
+    adjustment: Mapped[Decimal | None] = mapped_column(Numeric(24, 2), nullable=True)
+    income_total: Mapped[Decimal | None] = mapped_column(Numeric(24, 2), nullable=True)
+    cumulative: Mapped[Decimal | None] = mapped_column(Numeric(24, 2), nullable=True)
+    created_at: Mapped[datetime] = _now()
+
+
 class Item(Base):
     """Catalog entry (one of the reported activities). Editable: adding an item needs no code change."""
 

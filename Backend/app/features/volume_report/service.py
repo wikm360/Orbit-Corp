@@ -20,7 +20,7 @@ from app.features.projects.models import Project
 from app.features.volume_report import compute, memory
 from app.features.volume_report.extraction.normalize import Lexicon, LexiconEntry as LexEntry, normalize_text
 from app.features.volume_report.models import (
-    Classification, ClassificationSource, Company, Conversion, Decision, EvmRow, ItemRule, DecisionSource, Disposition, Effect,
+    Classification, ClassificationSource, Company, Conversion, Decision, EvmRow, IncomeTotal, ItemRule, DecisionSource, Disposition, Effect,
     Dimension, ExcludeReason, Item, Line, LexiconKind, LineResult, Question, QuestionStatus, Report, ReportFile, ReportStatus, Result,
     ResultScope, Role, Site, SiteKind, Snapshot, LexiconEntry,
 )
@@ -204,6 +204,68 @@ async def _report_lines(db: AsyncSession, report_id: uuid.UUID) -> list[tuple[Li
     return [(line, site) for line, site in rows.all()]
 
 
+MAX_GROUP_LOCATIONS = 25
+MAX_LOCATION_ROWS = 8
+
+
+async def _report_lines_with_sources(db: AsyncSession, report_id: uuid.UUID) -> list[tuple[Line, Site, str, str]]:
+    rows = await db.execute(
+        select(Line, Site, ReportFile.filename, Company.name)
+        .join(ReportFile, ReportFile.id == Line.report_file_id)
+        .join(Site, Site.id == Line.site_id)
+        .join(Company, Company.id == ReportFile.company_id)
+        .where(ReportFile.report_id == report_id)
+        .order_by(ReportFile.created_at, Line.sheet_name, Line.row_no)
+    )
+    return [(line, site, filename, company_name) for line, site, filename, company_name in rows.all()]
+
+
+async def _report_file_names(db: AsyncSession, report_id: uuid.UUID) -> dict[str, tuple[str, str]]:
+    rows = await db.execute(
+        select(ReportFile.id, ReportFile.filename, Company.name)
+        .join(Company, Company.id == ReportFile.company_id)
+        .where(ReportFile.report_id == report_id)
+    )
+    return {str(rf_id): (filename, company_name) for rf_id, filename, company_name in rows.all()}
+
+
+def summarize_locations(
+    records: list[tuple[str, str | None, str | None, str | None, str | None, int | None]],
+    *,
+    max_locations: int = MAX_GROUP_LOCATIONS,
+    max_rows: int = MAX_LOCATION_ROWS,
+) -> list[dict]:
+    """Deduplicates line coordinates by (filename, company, site, sheet, section) with sample row numbers."""
+    buckets: dict[tuple[str, str | None, str | None, str | None, str | None], dict] = {}
+    for filename, company, site, sheet, section, row_no in records:
+        key = (filename, company, site, sheet, section)
+        entry = buckets.get(key)
+        if entry is None:
+            if len(buckets) >= max_locations:
+                continue
+            entry = {
+                "filename": filename,
+                "company": company,
+                "site": site,
+                "sheet": sheet,
+                "section": section,
+                "row_nos": [],
+                "_rows_seen": set(),
+                "n_lines": 0,
+            }
+            buckets[key] = entry
+        entry["n_lines"] += 1
+        if row_no is not None and row_no not in entry["_rows_seen"]:
+            entry["_rows_seen"].add(row_no)
+            entry["row_nos"].append(row_no)
+    out = []
+    for entry in buckets.values():
+        entry.pop("_rows_seen")
+        entry["row_nos"] = sorted(entry["row_nos"])[:max_rows]
+        out.append(entry)
+    return out
+
+
 # ---- resolve / convert / aggregate -------------------------------------------------------------------------------
 
 async def recompute(db: AsyncSession, report: Report) -> list[dict]:
@@ -313,11 +375,12 @@ async def recompute_and_save(db: AsyncSession, report: Report) -> list[dict]:
 # ---- review ------------------------------------------------------------------------------------------------------
 
 async def list_groups(db: AsyncSession, report: Report, state: str) -> list[dict]:
-    pairs = await _report_lines(db, report.id)
+    pairs = await _report_lines_with_sources(db, report.id)
     classes = {c.group_key: c for c in (await db.execute(select(Classification).where(Classification.report_id == report.id))).scalars()}
     item_keys = {i.id: i.key for i in (await db.execute(select(Item))).scalars()}
     groups: dict[str, dict] = {}
-    for line, site in pairs:
+    raw_locs: dict[str, list[tuple[str, str | None, str | None, str | None, str | None, int | None]]] = {}
+    for line, site, filename, company_name in pairs:
         g = groups.setdefault(line.group_key, {
             "group_key": line.group_key, "description": line.description_raw, "unit": line.unit_norm,
             "site_kind": site.kind.value, "n_lines": 0, "section_headings": [], "tokens": line.tokens,
@@ -327,6 +390,9 @@ async def list_groups(db: AsyncSession, report: Report, state: str) -> list[dict
         g["planned_quantity" if line.basis == "planned" else "total_quantity"] += line.quantity
         if line.section_heading and line.section_heading not in g["section_headings"] and len(g["section_headings"]) < 3:
             g["section_headings"].append(line.section_heading)
+        raw_locs.setdefault(line.group_key, []).append(
+            (filename, company_name, site.name, line.sheet_name, line.section_heading, line.row_no)
+        )
     out = []
     for key, g in groups.items():
         c = classes.get(key)
@@ -336,6 +402,7 @@ async def list_groups(db: AsyncSession, report: Report, state: str) -> list[dict
             source=c.source.value if c else None, confirmed=c.confirmed if c else False, reason=c.reason if c else None,
             confidence=c.confidence if c else None,
             total_quantity=f"{g['total_quantity']:f}", planned_quantity=f"{g['planned_quantity']:f}",
+            locations=summarize_locations(raw_locs.get(key, [])),
         )
         if state == "all" or (state == "unconfirmed" and not g["confirmed"]) or (
             state == "needs_input" and g["disposition"] in (None, "needs_input")
@@ -544,6 +611,23 @@ def _evm_total(rows: list[EvmRow]) -> dict:
     return total
 
 
+def _sum_all(values: list[Decimal | None]) -> str | None:
+    """A sum is only honest when every sheet printed the figure; otherwise NULL (the UI then skips the step)."""
+    return _opt(sum(values, Decimal(0))) if values and all(v is not None for v in values) else None
+
+
+def _income_read(rows: list[IncomeTotal]) -> dict | None:
+    """Company-level sum of the income sheets' totals blocks (the chain statement -> coefficients -> adjustment -> total income)."""
+    if not rows:
+        return None
+    known = [r.cumulative for r in rows if r.cumulative is not None]
+    return {
+        "sheets": len(rows), "statement_base": _sum_all([r.statement_base for r in rows]), "statement_coef": _sum_all([r.statement_coef for r in rows]),
+        "adjustment": _sum_all([r.adjustment for r in rows]), "income_total": _sum_all([r.income_total for r in rows]),
+        "cumulative": _opt(sum(known, Decimal(0))) if known else None,
+    }
+
+
 async def get_evm(db: AsyncSession, report: Report) -> dict:
     """Per basis (actual | planned): the companies with their projects, the company total and the holding total.
     `total` is computed from the project rows; `reported_total` is the "جمع" row the file itself printed (if any)."""
@@ -551,6 +635,9 @@ async def get_evm(db: AsyncSession, report: Report) -> dict:
         select(EvmRow, ReportFile.company_id, ReportFile.filename, Company.name)
         .join(ReportFile, ReportFile.id == EvmRow.report_file_id).join(Company, Company.id == ReportFile.company_id)
         .where(ReportFile.report_id == report.id).order_by(Company.name, ReportFile.created_at, EvmRow.sheet_name, EvmRow.row_no)
+    )).all()
+    income_rows = (await db.execute(
+        select(IncomeTotal, ReportFile.company_id).join(ReportFile, ReportFile.id == IncomeTotal.report_file_id).where(ReportFile.report_id == report.id)
     )).all()
     body: dict = {"report_id": report.id}
     for basis in ("actual", "planned"):
@@ -568,6 +655,7 @@ async def get_evm(db: AsyncSession, report: Report) -> dict:
         for company in companies.values():
             project_rows, reported = company.pop("_rows"), company.pop("_reported")
             company["total"] = _evm_total(project_rows)
+            company["income"] = _income_read([r for r, cid in income_rows if cid == company["company_id"] and r.basis == basis])
             company["reported_total"] = {**_evm_total(reported), **_evm_row_read(reported[0])} if len(reported) == 1 else None
             out.append(company)
         flat = [row for row, _, _, _ in rows if row.basis == basis and not row.is_total]
@@ -592,8 +680,28 @@ async def report_detail(db: AsyncSession, report: Report) -> dict:
 
 async def sources(db: AsyncSession, report: Report) -> list[dict]:
     files = (await db.execute(select(ReportFile).where(ReportFile.report_id == report.id))).scalars().all()
-    return [{"id": f.id, "filename": f.filename, "status": f.status.value, "error_message": f.error_message,
-             "suggested_company": f.suggested_company, "sheet_log": f.sheet_log, "warnings": f.warnings} for f in files]
+    ids = [f.id for f in files]
+    evm: dict[tuple, int] = {}
+    for fid, basis, is_total, n in (await db.execute(
+        select(EvmRow.report_file_id, EvmRow.basis, EvmRow.is_total, func.count()).where(EvmRow.report_file_id.in_(ids)).group_by(EvmRow.report_file_id, EvmRow.basis, EvmRow.is_total)
+    )).all():
+        evm[(fid, basis, is_total)] = n
+    totals: dict[tuple, int] = {}
+    for fid, basis, n in (await db.execute(
+        select(IncomeTotal.report_file_id, IncomeTotal.basis, func.count()).where(IncomeTotal.report_file_id.in_(ids)).group_by(IncomeTotal.report_file_id, IncomeTotal.basis)
+    )).all():
+        totals[(fid, basis)] = n
+    out = []
+    for f in files:
+        income = {b: sum(1 for e in f.sheet_log if e.get("used") and e.get("kind") in ("income", "planned") and (e.get("basis") or "actual") == b) for b in ("actual", "planned")}
+        reads = {
+            "income": income,
+            "income_totals": {b: totals.get((f.id, b), 0) for b in ("actual", "planned")},
+            "evm": {b: {"projects": evm.get((f.id, b, False), 0), "has_total": bool(evm.get((f.id, b, True)))} for b in ("actual", "planned")},
+        }
+        out.append({"id": f.id, "filename": f.filename, "status": f.status.value, "error_message": f.error_message,
+                    "suggested_company": f.suggested_company, "sheet_log": f.sheet_log, "warnings": f.warnings, "reads": reads})
+    return out
 
 
 async def export_rows(db: AsyncSession, report: Report) -> tuple[list[list], list[list]]:

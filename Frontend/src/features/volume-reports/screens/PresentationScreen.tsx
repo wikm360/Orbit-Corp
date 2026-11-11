@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { volumeReportApi } from "../api/volumeReportApi";
+import { CompanyProfileBody } from "../components/CompanyProfileSlide";
 import { CompanyMark, HoldingRadialOverview } from "../components/HoldingRadialOverview";
 import { SummarySlideContent, SummaryVariantBar, fitTextMaxPx } from "../components/SummarySlideViews";
 import { ErrorBox, LoadingBlock } from "../components/common";
@@ -28,7 +29,7 @@ import {
   type ShareCardGeometry,
   type SummaryVariant,
 } from "../lib/presentation";
-import type { CatalogItem, Company, CompanyNarrative, ReportDetail, ResultRow, ResultsResponse } from "../types";
+import type { CatalogItem, Company, CompanyNarrative, EvmResponse, ReportDetail, ResultRow, ResultsResponse } from "../types";
 
 /** The slide canvas is 16in x 9in at 96dpi, so it prints 1:1 and is scaled down with CSS on screen (see globals.css). */
 const SLIDE_W = 1536;
@@ -123,9 +124,9 @@ function Slide({
         data-slide-bg="#f7f7f5"
       >
         <div className="mb-4 flex shrink-0 items-end justify-between gap-6 border-b-2 border-[#252850]/10 pb-3">
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             {subtitle && <p className="mb-1 text-[14px] font-semibold text-[#9b7a05]">{subtitle}</p>}
-            <div className="flex flex-wrap items-center gap-3.5">
+            <div className="flex flex-nowrap items-center gap-3.5">
               <h2 className="shrink-0 text-[32px] font-black leading-tight text-[#252850]">{title}</h2>
               {titleAside}
             </div>
@@ -879,6 +880,7 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
   const [companyPlannedRows, setCompanyPlannedRows] = useState<ResultRow[]>([]);
   const [sitePlannedRows, setSitePlannedRows] = useState<ResultRow[]>([]);
   const [settingsCompanies, setSettingsCompanies] = useState<Company[]>([]);
+  const [evm, setEvm] = useState<EvmResponse | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [exporting, setExporting] = useState<{ done: number; total: number } | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
@@ -927,6 +929,7 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
         holdingPlannedResult,
         sitePlannedResult,
         companySettings,
+        evmResult,
       ] = await Promise.all([
         volumeReportApi.get(reportId),
         volumeReportApi.catalog(),
@@ -937,6 +940,7 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
         volumeReportApi.results(reportId, "holding", [], "planned").catch(() => null),
         volumeReportApi.results(reportId, "site", [], "planned").catch(() => null),
         volumeReportApi.settings.companies().catch(() => [] as Company[]),
+        volumeReportApi.evm(reportId).catch(() => null),
       ]);
       setReport(detail);
       setCatalog(items);
@@ -947,6 +951,7 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
       setHoldingPlanned(holdingPlannedResult ?? null);
       setSitePlannedRows(sitePlannedResult?.rows ?? []);
       setSettingsCompanies(companySettings);
+      setEvm(evmResult);
     } catch (reason) {
       setError(reason);
     }
@@ -1182,6 +1187,34 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
       });
     });
 
+    // One page per company right after the scorecard: its EVM reading (SPI / CPI / PV / EV / AC).
+    const evmByCompany = new Map((evm?.actual.companies ?? []).map((c) => [c.company_id, c]));
+    const evmPlannedByCompany = new Map((evm?.planned.companies ?? []).map((c) => [c.company_id, c]));
+    const profileCompanies = [
+      ...companies.map((c) => ({ id: c.id, name: c.name, rows: c.rows })),
+      ...(evm?.actual.companies ?? []).filter((c) => !companies.some((x) => x.id === c.company_id)).map((c) => ({ id: c.company_id, name: c.company, rows: new Map<string, ResultRow>() })),
+    ];
+    profileCompanies.forEach((comp) => {
+      result.push({
+        key: `company-profile-${comp.id}`,
+        render: (page) => (
+          <Slide
+            title={comp.name}
+            subtitle={`کارنامه شرکت · ${period}`}
+            titleAside={companyScorecardBadge}
+            headerRight={<CompanyMark name={comp.name} size={54} />}
+            page={page}
+            period={period}
+          >
+            <CompanyProfileBody
+              evm={evmByCompany.get(comp.id) ?? null}
+              evmPlanned={evmPlannedByCompany.get(comp.id) ?? null}
+            />
+          </Slide>
+        ),
+      });
+    });
+
     const shareDataList: ItemShareData[] = tableMetrics
       .map((item) => {
         const contributions: CompanyContribution[] = [];
@@ -1385,6 +1418,7 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
     catalog,
     companyPlannedRows,
     companyRows,
+    evm,
     handleSelectSummaryVariant,
     holding,
     holdingPlanned,

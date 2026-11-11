@@ -24,7 +24,14 @@ _Y_ROW_TOLERANCE = 2.8  # points
 _X_WORD_DISTANCE = 18.0  # points: adjacent words within this distance belong to the same cell header
 _REFERENCE_FONT = 4.8  # body font size (pt) the two distances above were tuned for; wide sheets are shrunk to fit one page
 _MIN_SCALE, _MAX_SCALE = 0.4, 1.5
-_QTY_TERMS = frozenset({"حجم", "درصد حجم", "حجم درصد", "مقدار", "احجام"})
+_QTY_TERMS = frozenset({"حجم", "درصد حجم", "حجم درصد", "مقدار", "احجام", "تعداد دستگاه"})
+_RTL_BRACKET_MIRROR = str.maketrans("()[]«»", ")(][»«")
+_SUBHEADER_TOKENS = frozenset({
+    "شکست", "ضریب", "بالاسری", "منطقه", "ای", "پیشنهادی", "مبنا", "شاخص", "سه", "ماهه", "اول", "دوم", "سوم", "چهارم",
+})
+_MAX_SUBHEADER_DROP_PT = 11.0
+_MAX_UNIT_WRAP_PT = 12.0
+_MAX_DESC_WRAP_PT = 18.0
 
 
 def _clean_word(text: str) -> str:
@@ -192,7 +199,10 @@ def extract_pdf_page_grid(page: pypdf.PageObject) -> Rows:
             break
 
     if header_idx is None:
-        # No clear table header found: return lines as single-cell rows
+        # Plain visitor_text can collapse multi-column TJ arrays (e.g. Foxit PDFs); try layout spans
+        layout_grid = _tjs_grid(page)
+        if _has_income_layout(layout_grid):
+            return layout_grid
         return [[" ".join(w[1] for w in row_words)] for _, row_words in rows_by_y]
 
     _, hw = rows_by_y[header_idx]
@@ -284,7 +294,291 @@ def extract_pdf_page_grid(page: pypdf.PageObject) -> Rows:
         prev_row = row
 
     headers = [str(h) for h in grid[body_start - 1]]
-    return grid[:body_start] + _attach_wrapped_descriptions(grid[body_start:], body_ys, headers)
+    plain_grid = grid[:body_start] + _attach_wrapped_descriptions(grid[body_start:], body_ys, headers)
+    if not _has_income_layout(plain_grid):
+        layout_grid = _tjs_grid(page)
+        if _has_income_layout(layout_grid):
+            return layout_grid
+    return plain_grid
+
+
+def _has_income_layout(grid: list[list[Any]]) -> bool:
+    """Return True when the extracted grid has a header row parseable by income_parser."""
+    from app.features.volume_report.extraction.income_parser import find_layout
+
+    return bool(grid) and find_layout(grid) is not None
+
+
+def _to_logical_rtl(vis: str) -> str:
+    """Convert visually left-to-right RTL glyph text into logical Persian word order."""
+    from unicodedata import bidirectional
+
+    if not any(bidirectional(ch) in ("R", "AL") for ch in vis):
+        return _clean_word(vis)
+
+    ltr_classes = ("L", "EN", "AN")
+    joiners = set(".,/-٫٬،:")
+    rev = vis.translate(_RTL_BRACKET_MIRROR)[::-1]
+    out: list[str] = []
+    n = len(rev)
+    i = 0
+    while i < n:
+        if bidirectional(rev[i]) not in ltr_classes:
+            out.append(rev[i])
+            i += 1
+            continue
+        j = i + 1
+        last_ltr = i
+        while j < n:
+            bd = bidirectional(rev[j])
+            if bd in ltr_classes:
+                last_ltr = j
+                j += 1
+            elif rev[j] in joiners or (rev[j] == " " and rev[j - 1] not in (",", "،")):
+                j += 1
+            else:
+                break
+        out.append(rev[i : last_ltr + 1][::-1])
+        i = last_ltr + 1
+    return _clean_word("".join(out))
+
+
+def _extract_tjs_spans(page: Any) -> list[Any]:
+    """Extract non-rotated positioned text-show spans via pypdf's layout engine."""
+    from pypdf._text_extraction._layout_mode._fixed_width_page import recurs_to_target_op
+    from pypdf._text_extraction._layout_mode._text_state_manager import TextStateManager
+    from pypdf.generic import ContentStream
+
+    if not hasattr(page, "_layout_mode_fonts") or page.get("/Contents") is None:
+        return []
+    fonts = page._layout_mode_fonts()
+    ops = iter(ContentStream(page["/Contents"].get_object(), page.pdf, "bytes").operations)
+    state_mgr = TextStateManager()
+    spans: list[Any] = []
+    for operands, op in ops:
+        if op in (b"BT", b"q"):
+            _, tjs = recurs_to_target_op(ops, state_mgr, b"ET" if op == b"BT" else b"Q", fonts, strip_rotated=True)
+            spans.extend(tjs)
+        else:
+            state_mgr.set_state_param(op, operands)
+    return [t for t in spans if not t.rotated and t.txt]
+
+
+def _cluster_tjs_rows(spans: list[Any]) -> list[tuple[float, list[tuple[float, float, str]]]]:
+    """Group tjs spans into y-rows and merge horizontally adjacent fragments into cells."""
+    if not spans:
+        return []
+    ordered = sorted(spans, key=lambda s: (-s.ty, s.tx))
+    grouped: list[list[Any]] = []
+    anchor_y = ordered[0].ty
+    for sp in ordered:
+        if grouped and abs(sp.ty - anchor_y) <= _Y_ROW_TOLERANCE:
+            grouped[-1].append(sp)
+        else:
+            grouped.append([sp])
+            anchor_y = sp.ty
+
+    rows: list[tuple[float, list[tuple[float, float, str]]]] = []
+    for row_spans in grouped:
+        row_spans.sort(key=lambda s: s.tx)
+        heights = sorted(float(s.font_height) for s in row_spans if float(s.font_height) > 0)
+        med_h = heights[len(heights) // 2] if heights else _REFERENCE_FONT
+        gap_tol = max(3.2, min(4.5, med_h * 0.58))
+        space_tol = max(1.5, med_h * 0.28)
+        cells_raw: list[tuple[float, float, str]] = []
+        cx0, cx1, ctxt = row_spans[0].tx, row_spans[0].displaced_tx, row_spans[0].txt
+        for sp in row_spans[1:]:
+            gap = sp.tx - cx1
+            if gap <= gap_tol:
+                sep = " " if (gap > space_tol and not ctxt.endswith(" ") and not sp.txt.startswith(" ")) else ""
+                ctxt = f"{ctxt}{sep}{sp.txt}"
+                cx1 = max(cx1, sp.displaced_tx)
+            else:
+                text = _to_logical_rtl(ctxt)
+                if text:
+                    cells_raw.append((cx0, cx1, text))
+                cx0, cx1, ctxt = sp.tx, sp.displaced_tx, sp.txt
+        text = _to_logical_rtl(ctxt)
+        if text:
+            cells_raw.append((cx0, cx1, text))
+        if cells_raw:
+            avg_y = sum(float(s.ty) for s in row_spans) / len(row_spans)
+            rows.append((avg_y, cells_raw))
+    return rows
+
+
+def _is_subheader_continuation(text: str) -> bool:
+    """Return True for wrapped multi-line sub-header labels right below the main header row."""
+    from app.features.volume_report.extraction.normalize import normalize_text
+
+    norm = normalize_text(text)
+    if not norm:
+        return True
+    cleaned = re.sub(r"\(\s*\d{4}\s*\)", "", norm).strip()
+    if not cleaned:
+        return True
+    return all(tok in _SUBHEADER_TOKENS for tok in cleaned.split())
+
+
+def _attach_wrapped_tjs_descriptions(
+    body_rows: list[list[Any]],
+    body_ys: list[float],
+    desc_col: int,
+    qty_col: int,
+) -> list[list[Any]]:
+    """Attach wrapped desc-only continuation lines (above or below) to the nearest qty row."""
+    from app.features.volume_report.extraction.normalize import parse_quantity
+
+    qty_indices = [i for i, row in enumerate(body_rows) if parse_quantity(row[qty_col]) is not None]
+    if not qty_indices:
+        return body_rows
+
+    qty_set = set(qty_indices)
+    attached: dict[int, list[tuple[float, str]]] = {}
+    for q_idx in qty_indices:
+        d_val = str(body_rows[q_idx][desc_col]).strip() if body_rows[q_idx][desc_col] is not None else ""
+        if d_val:
+            attached[q_idx] = [(body_ys[q_idx], d_val)]
+
+    consumed: set[int] = set()
+    for idx, row in enumerate(body_rows):
+        if idx in qty_set:
+            continue
+        d_val = str(row[desc_col]).strip() if row[desc_col] is not None else ""
+        if not d_val:
+            continue
+        if any(col != desc_col and cell is not None and str(cell).strip() for col, cell in enumerate(row)):
+            continue
+        # Only consider qty rows not separated from `idx` by another qty row
+        candidates: list[int] = []
+        for q_idx in qty_indices:
+            lo, hi = (idx, q_idx) if idx < q_idx else (q_idx, idx)
+            if any(k in qty_set for k in range(lo + 1, hi)):
+                continue
+            if abs(body_ys[idx] - body_ys[q_idx]) <= _MAX_DESC_WRAP_PT:
+                candidates.append(q_idx)
+        if not candidates:
+            continue
+        best_q = min(candidates, key=lambda q: abs(body_ys[idx] - body_ys[q]))
+        attached.setdefault(best_q, []).append((body_ys[idx], d_val))
+        consumed.add(idx)
+
+    for q_idx, parts in attached.items():
+        parts.sort(key=lambda item: -item[0])
+        body_rows[q_idx][desc_col] = " ".join(p for _, p in parts)
+
+    return [row for idx, row in enumerate(body_rows) if idx not in consumed]
+
+
+def _attach_wrapped_units(
+    body_rows: list[list[Any]],
+    body_ys: list[float],
+    qty_idx: int,
+    unit_idx: int,
+    desc_idx: int,
+) -> tuple[list[list[Any]], list[float]]:
+    """Merge multi-line wrapped units (e.g. 'مترمکعب-' / 'کیلومتر') into the adjacent qty row."""
+    from app.features.volume_report.extraction.normalize import parse_quantity
+
+    empty_unit_qty = [
+        i for i, row in enumerate(body_rows)
+        if parse_quantity(row[qty_idx]) is not None and not (row[unit_idx] and str(row[unit_idx]).strip())
+    ]
+    if not empty_unit_qty:
+        return body_rows, body_ys
+
+    fragments: dict[int, list[tuple[float, str]]] = {}
+    consumed: set[int] = set()
+    for idx, row in enumerate(body_rows):
+        u_val = str(row[unit_idx]).strip() if row[unit_idx] is not None else ""
+        if not u_val:
+            continue
+        if (row[qty_idx] is not None and str(row[qty_idx]).strip()) or (row[desc_idx] is not None and str(row[desc_idx]).strip()):
+            continue
+        if any(
+            col not in (unit_idx,) and cell is not None and str(cell).strip()
+            for col, cell in enumerate(row)
+        ):
+            continue
+        best_q = min(empty_unit_qty, key=lambda qi: abs(body_ys[idx] - body_ys[qi]))
+        if abs(body_ys[idx] - body_ys[best_q]) <= _MAX_UNIT_WRAP_PT:
+            fragments.setdefault(best_q, []).append((body_ys[idx], u_val))
+            consumed.add(idx)
+
+    for q_idx, parts in fragments.items():
+        parts.sort(key=lambda item: -item[0])
+        body_rows[q_idx][unit_idx] = " ".join(p for _, p in parts)
+
+    kept_rows = [row for idx, row in enumerate(body_rows) if idx not in consumed]
+    kept_ys = [y for idx, y in enumerate(body_ys) if idx not in consumed]
+    return kept_rows, kept_ys
+
+
+def _tjs_grid(page: Any) -> list[list[Any]]:
+    """Reconstruct a multi-column PDF grid from positioned text-show (tjs) spans."""
+    from bisect import bisect_right
+    from app.features.volume_report.extraction.income_parser import find_layout
+    from app.features.volume_report.extraction.normalize import normalize_text
+
+    rows = _cluster_tjs_rows(_extract_tjs_spans(page))
+    if not rows:
+        return []
+
+    header_idx: int | None = None
+    for idx, (_, cells) in enumerate(rows[:20]):
+        row_norm = normalize_text(" ".join(c[2] for c in cells))
+        if any(term in row_norm for term in _QTY_TERMS) and ("واحد" in row_norm or "قیمت" in row_norm):
+            header_idx = idx
+            break
+    if header_idx is None:
+        return [[" ".join(c[2] for c in cells)] for _, cells in rows]
+
+    header_y, header_cells = rows[header_idx]
+    n_cols = len(header_cells)
+    boundaries = [0.5 * (header_cells[i][1] + header_cells[i + 1][0]) for i in range(n_cols - 1)]
+    prefix_rows = [[" ".join(c[2] for c in cells)] for _, cells in rows[:header_idx]]
+    header_row = [c[2] for c in header_cells]
+
+    layout_probe = find_layout([header_row])
+    qty_col = layout_probe[1]["qty"] if layout_probe else None
+    unit_col = layout_probe[1]["unit"] if layout_probe else None
+    desc_col = layout_probe[1]["desc"] if layout_probe else None
+
+    body_rows: list[list[Any]] = []
+    body_ys: list[float] = []
+    in_subheader = True
+    for y_val, cells in rows[header_idx + 1 :]:
+        if in_subheader and (header_y - y_val) <= _MAX_SUBHEADER_DROP_PT:
+            combined = " ".join(c[2] for c in cells)
+            if _is_subheader_continuation(combined):
+                continue
+        in_subheader = False
+
+        grid_row: list[Any] = [None] * n_cols
+        col_dist: list[float] = [float("inf")] * n_cols
+        for cx0, cx1, ctext in cells:
+            mid = 0.5 * (cx0 + cx1)
+            col = bisect_right(boundaries, mid)
+            hx_mid = 0.5 * (header_cells[col][0] + header_cells[col][1])
+            dist = abs(mid - hx_mid)
+            if grid_row[col] is None:
+                grid_row[col] = ctext
+                col_dist[col] = dist
+            elif col == qty_col:
+                if dist < col_dist[col]:
+                    grid_row[col] = ctext
+                    col_dist[col] = dist
+            else:
+                grid_row[col] = f"{grid_row[col]} {ctext}"
+        body_rows.append(grid_row)
+        body_ys.append(y_val)
+
+    if qty_col is not None and unit_col is not None and desc_col is not None:
+        body_rows, body_ys = _attach_wrapped_units(body_rows, body_ys, qty_col, unit_col, desc_col)
+
+    if desc_col is not None and qty_col is not None:
+        return prefix_rows + [header_row] + _attach_wrapped_tjs_descriptions(body_rows, body_ys, desc_col, qty_col)
+    return prefix_rows + [header_row] + _attach_wrapped_descriptions(body_rows, body_ys, header_row)
 
 
 def _detect_pdf_sheet_name(page_num: int, page: pypdf.PageObject) -> str:

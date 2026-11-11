@@ -294,6 +294,88 @@ test('QuestionCard (number / text / multi-choice / site kind)', () => {
   assert.doesNotMatch(sHtml, /فقط همین ردیف/);
 });
 
+test('source location helpers merge duplicates, respect priority, and distinguish Excel sheets from PDF pages', () => {
+  assert.equal(q.isPdfFilename('weekly-report.PDF'), true);
+  assert.equal(q.isPdfFilename('sheet.xlsx'), false);
+  assert.equal(q.formatRowNumbersLabel([5], 1), 'ردیف ۵');
+  assert.equal(q.formatRowNumbersLabel([5, 8], 4), 'ردیف‌های ۵، ۸ و ۲ ردیف دیگر');
+  assert.equal(q.formatRowNumbersLabel([], 3), '۳ ردیف');
+  assert.equal(
+    q.formatSourceLocationText({ filename: 'report.pdf', sheet: 'درآمد معدن (صفحه ۲)', section: 'خاک‌برداری', row_nos: [7], n_lines: 1 }),
+    'فایل report.pdf · صفحه درآمد معدن (صفحه ۲) · بخش خاک‌برداری · ردیف ۷',
+  );
+
+  // question.locations wins and merges repeated rows sharing file/site/sheet/section
+  const merged = q.locationsForQuestion(question({
+    locations: [
+      { filename: 'a.xlsx', company: 'گلومک', site: 'سیرجان', sheet: 'درآمد', section: 'عملیات آسفالت', row_nos: [15], n_lines: 1 },
+      { filename: 'a.xlsx', company: 'گلومک', site: 'سیرجان', sheet: 'درآمد', section: 'عملیات آسفالت', row_nos: [12, 15], n_lines: 2 },
+    ],
+  }), [group({ locations: [{ filename: 'ignored.xlsx', sheet: 'سایر', row_nos: [1], n_lines: 1 }] })]);
+  assert.equal(merged.length, 1);
+  assert.deepEqual(merged[0].row_nos, [12, 15]);
+  assert.equal(merged[0].n_lines, 3);
+
+  // fallback to groups[].locations when question.locations is missing
+  const fromGroups = q.locationsForQuestion(question(), [group({
+    locations: [{ filename: 'b.xlsx', site: 'کرمان', sheet: 'جدول ۱', section: 'زیرسازی', row_nos: [4], n_lines: 1 }],
+  })]);
+  assert.equal(fromGroups[0].filename, 'b.xlsx');
+
+  // layout fallback uses spec.sheet when no locations exist yet
+  const layoutFallback = q.locationsForQuestion(
+    question({ spec: { kind: 'confirm_group', prompt: 'تایید ساختار', group_ids: [], options: [], system: 'layout', file_id: 'f1', sheet: 'شیت ناشناس' } }),
+    [],
+  );
+  assert.deepEqual(layoutFallback, [{ filename: '', sheet: 'شیت ناشناس' }]);
+});
+
+test('QuestionCard displays source file, sheet/page, section, site, and row numbers across question types', () => {
+  const excelHtml = render(React.createElement(QuestionCard, {
+    question: question(), busy: false, onAnswer: noop, onSkip: noop,
+    groups: [group({
+      description: 'قشر آسفالتی نامشخص', unit: 't', total_quantity: '693.0000', section_headings: ['عملیات آسفالت'],
+      locations: [{ filename: 'faragir-week2.xlsx', site: 'بم', sheet: 'کارکرد هفتگی', section: 'عملیات آسفالت', row_nos: [12, 15], n_lines: 2 }],
+    })],
+  }));
+  assert.match(excelHtml, /aria-label="منبع در فایل‌ها"/);
+  assert.match(excelHtml, /محل در فایل‌های گزارش/);
+  assert.match(excelHtml, /faragir-week2\.xlsx/);
+  assert.match(excelHtml, /شیت:/);
+  assert.match(excelHtml, /کارکرد هفتگی/);
+  assert.match(excelHtml, /بخش:.*عملیات آسفالت/);
+  assert.match(excelHtml, /کارگاه بم/);
+  assert.match(excelHtml, /ردیف‌های ۱۲، ۱۵/);
+
+  const convPdfQ = question({
+    kind: 'number',
+    locations: [{ filename: 'aban-pdf-report.pdf', site: 'سیرجان', sheet: 'درآمد معدن (صفحه ۲)', section: 'حمل مواد', row_nos: [7], n_lines: 1 }],
+    spec: { kind: 'number', prompt: 'چگالی؟', group_ids: [], options: [], number: { param_key: 'density_t_per_m3', unit: 't/m3', min: 1, max: 3 }, system: 'no_conversion' },
+  });
+  const convHtml = render(React.createElement(QuestionCard, { question: convPdfQ, groups: [], onAnswer: noop, onSkip: noop }));
+  assert.match(convHtml, /aban-pdf-report\.pdf/);
+  assert.match(convHtml, /صفحه:/);
+  assert.match(convHtml, /درآمد معدن \(صفحه ۲\)/);
+  assert.match(convHtml, /حمل مواد/);
+  assert.match(convHtml, /ردیف ۷/);
+
+  const siteQ = question({
+    locations: [{ filename: 'site-doc.xlsx', site: 'سیرجان', sheet: 'جدول کارکرد', row_nos: [3, 9], n_lines: 2 }],
+    spec: { ...question().spec, group_ids: [], system: 'site_kind', options: [{ key: 'road', label: 'راهسازی' }, { key: 'mining', label: 'معدن' }] },
+  });
+  const siteHtml = render(React.createElement(QuestionCard, { question: siteQ, groups: [], onAnswer: noop, onSkip: noop }));
+  assert.match(siteHtml, /site-doc\.xlsx/);
+  assert.match(siteHtml, /جدول کارکرد/);
+
+  const layoutQ = question({
+    locations: [{ filename: 'raw-layout.xlsx', sheet: 'درآمد خام' }],
+    spec: { kind: 'confirm_group', prompt: 'آیا ستون‌ها درست است؟', group_ids: [], options: [], system: 'layout', file_id: 'f1', sheet: 'درآمد خام' },
+  });
+  const layoutHtml = render(React.createElement(QuestionCard, { question: layoutQ, groups: [], onAnswer: noop, onSkip: noop }));
+  assert.match(layoutHtml, /raw-layout\.xlsx/);
+  assert.match(layoutHtml, /درآمد خام/);
+});
+
 test('VolumeTableCard renders the chat artifact: title, period, per-row unit column, notes, link to the report', () => {
   const artifact = {
     type: 'volume_table', version: 1, report_id: 'rep-1', title: 'گزارش شهریور', period: 'شهریور 1405',
@@ -317,12 +399,17 @@ test('Source details list used sheets, skipped sheets with the reason, and warni
     id: 's1', filename: 'a.xls', status: 'parsed', error_message: null, suggested_company: null,
     warnings: [{ code: 'period_label_mismatch', sheet: 'درآمد کازرون', found: ['خرداد'], expected: ['شهریور'] }],
     sheet_log: [
+      { sheet: 'برنامه های دست اجرا (صفحه 1)', visibility: 'visible', kind: 'evm', used: true, reason: null, basis: 'actual', evm_rows: 8 },
       { sheet: ' درآمد سیرجان', visibility: 'visible', kind: 'income', used: true, reason: null, site_name: 'سیرجان', rows_nonzero: 22 },
       { sheet: 'درآمد برنامه ای', visibility: 'visible', kind: 'planned', used: false, reason: 'planned_sheet' },
       { sheet: 'EVM Y', visibility: 'hidden', kind: 'hidden', used: false, reason: 'hidden' },
     ],
   }];
   const html = render(React.createElement(SourceDetails, { sources }));
+  assert.match(html, /خلاصه مالی EVM/);
+  assert.match(html, /۸ ردیف/);
+  assert.doesNotMatch(html, /۰ ردیف دارای حجم/);
+  assert.doesNotMatch(html, /undefined/);
   assert.match(html, /شیت برنامه‌ای/);
   assert.match(html, /شیت پنهان/);
   assert.match(html, /ماه عنوان شیت با دوره‌ی واردشده نمی‌خواند/);

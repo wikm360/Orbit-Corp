@@ -21,6 +21,7 @@ from app.features.volume_report.extraction.units import normalize_unit
 HEADER_SCAN_ROWS = 12
 TITLE_SCAN_ROWS = 3
 _QTY_LABELS = {"حجم", "درصد حجم", "حجم درصد"}
+_ALT_QTY_LABELS = {"تعداد دستگاه"}
 _QUOTES = '"«»“”'
 _MINING_WORDS = ("معدن", "باطله")
 
@@ -71,6 +72,8 @@ def find_layout(rows: list[list[Any]]) -> tuple[int, dict[str, int | None]] | No
     for index, row in enumerate(rows[:HEADER_SCAN_ROWS]):
         labels = [normalize_text(cell) if isinstance(cell, str) else "" for cell in row]
         qty = next((i for i, label in enumerate(labels) if label in _QTY_LABELS), None)
+        if qty is None:
+            qty = next((i for i, label in enumerate(labels) if label in _ALT_QTY_LABELS), None)
         unit = next((i for i, label in enumerate(labels) if label == "واحد"), None)
         if qty is None or unit is None:
             continue

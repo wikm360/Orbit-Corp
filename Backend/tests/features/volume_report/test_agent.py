@@ -113,6 +113,11 @@ async def test_pass_classifies_asks_and_never_leaks_quantities(client, tmp_path,
     assert {q["spec"].get("system") or "agent" for q in questions} >= {"agent", "site_kind"}
     agent_q = next(q for q in questions if q["spec"].get("system") is None)
     assert [o["label"] for o in agent_q["spec"]["options"][:2]] == ["آسفالت بیندر", "آسفالت توپکا"]  # labels from code
+    assert agent_q["locations"] and agent_q["locations"][0]["filename"] == "a.xlsx"
+    assert agent_q["locations"][0]["sheet"] == "درآمد" and len(agent_q["locations"][0]["row_nos"]) == 1
+    assert g["قشر آسفالتی نامشخص"]["locations"] == agent_q["locations"]
+    site_q = next(q for q in questions if q["spec"].get("system") == "site_kind")
+    assert site_q["locations"] and site_q["locations"][0]["filename"] == "a.xlsx" and site_q["locations"][0]["sheet"] == "درآمد"
     assert (await client.get(f"{API}/{rid}/progress", headers=leader)).json()["status"] == "awaiting_user"
 
     feed = (await client.get(f"{API}/{rid}/activity", headers=leader)).json()
@@ -175,6 +180,7 @@ async def test_no_conversion_system_question_number_answer(client, tmp_path, mon
     qs = (await client.get(f"{API}/{rid}/questions?status=open", headers=leader)).json()
     q = next(q for q in qs if q["spec"].get("system") == "no_conversion")
     assert q["spec"]["number"]["param_key"] == "cross_section_m2" and q["kind"] == "number"
+    assert q["locations"] and q["locations"][0]["filename"] == "a.xlsx" and q["locations"][0]["sheet"] == "درآمد" and q["locations"][0]["row_nos"]
     assert (await client.post(f"{API}/{rid}/questions/{q['id']}/answer", json={"number": -1}, headers=leader)).status_code == 400
     assert (await client.post(f"{API}/{rid}/questions/{q['id']}/answer", json={"number": 0.5, "remember_scope": "global"}, headers=leader)).status_code == 200
     assert (await _holding(client, leader, rid))["precast"] == Decimal("50")
@@ -239,6 +245,7 @@ async def test_unknown_layout_inspect_masks_numbers_and_confirmed_layout_applies
     assert "563" not in raw and "<num>" in raw and "اجرای اساس" in raw  # text kept, numbers masked
     q = next(q for q in (await client.get(f"{API}/{rid}/questions?status=open", headers=leader)).json() if q["spec"].get("system") == "layout")
     assert q["spec"]["validation"]["nonzero_rows"] == 1
+    assert q["locations"] == [{"filename": "a.xlsx", "company": "co-lay", "site": None, "sheet": "درآمد", "section": None, "row_nos": [], "n_lines": 0}]
     assert (await client.post(f"{API}/{rid}/questions/{q['id']}/answer", json={"choice_keys": ["confirm"]}, headers=leader)).status_code == 200
     _use(monkeypatch, Scripted([[("finish_pass", {})]]))
     assert (await client.post(f"{API}/{rid}/run", headers=leader)).status_code == 202

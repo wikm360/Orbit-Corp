@@ -69,6 +69,9 @@ def test_extract_file_reports_evm_without_touching_income(tmp_path):
 def _evm_of(name):
     from app.features.volume_report.extraction.workbook import open_workbook
 
+    if not (SAMPLES / name).exists():
+        pytest.skip(f"sample {name} not present")
+
     with open_workbook(str(SAMPLES / name)) as wb:
         for sheet in wb.sheets:
             parsed = parse_evm_sheet(sheet.name, sheet.rows(), name)
@@ -93,10 +96,69 @@ def test_real_pdf_multi_project_company_with_total():
 
 @pytest.mark.skipif(not SAMPLES.exists(), reason="eval samples not present")
 def test_real_pdf_forecast_and_single_project_files():
-    plan = _evm_of("گزارش 18تا24 آبان پیش بینی.pdf")
+    plan = _evm_of("سیستان پیش بینی.xlsx")
     assert plan.basis == "planned" and plan.rows[-1].spi == Decimal("1.00") and plan.rows[0].ev == Decimal(77_700_000_000)
     single = _evm_of("گزارش یازدهم الی هفدهم آبان ماه 1405 پروژه راور-دیهوک.pdf")
     row = single.rows[0]
     assert single.basis == "actual" and (row.ev, row.ev_net, row.ac, row.cpi, row.pv, row.spi) == (
         Decimal(83_039_367_218), Decimal(63_940_312_758), Decimal(60_492_542_028), Decimal("1.06"), None, None)
     assert _evm_of("گزارش پیش بینی هفتگی از 18 الی 24 آبان ماه پروژه میدان نفتی سهراب.pdf").basis == "planned"
+
+
+def test_income_totals_chain_from_flattened_rows():
+    from app.features.volume_report.extraction.income_totals import detect_basis, parse_income_totals
+
+    rows = [
+        ["درآمد از هفته دوم آبان"],
+        ["جمع صورت وضعیت بدون اعمال ضرایب )ریال( 6 ، 935 ، 892 ، 440", "( جمع تعدیل )ریال 31 ، 137 ، 259 ، 574"],
+        ["جمع صورت وضعیت با اعمال ضرایب )ریال( 17 ، 662 ، 679 ، 776", "( جمع کل درآمد )ریال 48 ، 799 ، 939 ، 351"],
+        ["مابه التفاوت مصالح )ریال( 0 ( جمع صورت وضعیت تجمعی با اعمال ضرایب )ریال 1,819,912,090,783", "( جمع کل درآمد با کسر سهم جهاد نصر )ریال 46 ، 359 ، 942 ، 383"],
+        ["مقایسه درآمد و هزینه"],
+        ["35,661,494,14134,000,123,354", "1,661,370,787"],
+    ]
+    totals = parse_income_totals(rows)
+    assert (totals.statement_base, totals.statement_coef, totals.adjustment, totals.income_total, totals.cumulative) == (
+        Decimal(6_935_892_440), Decimal(17_662_679_776), Decimal(31_137_259_574), Decimal(48_799_939_351), Decimal(1_819_912_090_783))
+    assert parse_income_totals([["شرح", "حجم"]]) is None
+    assert detect_basis("برنامه درآمد پروژه", rows, None) == "planned" and detect_basis("درآمد پروژه", rows, "x.xlsx") == "actual"
+    assert detect_basis("درآمد", rows, "سیستان پیش بینی.xlsx") == "planned"
+
+
+@pytest.mark.skipif(not SAMPLES.exists(), reason="eval samples not present")
+def test_real_excel_with_extra_average_column_and_income_totals():
+    parsed = _evm_of("سیستان پیش بینی.xlsx")
+    first = parsed.rows[0]
+    assert parsed.basis == "planned" and first.project_name == "باند دوم محور زاهدان - میرجاوه قطعه2"
+    assert (first.contract_amount, first.pv, first.ev_net, first.ac, first.cpi, first.spi) == (
+        Decimal(7_120_698_396_196), Decimal(77_700_000_000), Decimal(59_769_230_769), Decimal(39_621_903_492), Decimal("1.51"), Decimal("1"))
+    from app.features.volume_report.extraction.income_totals import parse_income_totals
+    from app.features.volume_report.extraction.workbook import open_workbook
+
+    with open_workbook(str(SAMPLES / "سیستان پیش بینی.xlsx")) as wb:
+        totals = parse_income_totals(next(s for s in wb.sheets if s.name == "درآمد میرجاوه").rows())
+    assert totals.income_total == Decimal(77_700_000_000) and totals.adjustment == Decimal(28_934_824_632)
+
+
+def test_income_totals_reads_visual_order_arabic_digits():
+    from app.features.volume_report.extraction.income_totals import parse_income_totals
+
+    rows = [["جمع صورت وضعیت بدون اعمال ضرایب ) ریال (", "٣٣٤،٠٧٠،٠٦٩،٤٢", "جمع تعدیل ) ریال (", "٠٠٨،١٤٢،٥٢٠،١٢"],
+            ["جمع کل درآمد ) ریال (", "٣٣٢،٢١٣،٥٨٩،٥٤"]]
+    totals = parse_income_totals(rows)
+    assert (totals.statement_base, totals.adjustment, totals.income_total) == (Decimal(24_960_070_433), Decimal(21_025_241_800), Decimal(45_985_312_233))
+    assert totals.statement_base + totals.adjustment == totals.income_total
+
+
+def test_income_totals_value_before_label_and_split_letters():
+    from app.features.volume_report.extraction.income_totals import parse_income_totals
+
+    before = [["31،137،259،574", "جمع تعدیل (ریال)", "6،935،892،440", "جمع صورت وضعیت بدون اعمال ضرایب (ریال)"],
+              ["48،799،939،351", "جمع کل درآمد (ریال)", "17،662،679،776", "جمع صورت وضعیت با اعمال ضرایب (ریال)"],
+              ["46،359،942،383", "جمع کل درآمد با کسر سهم جهاد نصر (ریال)", "0", "مابه التفاوت مصالح (ریال)"],
+              ["1,819,912,090,783", "جمع صورت وضعیت تجمعی با اعمال ضرایب (ریال)"]]
+    totals = parse_income_totals(before)
+    assert (totals.statement_base, totals.statement_coef, totals.adjustment, totals.income_total, totals.cumulative) == (
+        Decimal(6_935_892_440), Decimal(17_662_679_776), Decimal(31_137_259_574), Decimal(48_799_939_351), Decimal(1_819_912_090_783))
+    split = [["0", "جمع تعدی ل )ریال(", "6,183,333,333", "ب )ریا ل("], ["6,183,333,333", "جمع ک ل درآمد )ریال(", "6,183,333,333"]]
+    letters = parse_income_totals(split)
+    assert letters.adjustment == 0 and letters.income_total == Decimal(6_183_333_333) and letters.statement_base is None

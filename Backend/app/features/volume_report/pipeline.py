@@ -17,7 +17,7 @@ from app.features.volume_report.agent import runner as agent_runner
 from app.features.volume_report.extraction.normalize import group_key
 from app.features.volume_report.extraction.runner import extract_file
 from app.features.volume_report.models import (
-    Classification, ClassificationSource, Company, Decision, Dimension, Disposition, EvmRow, ExcludeReason, FileStatus, Item, Line,
+    Classification, ClassificationSource, Company, Decision, Dimension, Disposition, EvmRow, ExcludeReason, IncomeTotal, FileStatus, Item, Line,
     Question, QuestionStatus, Report, ReportFile, ReportStatus, Role, Site, SiteKind,
 )
 from app.features.volume_report.seed import ensure_seeded
@@ -75,6 +75,10 @@ async def _parse_files(db: AsyncSession, report: Report, lexicon, overrides: dic
                     is_total=row.is_total, contract_amount=row.contract_amount, bcws=row.bcws, pv=row.pv, ev=row.ev, ev_net=row.ev_net,
                     ac=row.ac, cpi=row.cpi, spi=row.spi,
                 ))
+        for sheet_name, basis, totals in extraction.income_totals:
+            db.add(IncomeTotal(report_file_id=rfile.id, sheet_name=sheet_name, basis=basis, statement_base=totals.statement_base,
+                               statement_coef=totals.statement_coef, adjustment=totals.adjustment, income_total=totals.income_total,
+                               cumulative=totals.cumulative))
         if extraction.evm_sheets:
             n = sum(len(e.rows) for e in extraction.evm_sheets)
             await activity.log_activity(db, report.id, "parse", f"فایل «{rfile.filename}»: {n} ردیف EVM (PV/EV/AC/CPI/SPI) خوانده شد", kind="success", commit=False)
@@ -159,6 +163,7 @@ async def _execute(db: AsyncSession, report: Report) -> None:
     snapshot = {k: Classification(**{col.name: getattr(c, col.name) for col in Classification.__table__.columns if col.name != "id"}) for k, c in preserved.items()}
     await db.execute(delete(Line).where(Line.report_file_id.in_(file_ids)))  # cascades to line results
     await db.execute(delete(EvmRow).where(EvmRow.report_file_id.in_(file_ids)))
+    await db.execute(delete(IncomeTotal).where(IncomeTotal.report_file_id.in_(file_ids)))
     await db.execute(delete(Classification).where(Classification.report_id == report.id))
     await db.flush()
     overrides = {

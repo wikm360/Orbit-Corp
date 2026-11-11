@@ -490,6 +490,11 @@ async def test_evm_rows_are_read_per_project_company_and_holding_with_forecast_a
     assert companies["شرکت ب"]["reported_total"] is None
     plan = data["planned"]["companies"]
     assert len(plan) == 1 and plan[0]["company"] == "شرکت الف" and Decimal(plan[0]["total"]["spi"]) == 1  # the forecast never mixes into the actuals
+    sources = (await client.get(f"{API}/{report['id']}/sources", headers=leader)).json()
+    assert all(set(x["reads"]) == {"income", "income_totals", "evm"} for x in sources)
+    assert sorted(x["reads"]["evm"]["actual"]["projects"] for x in sources) == [0, 1, 2] or sum(x["reads"]["evm"]["actual"]["projects"] for x in sources) == 3
+    assert sum(x["reads"]["evm"]["planned"]["projects"] for x in sources) == 1
+    assert next(x for x in sources if x["reads"]["evm"]["actual"]["projects"] == 2)["reads"]["evm"]["actual"]["has_total"] is True
     # re-running replaces (never duplicates) the rows
     assert (await client.post(f"{API}/{report['id']}/run", headers=leader)).status_code == 202
     await pipeline.run_report(uuid.UUID(report["id"]))

@@ -9,7 +9,7 @@ import { volumeReportApi } from "../api/volumeReportApi";
 import { runSoon } from "../lib/defer";
 import { formatQuantityWithUnit } from "../lib/format";
 import { toFa } from "../lib/jalali";
-import { byImpact } from "../lib/questions";
+import { byImpact, formatSourceLocationText } from "../lib/questions";
 import {
   buildBulkPayload, confidenceLabel, draftFromGroup, pendingGroups, type RowDraft,
 } from "../lib/review";
@@ -174,6 +174,12 @@ export function ReviewPanel({ reportId, catalog, editable, onChanged, onContinue
                       <td className="px-2 py-2">
                         <div className="font-medium text-slate-800">{g.description}</div>
                         <div className="text-slate-400">{toFa(g.n_lines)} ردیف · {formatQuantityWithUnit(g.total_quantity, g.unit, 2)}{g.section_headings[0] ? ` · ${g.section_headings[0]}` : ""}</div>
+                        {g.locations && g.locations.length > 0 && (
+                          <div className="mt-0.5 text-[11px] text-slate-500">
+                            {g.locations.slice(0, 2).map((loc) => formatSourceLocationText(loc)).join(" | ")}
+                            {g.locations.length > 2 ? ` (+${toFa(g.locations.length - 2)})` : ""}
+                          </div>
+                        )}
                       </td>
                       <td className="px-2 py-2 whitespace-nowrap">{g.unit}</td>
                       <td className="px-2 py-2 whitespace-nowrap">{SITE_KIND_LABELS[g.site_kind]}</td>
