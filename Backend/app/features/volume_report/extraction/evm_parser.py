@@ -29,7 +29,8 @@ _TOTAL_WORDS = ("جمع",)
 _PLAN_WORDS = ("پیش بینی",)
 _TOLERANCE = Decimal("0.02")
 # Header cells that wrap onto the rows below the CPI/SPI row; a text row with one of these is never part of a project name.
-_HEADER_WORDS = ("ریال", "ردیف", "bcws", "ضریب", "واقعی", "برنامه ای", "توضیحات", "مدت", "پیشرفت", "درصد", "( ماه )", "نام پروژه", "کارکرد")
+HEADER_WORDS = ("ریال", "ردیف", "bcws", "ضریب", "واقعی", "برنامه ای", "توضیحات", "مدت", "پیشرفت", "درصد", "( ماه )", "نام پروژه", "کارکرد")
+_NOTES_DISQUALIFIERS = ("cpi", "spi", "pv", "ev", "ac", "قرارداد", "نام پروژه", "ریال", "مبلغ")
 
 
 @dataclass
@@ -75,9 +76,11 @@ def _number_token(value: float | int) -> str:
     return f"{number:.2f}"
 
 
-def _row_tokens(row: list[Any]) -> list[str]:
+def _row_tokens(row: list[Any], exclude_cols: set[int] | None = None) -> list[str]:
     tokens: list[str] = []
-    for cell in row:
+    for idx, cell in enumerate(row):
+        if exclude_cols and idx in exclude_cols:
+            continue
         if cell is None or isinstance(cell, bool):
             continue
         if isinstance(cell, (int, float)):
@@ -232,17 +235,33 @@ def _parse_budget_template(sheet_name: str, rows: list[list[Any]], file_name: st
     return None
 
 
+def _notes_columns(rows: list[list[Any]], header: int) -> set[int]:
+    """Column indices devoted solely to "توضیحات" (notes) so remarks never bleed into project names or amounts."""
+    cols: set[int] = set()
+    for row in rows[max(0, header - 2) : header + 4]:
+        if len(row) < 2:
+            continue
+        for col_idx, cell in enumerate(row):
+            if not isinstance(cell, str):
+                continue
+            norm = normalize_text(cell).strip(": ")
+            if "توضیحات" in norm and len(norm.split()) <= 3 and not any(w in norm.lower() for w in _NOTES_DISQUALIFIERS):
+                cols.add(col_idx)
+    return cols
+
+
 def parse_evm_sheet(sheet_name: str, rows: list[list[Any]], file_name: str | None = None) -> ParsedEvm | None:
     """None when the sheet is not an EVM summary at all."""
     header = _find_header(rows)
     if header is None:
         return _parse_budget_template(sheet_name, rows, file_name)
+    notes_cols = _notes_columns(rows, header)
     parsed = ParsedEvm(sheet_name=sheet_name, basis=_basis(rows, header, sheet_name, file_name), header_row=header + 1)
     parsed.period = find_period_range(" ".join(str(c) for row in rows[:header] for c in row if isinstance(c, str)))
     pending: list[str] = []  # name fragments seen since the previous numeric row
     last_row: EvmRowData | None = None
     for offset, raw in enumerate(rows[header + 1:], start=header + 2):
-        tokens = _row_tokens(raw)
+        tokens = _row_tokens(raw, notes_cols)
         if not tokens:
             continue
         data, name_tokens, problem = _parse_row(offset, tokens)
@@ -284,7 +303,7 @@ def _open_paren(name: str | None) -> bool:
 
 def _is_header_text(tokens: list[str]) -> bool:
     text = normalize_text(" ".join(tokens))
-    return any(word in text for word in _HEADER_WORDS)
+    return any(word in text for word in HEADER_WORDS)
 
 
 def _is_legend(tokens: list[str]) -> bool:

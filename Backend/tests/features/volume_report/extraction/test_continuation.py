@@ -68,8 +68,90 @@ def test_real_pdf_continuation_pages_are_read_and_marked():
 
 
 @pytest.mark.skipif(not (SAMPLES / "Sirjan Daily EVM ABAN.pdf").exists(), reason="sample not present")
-def test_unreadable_font_is_reported_not_silently_empty():
+def test_broken_bfont_rotated_pdf_extracts_all_income_pages_and_totals():
     result = extract_file(str(SAMPLES / "Sirjan Daily EVM ABAN.pdf"), Lexicon([]))
+    assert result.warnings == []
+    assert [e["used"] for e in result.sheet_log] == [True, True]
+    assert result.sheet_log[1].get("continuation") is True
+    assert {s.site_name for s in result.sheets} == {"سیرجان - قطروئیه"}
+
+    quantities = [line.quantity for sheet in result.sheets for line in sheet.lines]
+    assert len(quantities) == 21
+    assert Decimal("210") in quantities and Decimal("87922") in quantities
+    assert Decimal("224.5") in quantities and Decimal("260") in quantities and Decimal("326.65") in quantities
+
+    assert len(result.income_totals) == 1
+    totals = result.income_totals[0][2]
+    assert (totals.statement_base, totals.statement_coef, totals.adjustment, totals.income_total) == (
+        Decimal("21049013099"),
+        Decimal("43152350783"),
+        Decimal("68876694740"),
+        Decimal("121794436387"),
+    )
+
+
+def test_uncoded_continuation_grid_without_code_column():
+    rows = [
+        ["اضافه بها برای حفاری در عمق های بیشتر از 20 متر"],
+        ["1 مترطول 474,500 ریال 474,500 ریال 1.3 1.02"],
+        ["طول مازاد بر 20 متر اولیه برای عمق های 20 تا 25 متر"],
+        ["بتن c35 260 مترمکعب ریال 1.3 1.02 1.77"],
+        ["حمل مصالح بتن ریزی شمع 297.09125 مترمکعب 4,804,548 ریال"],
+        ["جمع صورت وضعیت بدون اعمال ضرایب (ریال) 21,049,013,099"],
+    ]
+    grid = continuation_grid(rows)
+    assert grid is not None and len(grid) == 4
+    assert grid[1][1:] == [
+        "اضافه بها برای حفاری در عمق های بیشتر از 20 متر طول مازاد بر 20 متر اولیه برای عمق های 20 تا 25 متر",
+        "1",
+        "مترطول",
+    ]
+    assert grid[2][1:] == ["بتن c35", "260", "مترمکعب"]
+    assert grid[3][1:] == ["حمل مصالح بتن ریزی شمع", "297.09125", "مترمکعب"]
+
+    # Guard: genuine expense sheets with equipment rental hours ("ساعت") must not be treated as income continuations
+    expense_rows = [
+        ["گزارش هزینه پروژه معابر"],
+        ["نام", "کد دستگاه", "ساعت کل کارکرد", "قیمت واحد", "هزینه کل"],
+        ["کمپرسی 0 ساعت 16,000,000 ریال"],
+        ["لودر 12 ساعت 15,000,000 ریال"],
+        ["گریدر 10 ساعت 16,000,000 ریال"],
+    ]
+    assert continuation_grid(expense_rows) is None
+
+
+def test_unreadable_font_is_reported_not_silently_empty(tmp_path):
+    from pypdf import PdfWriter
+    from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=400, height=400)
+    cmap = DecodedStreamObject()
+    cmap.set_data(
+        b"/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n"
+        b"1 begincodespacerange\n<00> <FF>\nendcodespacerange\n"
+        b"2 beginbfrange\n<41> <47> <0001>\n<48> <59> <000E>\nendbfrange\n"
+        b"endcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n"
+    )
+    font = DictionaryObject(
+        {
+            NameObject("/Type"): NameObject("/Font"),
+            NameObject("/Subtype"): NameObject("/Type1"),
+            NameObject("/BaseFont"): NameObject("/GarbledTestFont"),
+            NameObject("/ToUnicode"): writer._add_object(cmap),
+        }
+    )
+    page[NameObject("/Resources")] = DictionaryObject(
+        {NameObject("/Font"): DictionaryObject({NameObject("/F1"): writer._add_object(font)})}
+    )
+    stream = DecodedStreamObject()
+    stream.set_data(b"BT /F1 12 Tf 50 300 Td (ABCDEFGHIJKLMNOPQRSTUVWX) Tj ET")
+    page[NameObject("/Contents")] = writer._add_object(stream)
+    out = tmp_path / "garbled.pdf"
+    with out.open("wb") as handle:
+        writer.write(handle)
+
+    result = extract_file(str(out), Lexicon([]))
     assert {w["code"] for w in result.warnings} == {"unreadable_pdf_font"}
     assert all(e["reason"] == "unreadable_font" for e in result.sheet_log)
 

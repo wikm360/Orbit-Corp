@@ -162,3 +162,63 @@ def test_income_totals_value_before_label_and_split_letters():
     split = [["0", "جمع تعدی ل )ریال(", "6,183,333,333", "ب )ریا ل("], ["6,183,333,333", "جمع ک ل درآمد )ریال(", "6,183,333,333"]]
     letters = parse_income_totals(split)
     assert letters.adjustment == 0 and letters.income_total == Decimal(6_183_333_333) and letters.statement_base is None
+
+
+@pytest.mark.skipif(not SAMPLES.exists(), reason="eval samples not present")
+def test_real_pdf_faragir_isolates_notes_from_wrapped_project_name():
+    parsed = _evm_of("هفتگی 11-17 آبان- فراگیر عمران.pdf")
+    assert parsed is not None and parsed.basis == "actual"
+    projects = [r for r in parsed.rows if not r.is_total]
+    assert [r.project_name for r in projects] == [
+        "تامین ماشین آلات ذوب سرچشمه",
+        "حمل و بارگیری مواد معدنی معدن شماره 3",
+        "اجرای قطعه 6 - 5 طرح سامانه انتقال آب دریای عمان به صنایع استان اصفهان",
+    ]
+    third = projects[2]
+    assert (third.contract_amount, third.pv, third.ev, third.ev_net, third.ac, third.cpi, third.spi) == (
+        Decimal(4_900_000_000_000),
+        Decimal(47_282_060_736),
+        Decimal(20_787_155_824),
+        Decimal(18_727_167_409),
+        Decimal(96_718_406_098),
+        Decimal("0.19"),
+        Decimal("0.44"),
+    )
+
+
+def test_evm_pdf_notes_excluded_and_adjacent_wrapped_projects_do_not_bleed():
+    from app.features.volume_report.extraction.pdf_extractor import _extract_evm_grid
+
+    rows_by_y = [
+        (540.0, [(400.0, "گزارش مدیریت ارزش کسب شده ( EVM )")]),
+        (520.0, [(700.0, "نام پروژه"), (620.0, "مبلغ قرارداد"), (180.0, "CPI"), (135.0, "SPI=EV/PV"), (65.0, "توضیحات")]),
+        # Project 1 wraps above & below numbers + multi-line notes reaching right up near SPI
+        (495.0, [(45.0, "توضیحات خط اول پروژه یک")]),
+        (490.0, [(690.0, "پروژه یک سطر اول")]),
+        (485.0, [(760.0, "1"), (615.0, "1,000,000,000"), (300.0, "50,000,000"), (240.0, "40,000,000"), (200.0, "30,000,000"), (185.0, "1.33"), (143.0, "0.80"), (109.0, "معارض ( 200,000,000 )")]),
+        (479.0, [(690.0, "پروژه یک سطر دوم")]),
+        (474.0, [(50.0, "ادامه توضیحات یک")]),
+        # Project 2 immediately below Project 1, also wrapping above & below + notes
+        (461.0, [(690.0, "پروژه دو سطر اول")]),
+        (456.0, [(760.0, "2"), (615.0, "2,000,000,000"), (300.0, "80,000,000"), (240.0, "70,000,000"), (200.0, "60,000,000"), (185.0, "1.17"), (143.0, "0.88"), (95.0, "کندی عملیات")]),
+        (450.0, [(690.0, "پروژه دو سطر دوم")]),
+        (420.0, [(645.0, "جمع"), (300.0, "130,000,000"), (240.0, "110,000,000"), (200.0, "90,000,000"), (185.0, "1.22"), (143.0, "0.85")]),
+    ]
+    grid = _extract_evm_grid(rows_by_y)
+    parsed = parse_evm_sheet("EVM", grid)
+    assert parsed is not None
+    assert [r.project_name for r in parsed.rows if not r.is_total] == [
+        "پروژه یک سطر اول پروژه یک سطر دوم",
+        "پروژه دو سطر اول پروژه دو سطر دوم",
+    ]
+
+
+def test_excel_notes_column_with_numbers_does_not_affect_amounts_or_name():
+    rows = _sheet([
+        [1, "پروژه اول", 1_000_000_000, 12, 100_000_000, 100_000_000, 80_000_000, 60_000_000, 50_000_000, 1.20, 0.80, "خسارت 500,000,000 ریالی"],
+        [None, None, None, None, None, None, None, None, None, None, None, "جمع معارضین کارفرما"],
+    ])
+    parsed = parse_evm_sheet("EVM", rows)
+    assert parsed is not None and len(parsed.rows) == 1
+    row = parsed.rows[0]
+    assert row.project_name == "پروژه اول" and row.ac == Decimal(50_000_000) and row.spi == Decimal("0.80")

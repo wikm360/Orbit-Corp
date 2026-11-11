@@ -205,3 +205,92 @@ def test_foxit_golomak_pdf_extracts_evm_and_all_income_pages():
         ("کانال کنی", Decimal("600"), "m3"),
         ("بارگیری و تخلیه", Decimal("2000"), "m3"),
     ]
+
+
+def _make_minimal_symbol_ttf(code_to_gid: dict[int, int], *, upm: int = 2048, ng: int = 221) -> bytes:
+    """Build a minimal SFNT binary (head + maxp + cmap format-4 subtable for pid=3, eid=0)."""
+    import struct
+
+    head = bytearray(54)
+    struct.pack_into(">H", head, 18, upm)
+    maxp = struct.pack(">IH", 0x00010000, ng)
+
+    sorted_items = sorted(code_to_gid.items())
+    # Encode each entry as its own 1-char delta segment + 0xFFFF sentinel
+    segs = [(c, c, (gid - c) & 0xFFFF) for c, gid in sorted_items] + [(0xFFFF, 0xFFFF, 1)]
+    seg_count = len(segs)
+    sub = bytearray()
+    sub += struct.pack(">HHHHHHH", 4, 16 + 8 * seg_count, 0, seg_count * 2, 2, 0, 0)
+    sub += b"".join(struct.pack(">H", ec) for _, ec, _ in segs)
+    sub += struct.pack(">H", 0)
+    sub += b"".join(struct.pack(">H", sc) for sc, _, _ in segs)
+    sub += b"".join(struct.pack(">h", dl if dl < 0x8000 else dl - 0x10000) for _, _, dl in segs)
+    sub += b"\x00\x00" * seg_count
+    cmap = struct.pack(">HH", 0, 1) + struct.pack(">HHI", 3, 0, 12) + bytes(sub)
+
+    tables = [("cmap", bytes(cmap)), ("head", bytes(head)), ("maxp", maxp)]
+    offset = 12 + 16 * len(tables)
+    directory = bytearray()
+    payload = bytearray()
+    for tag, content in tables:
+        directory += tag.encode("latin1") + struct.pack(">III", 0, offset, len(content))
+        pad = (-len(content)) % 4
+        payload += content + (b"\x00" * pad)
+        offset += len(content) + pad
+    return struct.pack(">IHHHH", 0x00010000, len(tables), 16, 0, 0) + bytes(directory) + bytes(payload)
+
+
+def test_ttf_cmap_repairs_broken_bfont_tounicode_with_anchor_check():
+    from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+    from app.features.volume_report.extraction.pdf_extractor import _build_tounicode_stream, _synthesize_ttf_tounicode
+
+    ttf_bytes = _make_minimal_symbol_ttf({
+        0xF001: 3,    # ' '
+        0xF002: 15,   # '1'
+        0xF003: 139,  # 'ش'
+        0xF004: 127,  # 'ر'
+        0xF005: 115,  # 'ح'
+        0xF006: 211,  # 'لا' (\uFEFB)
+    })
+    ff2 = DecodedStreamObject()
+    ff2.set_data(ttf_bytes)
+    font = DictionaryObject({
+        NameObject("/Subtype"): NameObject("/TrueType"),
+        NameObject("/BaseFont"): NameObject("/IFRQAJ+BZar,Bold"),
+        NameObject("/FontDescriptor"): DictionaryObject({NameObject("/FontFile2"): ff2}),
+        NameObject("/ToUnicode"): _build_tounicode_stream({0x01: " ", 0x02: "1"}),
+    })
+
+    repaired = _synthesize_ttf_tounicode(font, "/IFRQAJ+BZar,Bold")
+    assert repaired == {0x01: " ", 0x02: "1", 0x03: "ش", 0x04: "ر", 0x05: "ح", 0x06: "\uFEFB"}
+
+    # Mismatched anchor (code 0x02 maps to '2' instead of Bornayekta '1' at GID 15) -> must refuse to guess
+    bad_anchor = DictionaryObject({
+        NameObject("/Subtype"): NameObject("/TrueType"),
+        NameObject("/BaseFont"): NameObject("/CustomNonBFont"),
+        NameObject("/FontDescriptor"): DictionaryObject({NameObject("/FontFile2"): ff2}),
+        NameObject("/ToUnicode"): _build_tounicode_stream({0x01: " ", 0x02: "2"}),
+    })
+    assert _synthesize_ttf_tounicode(bad_anchor, "/CustomNonBFont") is None
+
+    # Unused /WinAnsiEncoding Excel helper font without /ToUnicode is never touched
+    winansi = DictionaryObject({
+        NameObject("/Subtype"): NameObject("/TrueType"),
+        NameObject("/BaseFont"): NameObject("/BCDGEE+BNazaninBold"),
+        NameObject("/Encoding"): NameObject("/WinAnsiEncoding"),
+        NameObject("/FontDescriptor"): DictionaryObject({NameObject("/FontFile2"): ff2}),
+    })
+    assert _synthesize_ttf_tounicode(winansi, "/BCDGEE+BNazaninBold") is None
+
+
+def test_page_xy_transforms_rotated_pages():
+    from app.features.volume_report.extraction.pdf_extractor import _page_xy
+
+    cm_up = [1, 0, 0, 1, 0, 0]
+    cm_flip = [1, 0, 0, -1, 0, 800]
+    tm = [0, 1, -1, 0, 120.0, 540.0]
+    assert _page_xy(cm_up, tm, 0) == (120.0, 540.0)
+    assert _page_xy(cm_flip, tm, 0) == (120.0, -540.0)
+    assert _page_xy(cm_up, tm, 90) == (540.0, -120.0)
+    assert _page_xy(cm_up, tm, 180) == (-120.0, -540.0)
+    assert _page_xy(cm_up, tm, 270) == (-540.0, 120.0)

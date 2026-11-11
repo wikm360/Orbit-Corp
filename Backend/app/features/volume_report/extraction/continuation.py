@@ -14,11 +14,24 @@ import re
 from typing import Any
 
 from app.features.volume_report.extraction.normalize import normalize_text
+from app.features.volume_report.extraction.units import normalize_unit
 
 _CODE_ROW = re.compile(r"^\s*(?:\d{1,3}\s+)?(\d{5,6})\b\s*(.*)$")
 # quantity, unit (letters, "/" and "-" only), price with thousands separators — the first such triple on the row
 _QTY_UNIT_PRICE = re.compile(r"(?<![\d,.])(\d[\d,]*(?:\.\d+)?)\s+([^\d\s][^\d]*?)\s+(\d{1,3}(?:,\d{3})+)(?!\d)")
+# Uncoded continuation tables (no "کد" column, e.g. landscape PDF statements) have <qty> <physical_unit> <price|ریال>.
+_UNCODED_QTY_UNIT_PRICE = re.compile(
+    r"(?<![\d,.])(\d[\d,]*(?:\.\d+)?)\s+([^\d\s][^\d]*?)\s+(?=(?:\d{1,3}(?:,\d{3})+|\bریال\b))"
+)
 _STOP_WORDS = ("جمع", "مابه التفاوت", "مقایسه درآمد")
+_EXPENSE_PAGE_MARKERS = (
+    "کد دستگاه",
+    "نام دستگاه",
+    "هزینه ماشین آلات",
+    "هزینه کل",
+    "ساعت کل کارکرد",
+    "پیمانکاران جزء",
+)
 _MIN_CODE_ROWS = 3
 HEADER = ["شرح", "فعالیت", "حجم", "واحد"]
 
@@ -38,27 +51,53 @@ def _is_noise(text: str) -> bool:
     return bool(re.fullmatch(r"\d{1,3}", text))
 
 
-def continuation_grid(rows: list[list[Any]]) -> list[list[Any]] | None:
-    """Synthetic grid (header + one row per code row) or None when the page is not a continuation of an income table."""
-    items: list[tuple[str, Any]] = []  # ("code", (inline, qty, unit)) | ("frag", text)
-    for row in rows:
-        text = _row_text(row)
-        if not text:
+def _match_coded_row(text: str) -> tuple[str, str, str, str] | None:
+    code = _CODE_ROW.match(text)
+    if not code:
+        return None
+    tail = code.group(2)
+    found = _QTY_UNIT_PRICE.search(tail)
+    if not found:
+        return None
+    return tail[: found.start()].strip(), found.group(1), found.group(2).strip(), code.group(1)
+
+
+def _match_uncoded_row(text: str) -> tuple[str, str, str, str] | None:
+    for found in _UNCODED_QTY_UNIT_PRICE.finditer(text):
+        unit = found.group(2).strip()
+        unit_info = normalize_unit(unit)
+        # Require a physical/income BOQ unit (never empty/unknown prose or equipment-rental hours "ساعت").
+        if unit_info.unit_norm in ("other", "hr"):
             continue
+        return text[: found.start()].strip(), found.group(1), unit, ""
+    return None
+
+
+def _collect_items(lines: list[str], matcher: Any) -> tuple[list[tuple[str, Any]], list[int]]:
+    items: list[tuple[str, Any]] = []
+    for text in lines:
         if any(normalize_text(text).startswith(word) for word in _STOP_WORDS):
             break
-        code = _CODE_ROW.match(text)
-        if code:
-            tail = code.group(2)
-            found = _QTY_UNIT_PRICE.search(tail)
-            if found:
-                items.append(("code", (tail[: found.start()].strip(), found.group(1), found.group(2).strip(), code.group(1))))
-                continue
-        if not _is_noise(text):
+        matched = matcher(text)
+        if matched is not None:
+            items.append(("code", matched))
+        elif not _is_noise(text):
             items.append(("frag", text))
     codes = [i for i, (kind, _) in enumerate(items) if kind == "code"]
+    return items, codes
+
+
+def continuation_grid(rows: list[list[Any]]) -> list[list[Any]] | None:
+    """Synthetic grid (header + one row per item row) or None when the page is not an income continuation."""
+    lines = [text for row in rows if (text := _row_text(row))]
+    items, codes = _collect_items(lines, _match_coded_row)
     if len(codes) < _MIN_CODE_ROWS:
-        return None
+        head_norm = " ".join(normalize_text(line) for line in lines[:10])
+        if any(marker in head_norm for marker in _EXPENSE_PAGE_MARKERS):
+            return None
+        items, codes = _collect_items(lines, _match_uncoded_row)
+        if len(codes) < _MIN_CODE_ROWS:
+            return None
 
     before: dict[int, list[str]] = {i: [] for i in codes}
     after: dict[int, list[str]] = {i: [] for i in codes}
@@ -87,5 +126,6 @@ def continuation_grid(rows: list[list[Any]]) -> list[list[Any]] | None:
     for i in codes:
         inline, qty, unit, code_no = items[i][1]
         description = " ".join(part for part in [*before[i], inline, *after[i]] if part).strip()
-        grid.append([None, description or f"ردیف {code_no}", qty.replace(",", ""), unit])
+        fallback = f"ردیف {code_no}" if code_no else ""
+        grid.append([None, description or fallback, qty.replace(",", ""), unit])
     return grid
