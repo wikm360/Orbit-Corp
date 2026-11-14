@@ -32,6 +32,8 @@ class UserRead(BaseModel):
     # Effective access to the Rahkaran accounting tools (super admins always; others only when granted).
     accounting_access: bool = Field(validation_alias="has_accounting_access")
     accounting_access_granted_at: datetime | None = None
+    # Effective access to /user-management (super admins always; others only when granted).
+    user_management_access: bool = Field(default=False, validation_alias="has_user_management_access")
     # Token quota (`token_limit` None = unlimited; super admins are never limited).
     token_limit: int | None = None
     tokens_used: int = 0

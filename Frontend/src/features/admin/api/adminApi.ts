@@ -12,6 +12,7 @@ export const adminApi = {
   removeUserFromTeam: workspaceApi.removeTeamMember,
   setUserRole: workspaceApi.updateUserRole,
   setAccountingAccess: workspaceApi.setAccountingAccess,
+  setUserManagementAccess: workspaceApi.setUserManagementAccess,
   setTokenLimit: workspaceApi.setTokenLimit,
   extendTokenLimit: workspaceApi.extendTokenLimit,
   resetTokenUsage: workspaceApi.resetTokenUsage,

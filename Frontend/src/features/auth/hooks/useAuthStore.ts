@@ -14,6 +14,8 @@ interface AuthState {
   hasHydrated: boolean;
   setHasHydrated: (value: boolean) => void;
   setSession: (token: string, refreshToken: string, user: User) => void;
+  /** Replaces the cached profile (e.g. after the server changed this user's permissions) without touching tokens. */
+  setUser: (user: User) => void;
   logout: () => void;
 }
 
@@ -29,6 +31,7 @@ export const useAuthStore = create<AuthState>()(
         localStorage.setItem("refresh_token", refreshToken);
         set({ token, user });
       },
+      setUser: (user) => set({ user }),
       logout: () => {
         void revokeSession();
         localStorage.removeItem("auth_token");

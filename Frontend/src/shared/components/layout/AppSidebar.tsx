@@ -12,6 +12,8 @@ import { Project, User } from "@/shared/types";
 import { cn } from "@/shared/lib/utils";
 import { useVolumeEnabled } from "@/features/volume-reports/hooks/useVolumeEnabled";
 import { loadWorkspace } from "@/shared/lib/workspaceApi";
+import { authApi } from "@/features/auth/api/authApi";
+import { useAuthStore } from "@/features/auth/hooks/useAuthStore";
 
 type IconName =
   | "panel"
@@ -24,6 +26,7 @@ type IconName =
   | "folder"
   | "chevron"
   | "admin"
+  | "users"
   | "chart"
   | "logout"
   | "close";
@@ -38,6 +41,7 @@ const paths: Record<IconName, React.ReactNode> = {
   workspace: <><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 9v12"/></>,
   folder: <><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z"/><path d="M3 10h18"/></>,
   chevron: <path d="m6 9 6 6 6-6"/>,
+  users: <><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 14.5a6.5 6.5 0 0 1 3.5 5.5"/></>,
   chart: <><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></>,
   admin: <><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></>,
   logout: <><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></>,
@@ -68,6 +72,7 @@ const NAV_ITEMS = [
   { href: "/workspace", label: "فضای کاری", icon: "workspace" as const },
   { href: "/volume-reports", label: "گزارش حجم عملیات", icon: "chart" as const, requiresVolumeModule: true },
   { href: "/admin", label: "مدیریت", icon: "admin" as const, adminOnly: true },
+  { href: "/user-management", label: "مدیریت کاربران", icon: "users" as const, requiresUserManagement: true },
 ];
 
 interface AppSidebarProps {
@@ -90,6 +95,13 @@ export function AppSidebar({
   const pathname = usePathname();
   const volumeModuleEnabled = useVolumeEnabled();
   const branding = useBranding();
+  const setUser = useAuthStore((state) => state.setUser);
+  const userId = user?.id;
+  // The cached profile is persisted, so permissions a super admin granted/revoked would only show after a re-login.
+  useEffect(() => {
+    if (!userId) return;
+    authApi.me().then(setUser).catch(() => {});
+  }, [userId, setUser]);
   const router = useRouter();
   const searchParams = useSearchParams();
   const activeConversationId = searchParams.get("conversation");
@@ -266,7 +278,7 @@ export function AppSidebar({
       </button>
 
       <nav aria-label="ناوبری اصلی" className="space-y-1">
-        {NAV_ITEMS.filter((item) => (!item.adminOnly || user?.role === "admin" || user?.role === "super_admin") && (!("requiresVolumeModule" in item) || volumeModuleEnabled === true)).map((item) => {
+        {NAV_ITEMS.filter((item) => (!item.adminOnly || user?.role === "admin" || user?.role === "super_admin") && (!("requiresVolumeModule" in item) || volumeModuleEnabled === true) && (!("requiresUserManagement" in item) || user?.user_management_access === true)).map((item) => {
           const isActive = pathname.startsWith(item.href);
           return (
             <Link

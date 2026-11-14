@@ -108,7 +108,9 @@
 `DbQueryStats{total_queries,successful_queries,rejected_queries,error_queries,positive_feedback,negative_feedback,avg_duration_ms}`؛ `IngestResponse{total,unchanged,embedded,stored_without_embedding,deleted}`.
 
 ## Admin (`require_admin`)
-`GET /admin/users` · `POST /admin/users` · `PATCH /admin/users/{id}/role` `{role}` (super_admin) · `PUT /admin/users/{id}/accounting-access` `{enabled}` (super_admin؛ super_admin هدف → 400؛ پاسخ `UserRead` با `accounting_access` مؤثر) · `POST /admin/users` فیلد اختیاری `accounting_access` (فقط super_admin) · `GET /admin/documents` (همه‌ی اسناد).
+`GET /admin/users` · `POST /admin/users` · `PATCH /admin/users/{id}/role` `{role}` (super_admin) · `PUT /admin/users/{id}/accounting-access` `{enabled}` (super_admin؛ super_admin هدف → 400؛ پاسخ `UserRead` با `accounting_access` مؤثر) · `POST /admin/users` فیلد اختیاری `accounting_access` (فقط super_admin) · `PUT /admin/users/{id}/user-management-access` `{enabled}` (super_admin؛ هدف super_admin → 400) · `GET /admin/documents` (همه‌ی اسناد).
+
+**مدیریت کاربران (دسترسی واگذارشده، `/user-management`)** — dependency: `require_user_management_access` (super_admin یا فلگ؛ ادمین بدون فلگ 403): `GET /user-management/users` (هر کاربر + `manageable` برای فراخواننده) · `POST /user-management/users` `{email,password(8..72),full_name}` (نقش همیشه `user`؛ ایمیل تکراری 409) · `PATCH /user-management/users/{id}` `{email?,full_name?}` · `POST /user-management/users/{id}/reset-password` `{password}` (204؛ refresh tokenهای هدف باطل می‌شوند) · `DELETE /user-management/users/{id}` (204؛ حذف خود 400).
 داشبورد بازرس دیداری و متنی: `/db-admin/ocr-inspector` و `/admin/ocr-inspector` شامل:
 - بازرسی دیداری OCR و برش‌ها (`/api/v1/admin/ocr-debug/*`)
 - بازرسی متنی اسناد و صفحات، تصویر رندرشده صفحه و پردازش مجدد با OCR (`/api/v1/admin/documents-inspect/list`، `GET /documents-inspect/{id}`، `GET /documents-inspect/{id}/page-image/{page}`، `POST /documents-inspect/{id}/reprocess`)

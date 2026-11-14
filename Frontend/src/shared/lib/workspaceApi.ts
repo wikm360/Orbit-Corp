@@ -1,5 +1,5 @@
 import { apiRequest } from "./apiClient";
-import type { Branding, CostSummary, ModelPrice, Project, ProjectMembership, ProjectPermission, QuotaOverview, TokenUsageReport, UserQuota, Team, TeamMembership, User, UserRole } from "@/shared/types";
+import type { Branding, CostSummary, ManagedUser, ModelPrice, Project, ProjectMembership, ProjectPermission, QuotaOverview, TokenUsageReport, UserQuota, Team, TeamMembership, User, UserRole } from "@/shared/types";
 
 export const workspaceApi = {
   myTeams: () => apiRequest<Team[]>("/teams/mine"),
@@ -33,6 +33,12 @@ export const workspaceApi = {
   updateBranding: (body: Partial<Record<string, string>>) => apiRequest<Branding>("/admin/branding", { method: "PUT", body }),
   uploadBrandLogo: (file: File) => { const formData = new FormData(); formData.append("file", file); return apiRequest<Branding>("/admin/branding/logo", { method: "POST", formData }); },
   deleteBrandLogo: () => apiRequest<Branding>("/admin/branding/logo", { method: "DELETE" }),
+  setUserManagementAccess: (userId: string, enabled: boolean) => apiRequest<User>(`/admin/users/${userId}/user-management-access`, { method: "PUT", body: { enabled } }),
+  managedUsers: () => apiRequest<ManagedUser[]>("/user-management/users"),
+  createManagedUser: (body: { email: string; password: string; full_name: string }) => apiRequest<ManagedUser>("/user-management/users", { method: "POST", body }),
+  updateManagedUser: (userId: string, body: { email?: string; full_name?: string }) => apiRequest<ManagedUser>(`/user-management/users/${userId}`, { method: "PATCH", body }),
+  resetManagedUserPassword: (userId: string, password: string) => apiRequest<void>(`/user-management/users/${userId}/reset-password`, { method: "POST", body: { password } }),
+  deleteManagedUser: (userId: string) => apiRequest<void>(`/user-management/users/${userId}`, { method: "DELETE" }),
   users: () => apiRequest<User[]>("/admin/users"),
   updateUserRole: (userId: string, role: UserRole) => apiRequest<User>(`/admin/users/${userId}/role`, { method: "PATCH", body: { role } }),
   setAccountingAccess: (userId: string, enabled: boolean) => apiRequest<User>(`/admin/users/${userId}/accounting-access`, { method: "PUT", body: { enabled } }),

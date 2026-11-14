@@ -129,7 +129,9 @@ async def _classify(db: AsyncSession, report: Report, lexicon, preserved: dict[s
                           source=ClassificationSource.MEMORY, confirmed=True, decision_id=decision.id, reason="memory_exact")
         else:
             values = dict(disposition=Disposition.NEEDS_INPUT, source=ClassificationSource.SYSTEM, confirmed=False, reason="awaiting_classification")
-        values.setdefault("role", Role.NA)
+        hint = (line.flags.get("role_hint") or "na").lower()
+        role_default = Role(hint) if hint in Role._value2member_map_ else Role.NA
+        values.setdefault("role", role_default)
         tally[values.get("reason") or "other"] = tally.get(values.get("reason") or "other", 0) + 1
         db.add(Classification(report_id=report.id, group_key=key, **values))
     await db.flush()

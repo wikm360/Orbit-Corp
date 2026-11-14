@@ -12,6 +12,8 @@
 
 **دسترسی مالی (permission مستقل از نقش)** — `users.accounting_access` (+ `accounting_access_granted_by/at`). فقط **super_admin** با `PUT /admin/users/{id}/accounting-access {enabled}` آن را به هر کاربری (admin یا user) می‌دهد/می‌گیرد. مؤثر = `User.has_accounting_access` = super_admin **یا** فلگ (`UserContext.can_use_accounting`). super_admin همیشه دارد و قابل تغییر نیست (400) تا سازمان قفل نشود؛ ادمین معمولی نمی‌تواند واگذار کند حتی اگر خودش دسترسی داشته باشد. دسترسی از DB در هر درخواست خوانده می‌شود، پس لغو فوری اثر می‌کند. migration `0013` به ادمین‌های موجود فلگ را `true` داد (رفتار قبلی حفظ شد)؛ ادمین‌های جدید پیش‌فرض بدون دسترسی‌اند.
 
+**دسترسی مدیریت کاربران (permission مستقل از نقش)** — `users.user_management_access` (+ `_granted_by/at`، migration `0030`). فقط **super_admin** با `PUT /admin/users/{id}/user-management-access {enabled}` می‌دهد/می‌گیرد (super_admin هدف → 400؛ super_admin همیشه دارد). مؤثر = `User.has_user_management_access`؛ از DB در هر درخواست خوانده می‌شود (لغو فوری). برای تیم IT مشتری است بی‌آنکه admin شود: endpointها زیر `/user-management` (نه `/admin`) با `require_user_management_access`. کارها: لیست، ساخت (نقش همیشه `user`)، تغییر ایمیل/نام، ریست رمز (refresh tokenهای هدف باطل)، حذف. **دارنده‌ی غیر‌super فقط روی کاربر با نقش `user` که خودش هم این دسترسی را ندارد عمل می‌کند** (admin/super_admin/هم‌رده‌ها 403 — وگرنه با ریست رمز آن‌ها را تصاحب می‌کرد)؛ ریست رمز/ایمیل خودش مجاز، حذف خود برای همه 400. super_admin روی همه عمل می‌کند. تغییر نقش و واگذاری دسترسی‌ها همچنان فقط super_admin. حذف کاربر: FKها CASCADE/SET NULL‌اند (عضویت‌ها، توکن‌ها، چت‌های شخصی حذف؛ ستون‌های سازنده NULL).
+
 **نقش داخل تیم** — `team_memberships.role` (`TeamRole`): `leader` یا `member`. یک نفر می‌تواند در تیم A لیدر و در تیم B عضو ساده باشد. (مفهوم «Leader Team» در سند اولیه‌ی نیازمندی.)
 
 **سقف مصرف توکن** — `users.token_limit` (NULL = نامحدود)، `tokens_used`، `token_period_start`، `token_limit_set_by/at` (migration `0017`) + جدول audit `llm_usage`. مدیریت (از migration `0027` فقط super_admin؛ admin فقط می‌خواند): تعیین/حذف سقف `PUT /admin/users/{id}/token-limit {limit|null}`، تمدید `POST …/extend {add}` (فقط وقتی سقف دارد؛ مصرف دست‌نخورده)، ریست `POST …/reset` (مصرف=۰ و دوره‌ی جدید؛ تاریخچه‌ی `llm_usage` می‌ماند)، گزارش `GET …/token-usage`. **super_admin هرگز محدود نمی‌شود** (هدف → 400)؛ super_admin برای همه جز خودش. اعمال: ۴۲۹ با `detail="token_quota_exceeded"` قبل از شروع چت شخصی (قبل از ذخیره‌ی پیام) و Run/Continue گزارش حجم؛ در چت گروهی پیام انسانی ثبت و به‌جای پاسخ AI یک پیام اعلان؛ **نرم**: بین گام‌های agent (چت: پیام ثابت، گزارش حجم: `agent_incomplete`) هم چک می‌شود، پس حداکثر یک فراخوانی مدل سرریز دارد. **سقف دلاری** (پلن نقش‌ها، override کاربر، سوئیچ enforced، و endpointهای token-limit قدیمی): نوشتن فقط super_admin، خواندن admin+ (جزئیات در flows/token-quota.md). **قیمت مدل‌ها** (`/admin/model-prices`): ویرایش/حذف فقط super_admin، خواندن و `cost-summary` برای admin+. جزئیات: [flows/token-quota.md](flows/token-quota.md).
@@ -76,6 +78,8 @@
 | feedback و export یک پاسخ مالی | ✗ | ✗ | ✗ | دسترسی مالی؛ صاحب log یا ادمین | ✓ |
 | استفاده از ابزار مالی `ask_accounting_db` (فقط چت شخصی، نه گروهی) | ✗ (مگر دسترسی مالی داده شده) | ✗ (مگر داده شده) | ✗ (مگر داده شده) | **فقط با دسترسی مالی** | ✓ همیشه |
 | `PUT /admin/users/{id}/accounting-access` | ✗ | ✗ | ✗ | ✗ | ✓ |
+| `PUT /admin/users/{id}/user-management-access` | ✗ | ✗ | ✗ | ✗ | ✓ |
+| `/user-management/*` (ساخت/ریست رمز/ایمیل/حذف کاربر عادی) | ✗ (مگر دسترسی داده شده) | ✗ (مگر داده شده) | ✗ (مگر داده شده) | **فقط با دسترسی مدیریت کاربران** | ✓ (روی همه) |
 
 قواعد مهم:
 0. **محتوای مالی در چت:** ابزار مالی در گفتگوی گروهی (`project_group`) در دسترس نیست (پاسخ برای همه‌ی اعضا پخش می‌شود). پیام assistant با artifact `sql_result` علامت `messages.contains_financial` می‌گیرد؛ در `GET /chat/conversations/{id}` و `/messages` برای خواننده‌ی **بدون دسترسی مالی** متن به `FINANCIAL_PLACEHOLDER` تبدیل و `sources`/`artifacts` خالی می‌شود (ادمین بدون دسترسی که چت شخصی دیگران را می‌بیند، یا کاربری که دسترسی‌اش لغو شده)، پخش websocket همیشه بدون محتوای مالی است، و در تاریخچه‌ی ارسالی به مدل نیز همین جایگزینی انجام می‌شود تا مدل ارقام را تکرار نکند (`financial.py`، `AgentEngine._build_messages`). بخش مالی system prompt فقط برای کاربر دارای دسترسی (و چت غیرگروهی) اضافه می‌شود. ⚠️ حافظه‌ی پروژه برای همه‌ی اعضا خوانا است؛ فقط prompt ابزار حافظه ذخیره‌ی داده‌ی مالی را ممنوع می‌کند (کد جلویش را نمی‌گیرد).
@@ -83,7 +87,7 @@
 2. **حذف از تیم** در `access_control.service.remove_user_from_team` همه‌ی `project_memberships` کاربر در پروژه‌های آن تیم را هم پاک می‌کند.
 3. سازنده‌ی پروژه خودکار عضو پروژه می‌شود.
 4. تغییر نقش `leader→member` توسط leader دیگر ممکن است: `POST /teams/{id}/members` با `role=member` فقط `leads_team` می‌خواهد؛ فقط **ارتقا به leader** admin می‌خواهد. (رفتار فعلی؛ در صورت نیاز سخت‌گیری شود.)
-5. endpoint حذف تیم/پروژه/کاربر وجود ندارد. تغییر نام تیم/پروژه هم نیست.
+5. endpoint حذف تیم/پروژه وجود ندارد (حذف کاربر فقط از `/user-management`). تغییر نام تیم/پروژه هم نیست.
 
 ## تعیین «scope بازیابی» برای agent (`agent/scope.py`)
 `resolve_retrieval_scope(context, conversation) -> project_id | None` تعیین می‌کند agent کدام **پایگاه دانش پروژه** را ببیند:

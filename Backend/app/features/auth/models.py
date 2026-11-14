@@ -41,6 +41,15 @@ class User(Base):
         PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     accounting_access_granted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Delegated by a super admin: lets this user manage plain-user accounts (create, change email, reset password, delete)
+    # via /user-management, without any other admin power. Super admins always have it.
+    user_management_access: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
+    user_management_access_granted_by: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    user_management_access_granted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Token quota (see features/usage): `token_limit` NULL = unlimited; `tokens_used` counts the current period, which a
     # reset restarts (`token_period_start`). Super admins are never limited whatever these say.
     token_limit: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
@@ -63,6 +72,10 @@ class User(Base):
     def has_accounting_access(self) -> bool:
         """Effective access: super admins always, everyone else only when explicitly granted."""
         return self.role == UserRole.SUPER_ADMIN or bool(self.accounting_access)
+
+    @property
+    def has_user_management_access(self) -> bool:
+        return self.role == UserRole.SUPER_ADMIN or bool(self.user_management_access)
 
     team_memberships: Mapped[list["TeamMembership"]] = relationship(
         back_populates="user",

@@ -8,11 +8,23 @@ export interface User {
   /** Effective access to the Rahkaran accounting tools: super admins always, everyone else only when a super admin granted it. */
   accounting_access: boolean;
   accounting_access_granted_at?: string | null;
+  /** Effective access to the delegated user-management page: super admins always, everyone else only when a super admin granted it. */
+  user_management_access?: boolean;
   /** Token quota: `token_limit` null = unlimited (super admins are never limited). */
   token_limit?: number | null;
   tokens_used?: number;
   token_period_start?: string | null;
   created_at: string;
+}
+
+export interface ManagedUser {
+  id: string;
+  email: string;
+  full_name: string | null;
+  role: UserRole;
+  created_at: string;
+  /** Whether the caller may change/delete this account. */
+  manageable: boolean;
 }
 
 export interface Team {

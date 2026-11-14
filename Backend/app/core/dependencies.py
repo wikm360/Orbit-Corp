@@ -128,6 +128,13 @@ async def require_accounting_access(user: User = Depends(get_current_user)) -> U
     return user
 
 
+async def require_user_management_access(user: User = Depends(get_current_user)) -> User:
+    """Holders of the delegated user-management permission (and super admins)."""
+    if not user.has_user_management_access:
+        raise ForbiddenError("User-management access is required for this action")
+    return user
+
+
 async def require_accounting_admin(user: User = Depends(get_current_user)) -> User:
     """Organisation oversight of accounting activity: an admin who also holds the accounting permission."""
     if user.role not in ADMIN_ROLES or not user.has_accounting_access:

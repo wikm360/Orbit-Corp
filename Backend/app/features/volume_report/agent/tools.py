@@ -237,7 +237,8 @@ class Classify(VrTool):
                     raise BadRequestError(f"unit {g.unit} cannot be converted to {item.key} ({item.output_unit})")
                 if item.mining_only and g.site_kind != "mining":
                     raise BadRequestError(f"{item.key} is only for mining sites")
-                await _upsert(ctx, g, disposition=Disposition.COUNTED, item_id=item.id, role=Role(entry["role"]),
+                role_val = Role.SUPPLY if g.role_hint == "supply" and entry["role"] not in ("supply", "combined") else Role(entry["role"])
+                await _upsert(ctx, g, disposition=Disposition.COUNTED, item_id=item.id, role=role_val,
                               confidence=float(entry["confidence"]), reason=entry["reason"])
                 ok += 1
             except (BadRequestError, NotFoundError, ConflictError) as exc:

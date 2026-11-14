@@ -23,6 +23,7 @@ from app.features.db_connector.router import router as accounting_db_router
 from app.features.documents.router import router as documents_router
 from app.features.memory.router import router as memory_router
 from app.features.projects.router import router as projects_router
+from app.features.user_management.router import router as user_management_router
 
 # Configure root/app logging so agent loop steps, RAG queries, and tool calls appear in docker compose logs
 logging.basicConfig(
@@ -123,6 +124,7 @@ app.include_router(accounting_db_router, prefix=settings.api_prefix)
 app.include_router(branding_public_router, prefix=settings.api_prefix)
 app.include_router(branding_admin_router, prefix=settings.api_prefix)
 app.include_router(admin_router, prefix=settings.api_prefix)
+app.include_router(user_management_router, prefix=settings.api_prefix)
 app.include_router(inspector_router, prefix=settings.api_prefix)
 if settings.volume_report_enabled:
     from app.features.volume_report.router import router as volume_report_router
