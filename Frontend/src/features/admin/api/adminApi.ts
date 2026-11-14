@@ -16,6 +16,16 @@ export const adminApi = {
   extendTokenLimit: workspaceApi.extendTokenLimit,
   resetTokenUsage: workspaceApi.resetTokenUsage,
   tokenUsage: workspaceApi.tokenUsage,
+  quotaOverview: workspaceApi.quotaOverview,
+  setQuotaEnforced: workspaceApi.setQuotaEnforced,
+  setQuotaPlan: workspaceApi.setQuotaPlan,
+  setSetupPool: workspaceApi.setSetupPool,
+  setOrgCap: workspaceApi.setOrgCap,
+  userQuota: workspaceApi.userQuota,
+  setUserQuota: workspaceApi.setUserQuota,
+  modelPrices: workspaceApi.modelPrices,
+  setModelPrice: workspaceApi.setModelPrice,
+  costSummary: workspaceApi.costSummary,
   listAllDocuments: () => apiRequest<Document[]>("/admin/documents"),
 };
 

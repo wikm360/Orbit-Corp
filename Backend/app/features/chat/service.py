@@ -17,7 +17,7 @@ from app.features.chat.models import Conversation, ConversationType, Message, Se
 from app.features.chat.schemas import ConversationCreate, MessageRead
 from app.features.chat.ws import manager as ws_manager
 from app.features.projects.service import get_project
-from app.features.usage.service import is_exhausted
+from app.features.usage.service import is_blocked
 
 settings = get_settings()
 
@@ -351,7 +351,7 @@ async def post_group_message(
 
     stripped = content.strip()
     if stripped.lower().startswith(settings.ai_trigger_token.lower()):
-        if is_exhausted(context.user):
+        if await is_blocked(context.user):
             await _post_quota_notice(db, conversation, context, message.id)
         else:
             asyncio.create_task(_generate_group_ai_reply(conversation.id, context, message.id))

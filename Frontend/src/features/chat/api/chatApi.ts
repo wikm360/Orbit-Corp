@@ -37,7 +37,7 @@ export async function streamChat(
       body: JSON.stringify({ message, conversation_id: conversationId }),
       signal,
     });
-    if (!response.ok) throw new ApiError(response.status, await parseErrorMessage(response));
+    if (!response.ok) throw new ApiError(response.status, await parseErrorMessage(response), response.headers);
     if (!response.body) throw new Error("پاسخی از سرور دریافت نشد.");
 
     const reader = response.body.getReader();

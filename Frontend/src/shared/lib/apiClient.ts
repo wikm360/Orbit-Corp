@@ -23,7 +23,8 @@ export const AUTH_UNAUTHORIZED_EVENT = "auth:unauthorized";
 export const AUTH_REFRESHED_EVENT = "auth:refreshed";
 
 export class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  /** `headers` carries e.g. X-Quota-Window / X-Quota-Resets-At of a 429. */
+  constructor(public status: number, message: string, public headers?: Headers) {
     super(message);
   }
 }
@@ -131,7 +132,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
     body = JSON.stringify(options.body);
   }
   const response = await authorizedFetch(path, { method: options.method ?? "GET", headers, body });
-  if (!response.ok) throw new ApiError(response.status, await parseErrorMessage(response));
+  if (!response.ok) throw new ApiError(response.status, await parseErrorMessage(response), response.headers);
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
 }

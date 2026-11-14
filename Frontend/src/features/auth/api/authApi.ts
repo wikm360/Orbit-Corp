@@ -1,5 +1,5 @@
 import { apiRequest } from "@/shared/lib/apiClient";
-import { User } from "@/shared/types";
+import { MyUsage, User, UserQuota } from "@/shared/types";
 
 import { LoginPayload, RegisterPayload, TokenResponse } from "../types";
 
@@ -11,4 +11,6 @@ export const authApi = {
     apiRequest<TokenResponse>("/auth/register", { method: "POST", body: payload }),
 
   me: () => apiRequest<User>("/auth/me"),
+  myQuota: () => apiRequest<UserQuota>("/auth/me/quota"),
+  myUsage: (days = 30) => apiRequest<MyUsage>(`/auth/me/usage?days=${days}`),
 };

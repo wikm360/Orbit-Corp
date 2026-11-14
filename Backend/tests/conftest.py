@@ -93,6 +93,15 @@ class _StubEmbeddingProvider:
 
 
 @pytest.fixture(autouse=True)
+def _reset_usage_caches():
+    # The quota config / org total / price table are cached for a few seconds in-process; the DB is wiped between tests.
+    from app.features.usage import pricing, quota
+
+    quota.invalidate_cache()
+    pricing.invalidate_cache()
+
+
+@pytest.fixture(autouse=True)
 def _stub_providers(monkeypatch):
     # Keeps the suite offline: no test may reach a real LLM/embedding API.
     monkeypatch.setattr(agent_engine_module, "get_llm_provider", lambda: _StubLLMProvider())

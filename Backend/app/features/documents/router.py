@@ -3,6 +3,7 @@ import uuid
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.features.usage.service import enforce_upload_quota
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.dependencies import UserContext, get_current_user_context, require_project_access, require_project_permission
@@ -49,6 +50,7 @@ async def upload_project_document(
 ):
     """Uploads one file (into `folder_id`, default the project root). A .zip/.rar/.7z is unpacked in the background
     into that folder: the response then carries `archive` instead of `document`."""
+    await enforce_upload_quota(context.user, project_upload=True)  # setup pool or the uploader's dollar quota (429 when exhausted)
     if archive_service.is_archive(file.filename):
         archive = await archive_service.create_archive_import(
             db, file, project_id=project.id, folder_id=folder_id, uploaded_by=context.id
@@ -87,6 +89,7 @@ async def upload_project_documents_batch(
     """Uploads several files at once (a browser folder upload may send `dir/sub/file.pdf` names: the folders are
     created). Each accepted file is queued for ingestion independently; a rejected file doesn't fail the others.
     Archives are unpacked in the background (`archive` in the item); unsupported types are kept as `unsupported`."""
+    await enforce_upload_quota(context.user, project_upload=True)
     outcomes = await file_ops.upload_project_files(
         db, files, uploaded_by=context.id, project_id=project.id, folder_id=folder_id
     )
@@ -207,8 +210,10 @@ async def delete_files(
 async def retry_files(
     body: FileSelection,
     project: Project = Depends(require_documents_manager),
+    context: UserContext = Depends(get_current_user_context),
     db: AsyncSession = Depends(get_db),
 ):
+    await enforce_upload_quota(context.user, project_upload=True)  # a retry runs OCR again
     retried, skipped = await file_ops.retry_items(db, project.id, body.document_ids, body.folder_ids)
     return BulkResult(count=retried, skipped=skipped)
 
@@ -248,8 +253,10 @@ async def cancel_project_document(
 async def retry_project_document(
     document_id: uuid.UUID,
     project: Project = Depends(require_documents_manager),
+    context: UserContext = Depends(get_current_user_context),
     db: AsyncSession = Depends(get_db),
 ):
+    await enforce_upload_quota(context.user, project_upload=True)
     document = await service.get_document(db, document_id)
     if document.project_id != project.id:
         raise BadRequestError("This document does not belong to the given project")

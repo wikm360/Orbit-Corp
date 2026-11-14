@@ -394,11 +394,26 @@ async def _assert_still_processing(db: AsyncSession, document_id: uuid.UUID) -> 
 
 
 async def run_ingestion_pipeline(document_id: uuid.UUID, file_path: str) -> None:
-    """Entry point called by the RQ worker for a single uploaded document. OCR/embedding tokens are recorded for the uploader
-    (never limited: stopping half-way would leave the document half-processed)."""
+    """Entry point called by the RQ worker for a single uploaded document. OCR/embedding cost is recorded for the uploader; for
+    a project document it is charged to the shared setup pool while that is enabled (billed_to `org_setup`), otherwise to the
+    uploader's own quota. Never limited mid-document (stopping half-way would leave it half-processed), but a document whose
+    turn comes after the pool ran out (quota enforced) is failed up front so a long queue cannot overrun the pool."""
+    from app.features.usage.service import pool_status
+
     async with async_session_factory() as db:
-        uploader = await db.scalar(select(Document.uploaded_by).where(Document.id == document_id))
-    with usage_scope(uploader, "ocr"):
+        uploader, project_id = (await db.execute(select(Document.uploaded_by, Document.project_id).where(Document.id == document_id))).one_or_none() or (None, None)
+        pool = await pool_status(db)
+        use_pool = pool["enabled"] and project_id is not None
+        if use_pool and pool["enforced"] and pool["remaining"] <= 0:
+            document = await db.get(Document, document_id)
+            if document is not None and document.status == DocumentStatus.PROCESSING:
+                document.status = DocumentStatus.FAILED
+                document.error_message = "اعتبار مشترک راه‌اندازی تمام شده است؛ پس از تمدید توسط super admin دوباره تلاش کنید (retry)."
+                await db.commit()
+                await _notify_conversation(document)
+            logger.warning("Ingestion %s not started: setup pool exhausted", document_id)
+            return
+    with usage_scope(uploader, "ocr", billed_to="org_setup" if use_pool else "user"):
         await _run_ingestion_pipeline(document_id, file_path)
 
 

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -37,3 +37,19 @@ async def logout(payload: RefreshTokenRequest, db: AsyncSession = Depends(get_db
 @router.get("/me", response_model=UserRead)
 async def me(user: User = Depends(get_current_user)):
     return user
+
+
+@router.get("/me/quota")
+async def my_quota(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """The caller's dollar quota: the three windows with used / limit / reset time (for the chat banner)."""
+    from app.features.usage import quota
+
+    return await quota.user_quota(db, user)
+
+
+@router.get("/me/usage")
+async def my_usage(days: int = Query(30, ge=1, le=90), user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """The caller's own consumption (this Jalali month by purpose, daily cost) for the profile page."""
+    from app.features.usage import quota
+
+    return await quota.my_usage(db, user, days)

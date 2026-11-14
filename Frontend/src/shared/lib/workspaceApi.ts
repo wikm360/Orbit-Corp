@@ -1,5 +1,5 @@
 import { apiRequest } from "./apiClient";
-import type { Project, ProjectMembership, ProjectPermission, TokenUsageReport, Team, TeamMembership, User, UserRole } from "@/shared/types";
+import type { CostSummary, ModelPrice, Project, ProjectMembership, ProjectPermission, QuotaOverview, TokenUsageReport, UserQuota, Team, TeamMembership, User, UserRole } from "@/shared/types";
 
 export const workspaceApi = {
   myTeams: () => apiRequest<Team[]>("/teams/mine"),
@@ -19,6 +19,16 @@ export const workspaceApi = {
   extendTokenLimit: (userId: string, add: number) => apiRequest<User>(`/admin/users/${userId}/token-limit/extend`, { method: "POST", body: { add } }),
   resetTokenUsage: (userId: string) => apiRequest<User>(`/admin/users/${userId}/token-limit/reset`, { method: "POST" }),
   tokenUsage: (userId: string) => apiRequest<TokenUsageReport>(`/admin/users/${userId}/token-usage`),
+  quotaOverview: () => apiRequest<QuotaOverview>("/admin/quota"),
+  setQuotaEnforced: (enforced: boolean) => apiRequest<QuotaOverview>("/admin/quota/enforced", { method: "PUT", body: { enforced } }),
+  setQuotaPlan: (role: string, plan: { five_hour_usd: number; weekly_usd: number; monthly_usd: number }) => apiRequest<QuotaOverview>(`/admin/quota/plans/${role}`, { method: "PUT", body: plan }),
+  setSetupPool: (body: { enabled?: boolean; budget_usd?: number }) => apiRequest<QuotaOverview>("/admin/quota/setup-pool", { method: "PUT", body }),
+  setOrgCap: (monthlyCapUsd: number | null) => apiRequest<QuotaOverview>("/admin/quota/org-cap", { method: "PUT", body: { monthly_cap_usd: monthlyCapUsd } }),
+  userQuota: (userId: string) => apiRequest<UserQuota>(`/admin/users/${userId}/quota`),
+  setUserQuota: (userId: string, body: { five_hour_usd: number | null; weekly_usd: number | null; monthly_usd: number | null; unlimited: boolean }) => apiRequest<UserQuota>(`/admin/users/${userId}/quota`, { method: "PUT", body }),
+  modelPrices: () => apiRequest<ModelPrice[]>("/admin/model-prices"),
+  setModelPrice: (model: string, body: { input_per_m: number; output_per_m: number; per_page_usd: number | null }) => apiRequest<ModelPrice>(`/admin/model-prices/${model}`, { method: "PUT", body }),
+  costSummary: (days = 30) => apiRequest<CostSummary>(`/admin/usage/cost-summary?days=${days}`),
   users: () => apiRequest<User[]>("/admin/users"),
   updateUserRole: (userId: string, role: UserRole) => apiRequest<User>(`/admin/users/${userId}/role`, { method: "PATCH", body: { role } }),
   setAccountingAccess: (userId: string, enabled: boolean) => apiRequest<User>(`/admin/users/${userId}/accounting-access`, { method: "PUT", body: { enabled } }),

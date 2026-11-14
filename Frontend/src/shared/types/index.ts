@@ -38,6 +38,54 @@ export interface TokenUsageReport {
   daily: { date: string; tokens: number }[];
 }
 
+export type QuotaWindowName = "five_hour" | "weekly" | "monthly";
+
+/** One window of a user's dollar quota; `limit_usd` null = no cap. `resets_at` is only set while the window is exhausted. */
+export interface QuotaWindow {
+  name: QuotaWindowName;
+  limit_usd: number | null;
+  used_usd: number;
+  exhausted: boolean;
+  overridden: boolean;
+  starts_at: string;
+  resets_at: string | null;
+}
+
+export interface UserQuota {
+  enforced: boolean;
+  unlimited: boolean;
+  windows: QuotaWindow[];
+}
+
+/** The caller's own consumption (GET /auth/me/usage): this Jalali month by purpose, what the setup pool paid, daily cost. */
+export interface MyUsage {
+  month: { start: string; next_start: string };
+  month_used_usd: number;
+  setup_pool_usd: number;
+  by_purpose: { purpose: string; cost_usd: number; calls: number }[];
+  daily: { date: string; cost_usd: number }[];
+}
+
+export interface QuotaPlan { five_hour_usd: number; weekly_usd: number; monthly_usd: number }
+
+export interface QuotaOverview {
+  enforced: boolean;
+  setup_pool: { enabled: boolean; budget_usd: number; used_usd: number; remaining_usd: number };
+  org: { monthly_cap_usd: number | null; month_used_usd: number; percent: number | null };
+  plans: Record<string, QuotaPlan>;
+  month: { start: string; next_start: string };
+}
+
+export interface ModelPrice { model: string; input_per_m: number; output_per_m: number; per_page_usd: number | null; updated_at: string }
+
+export interface CostSummary {
+  days: number;
+  total_usd: number;
+  by_purpose: { purpose: string; calls: number; cost_usd: number }[];
+  by_model: { model: string; calls: number; cost_usd: number }[];
+  by_user: { user_id: string; email: string; calls: number; cost_usd: number }[];
+}
+
 export type ProjectPermission = "documents" | "memory";
 
 export interface TeamMembership {

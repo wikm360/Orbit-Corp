@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.dependencies import UserContext, get_current_user_context
 from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
-from app.features.usage.service import ensure_quota
+from app.features.usage.service import enforce_quota, usage_scope
 from app.features.volume_report import activity, export, memory, questions, service
 from app.features.volume_report.models import Company, Conversion, Item, ItemRule, Report, ReportStatus, Site
 from app.features.volume_report.schemas import (
@@ -309,14 +309,14 @@ async def delete_file(file_id: uuid.UUID, report: Report = Depends(get_report_fo
 
 @router.post("/{report_id}/run", response_model=ReportRead, status_code=202)
 async def run(report: Report = Depends(get_report_for_member), context: UserContext = Depends(get_current_user_context), db: AsyncSession = Depends(get_db)):
-    ensure_quota(context.user)
+    await enforce_quota(context.user)
     return await service.request_run(db, report, user_id=context.id)
 
 
 @router.post("/{report_id}/continue", response_model=ReportRead, status_code=202)
 async def continue_run(report: Report = Depends(get_report_for_member), context: UserContext = Depends(get_current_user_context), db: AsyncSession = Depends(get_db)):
     """Next agent pass after answers (no re-parsing)."""
-    ensure_quota(context.user)
+    await enforce_quota(context.user)
     return await service.request_run(db, report, mode="continue", user_id=context.id)
 
 
@@ -437,8 +437,9 @@ async def update_narratives(payload: NarrativesUpdate, report: Report = Depends(
 @router.post("/{report_id}/narratives/generate")
 async def generate_narrative(payload: GenerateNarrativeRequest, report: Report = Depends(get_report_for_member),
                              context: UserContext = Depends(get_current_user_context)):
-    ensure_quota(context.user)
-    return await service.generate_company_narrative(payload.company_name, payload.raw_text)
+    await enforce_quota(context.user)
+    with usage_scope(context.id, "vr_agent"):  # the model call is charged to whoever asked for the text
+        return await service.generate_company_narrative(payload.company_name, payload.raw_text)
 
 
 @router.post("/{report_id}/publish", response_model=ReportRead)

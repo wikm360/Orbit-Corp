@@ -36,7 +36,7 @@ from app.features.documents.schemas import (
 )
 from app.features.projects.models import Project
 from app.features.projects.service import get_user_project_permissions
-from app.features.usage.service import ensure_quota
+from app.features.usage.service import enforce_quota
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 settings = get_settings()
@@ -49,7 +49,7 @@ async def chat(
 ):
     """Personal AI chat: creates/continues a private conversation and streams
     the assistant's answer over SSE."""
-    ensure_quota(context.user)  # 429 before anything is saved or streamed
+    await enforce_quota(context.user)  # 429 before anything is saved or streamed
     return StreamingResponse(
         service.stream_chat_response(context, payload.conversation_id, payload.message),
         media_type="text/event-stream",
@@ -130,6 +130,7 @@ async def upload_conversation_document(
     conversation: Conversation = Depends(require_conversation_access),
     db: AsyncSession = Depends(get_db),
 ):
+    await enforce_quota(context.user)
     file_bytes = await file.read()
     max_bytes = settings.max_upload_size_mb * 1024 * 1024
     if len(file_bytes) > max_bytes:
@@ -153,6 +154,7 @@ async def upload_conversation_documents_batch(
     conversation: Conversation = Depends(require_conversation_access),
     db: AsyncSession = Depends(get_db),
 ):
+    await enforce_quota(context.user)
     results = await documents_service.upload_documents_batch(
         db, files, uploaded_by=context.id, project_id=None, conversation_id=conversation.id
     )

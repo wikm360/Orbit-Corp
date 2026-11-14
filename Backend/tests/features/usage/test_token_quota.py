@@ -57,7 +57,7 @@ async def test_usage_is_recorded_per_user_and_unmetered_purposes_do_not_count(cl
 async def test_admin_sets_extends_resets_and_removes_a_limit(client):
     superadmin, _, admin, _, user, user_id, _, _ = await _world(client)
     url = f"{API}/admin/users/{user_id}/token-limit"
-    assert (await client.put(url, json={"limit": 1000}, headers=admin)).json()["token_limit"] == 1000
+    assert (await client.put(url, json={"limit": 1000}, headers=superadmin)).json()["token_limit"] == 1000
     with usage_scope(uuid.UUID(user_id), "chat"):
         await record_usage("m", 600, 100)
 
@@ -66,37 +66,38 @@ async def test_admin_sets_extends_resets_and_removes_a_limit(client):
     me = (await client.get(f"{API}/auth/me", headers=user)).json()
     assert (me["token_limit"], me["tokens_used"]) == (1000, 700)
 
-    extended = (await client.post(f"{url}/extend", json={"add": 500}, headers=admin)).json()
+    extended = (await client.post(f"{url}/extend", json={"add": 500}, headers=superadmin)).json()
     assert (extended["token_limit"], extended["tokens_used"]) == (1500, 700)  # usage untouched
-    reset = (await client.post(f"{url}/reset", headers=admin)).json()
+    reset = (await client.post(f"{url}/reset", headers=superadmin)).json()
     assert (reset["token_limit"], reset["tokens_used"]) == (1500, 0)
 
     report = (await client.get(f"{API}/admin/users/{user_id}/token-usage", headers=admin)).json()
     assert report["used"] == 0 and report["by_purpose"] == []  # the period restarted...
     assert report["daily"] and report["daily"][0]["tokens"] == 700  # ...but the history is kept
 
-    removed = (await client.put(url, json={"limit": None}, headers=admin)).json()
+    removed = (await client.put(url, json={"limit": None}, headers=superadmin)).json()
     assert removed["token_limit"] is None
 
 
 async def test_validation_and_who_may_manage_whom(client):
     superadmin, super_id, admin, admin_id, user, user_id, other, other_id = await _world(client)
     url = lambda uid: f"{API}/admin/users/{uid}/token-limit"  # noqa: E731
-    assert (await client.put(url(user_id), json={"limit": 0}, headers=admin)).status_code == 400
-    assert (await client.put(url(user_id), json={"limit": -5}, headers=admin)).status_code == 400
-    assert (await client.post(f"{url(user_id)}/extend", json={"add": 10}, headers=admin)).status_code == 400  # no limit to extend
-    assert (await client.put(url(uuid.uuid4()), json={"limit": 10}, headers=admin)).status_code == 404
+    assert (await client.put(url(user_id), json={"limit": 0}, headers=superadmin)).status_code == 400
+    assert (await client.put(url(user_id), json={"limit": -5}, headers=superadmin)).status_code == 400
+    assert (await client.post(f"{url(user_id)}/extend", json={"add": 10}, headers=superadmin)).status_code == 400  # no limit to extend
+    assert (await client.put(url(uuid.uuid4()), json={"limit": 10}, headers=superadmin)).status_code == 404
 
+    assert (await client.put(url(user_id), json={"limit": 10}, headers=admin)).status_code == 403  # admins only read; super admins edit
     assert (await client.put(url(user_id), json={"limit": 10}, headers=user)).status_code == 403  # a plain user cannot
     assert (await client.put(url(super_id), json={"limit": 10}, headers=superadmin)).status_code == 400  # never a super admin
-    assert (await client.put(url(admin_id), json={"limit": 10}, headers=admin)).status_code == 403  # an admin cannot limit an admin
+    assert (await client.put(url(admin_id), json={"limit": 10}, headers=admin)).status_code == 403  # an admin cannot change limits at all (super admin only)
     assert (await client.put(url(admin_id), json={"limit": 10}, headers=superadmin)).status_code == 200
     assert (await client.get(f"{API}/admin/users/{user_id}/token-usage", headers=user)).status_code == 403
 
 
 async def test_personal_chat_is_refused_with_429_once_the_quota_is_used(client):
     superadmin, _, admin, _, user, user_id, _, _ = await _world(client)
-    await client.put(f"{API}/admin/users/{user_id}/token-limit", json={"limit": 100}, headers=admin)
+    await client.put(f"{API}/admin/users/{user_id}/token-limit", json={"limit": 100}, headers=superadmin)
     with usage_scope(uuid.UUID(user_id), "chat"):
         await record_usage("m", 100, 0)
 
@@ -107,7 +108,7 @@ async def test_personal_chat_is_refused_with_429_once_the_quota_is_used(client):
 
         assert (await db.execute(select(Message).where(Message.sender_id == uuid.UUID(user_id)))).first() is None  # nothing was saved
 
-    await client.post(f"{API}/admin/users/{user_id}/token-limit/reset", headers=admin)  # renewed: allowed again
+    await client.post(f"{API}/admin/users/{user_id}/token-limit/reset", headers=superadmin)  # renewed: allowed again
     from app.features.usage.service import is_exhausted
 
     assert not is_exhausted(await _state(user_id))

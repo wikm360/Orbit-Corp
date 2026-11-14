@@ -17,7 +17,7 @@ from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
 from app.features.admin import service
 from app.features.admin.ocr_inspector_template import OCR_INSPECTOR_HTML
 from app.features.auth.models import User, UserRole
-from app.features.usage import service as usage_service
+from app.features.usage import quota as quota_module, service as usage_service
 from app.features.auth.schemas import UserRead
 from app.features.documents import service as documents_service
 from app.features.documents.ingestion.parser import IMAGE_EXTENSIONS, render_pdf_page
@@ -61,19 +61,19 @@ class TokenLimitExtend(BaseModel):
     add: int
 
 
-@router.put("/users/{user_id}/token-limit", response_model=UserRead)
+@router.put("/users/{user_id}/token-limit", response_model=UserRead, dependencies=[Depends(require_super_admin)])
 async def set_token_limit(user_id: uuid.UUID, payload: TokenLimitUpdate, context: UserContext = Depends(get_current_user_context), db: AsyncSession = Depends(get_db)):
     """Set (or, with `limit: null`, remove) a user's token limit. Super admins are never limited; only super admins manage an admin's."""
     return await usage_service.set_limit(db, context.user, user_id, payload.limit)
 
 
-@router.post("/users/{user_id}/token-limit/extend", response_model=UserRead)
+@router.post("/users/{user_id}/token-limit/extend", response_model=UserRead, dependencies=[Depends(require_super_admin)])
 async def extend_token_limit(user_id: uuid.UUID, payload: TokenLimitExtend, context: UserContext = Depends(get_current_user_context), db: AsyncSession = Depends(get_db)):
     """Raise the limit by `add` tokens; the usage counter is untouched."""
     return await usage_service.extend_limit(db, context.user, user_id, payload.add)
 
 
-@router.post("/users/{user_id}/token-limit/reset", response_model=UserRead)
+@router.post("/users/{user_id}/token-limit/reset", response_model=UserRead, dependencies=[Depends(require_super_admin)])
 async def reset_token_usage(user_id: uuid.UUID, context: UserContext = Depends(get_current_user_context), db: AsyncSession = Depends(get_db)):
     """Zero the counter and start a new period; the usage history is kept."""
     return await usage_service.reset_usage(db, context.user, user_id)
@@ -85,6 +85,111 @@ async def token_usage(user_id: uuid.UUID, days: int = Query(30, ge=1, le=365), d
     if user is None:
         raise NotFoundError("User not found")
     return await usage_service.usage_report(db, user, days)
+
+
+class QuotaEnforcedUpdate(BaseModel):
+    enforced: bool
+
+
+class SetupPoolUpdate(BaseModel):
+    enabled: bool | None = None      # null = leave as is
+    budget_usd: float | None = None  # total budget (all-time used is subtracted); raise it to top up
+
+
+class OrgCapUpdate(BaseModel):
+    monthly_cap_usd: float | None  # null = no organisation cap
+
+
+class QuotaPlanUpdate(BaseModel):
+    five_hour_usd: float
+    weekly_usd: float
+    monthly_usd: float
+
+
+class UserQuotaUpdate(BaseModel):
+    """null cap = follow the role's plan; unlimited = no cap at all."""
+    five_hour_usd: float | None = None
+    weekly_usd: float | None = None
+    monthly_usd: float | None = None
+    unlimited: bool = False
+
+
+@router.get("/quota")
+async def quota_overview(db: AsyncSession = Depends(get_db)):
+    """Plans per role, whether the dollar quota is enforced, and the current Jalali month's bounds."""
+    return await usage_service.quota_overview(db)
+
+
+@router.put("/quota/enforced", dependencies=[Depends(require_super_admin)])
+async def set_quota_enforced(payload: QuotaEnforcedUpdate, context: UserContext = Depends(get_current_user_context), db: AsyncSession = Depends(get_db)):
+    """Off = shadow mode (cost recorded, nobody blocked by it). Super admins only."""
+    return await usage_service.set_enforced(db, context.user, payload.enforced)
+
+
+@router.put("/quota/setup-pool", dependencies=[Depends(require_super_admin)])
+async def set_setup_pool(payload: SetupPoolUpdate, context: UserContext = Depends(get_current_user_context), db: AsyncSession = Depends(get_db)):
+    """The shared pool that pays OCR/embedding of project uploads instead of the uploader's quota. Super admins only."""
+    return await usage_service.set_setup_pool(db, context.user, payload.enabled, payload.budget_usd)
+
+
+@router.put("/quota/org-cap", dependencies=[Depends(require_super_admin)])
+async def set_org_cap(payload: OrgCapUpdate, context: UserContext = Depends(get_current_user_context), db: AsyncSession = Depends(get_db)):
+    """Cap on the whole organisation's spend per Jalali month (everyone but super admins is blocked once it is reached)."""
+    return await usage_service.set_org_cap(db, context.user, payload.monthly_cap_usd)
+
+
+@router.put("/quota/plans/{role}", dependencies=[Depends(require_super_admin)])
+async def set_quota_plan(role: str, payload: QuotaPlanUpdate, context: UserContext = Depends(get_current_user_context), db: AsyncSession = Depends(get_db)):
+    return await usage_service.set_plan(db, context.user, role, payload.five_hour_usd, payload.weekly_usd, payload.monthly_usd)
+
+
+@router.get("/users/{user_id}/quota")
+async def user_quota(user_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    user = await db.get(User, user_id)
+    if user is None:
+        raise NotFoundError("User not found")
+    return await quota_module.user_quota(db, user)
+
+
+@router.put("/users/{user_id}/quota", dependencies=[Depends(require_super_admin)])
+async def set_user_quota(user_id: uuid.UUID, payload: UserQuotaUpdate, context: UserContext = Depends(get_current_user_context), db: AsyncSession = Depends(get_db)):
+    user = await usage_service.set_user_quota(db, context.user, user_id, payload.five_hour_usd, payload.weekly_usd, payload.monthly_usd, payload.unlimited)
+    return await quota_module.user_quota(db, user)
+
+
+class ModelPriceUpdate(BaseModel):
+    input_per_m: float = 0.0   # USD per 1M input tokens
+    output_per_m: float = 0.0  # USD per 1M output tokens
+    per_page_usd: float | None = None  # USD per page, for per-page priced models (Mistral OCR)
+
+
+def _price_out(row) -> dict:
+    return {"model": row.model, "input_per_m": float(row.input_per_m), "output_per_m": float(row.output_per_m),
+            "per_page_usd": None if row.per_page_usd is None else float(row.per_page_usd),
+            "updated_by": str(row.updated_by) if row.updated_by else None, "updated_at": row.updated_at}
+
+
+@router.get("/model-prices")
+async def list_model_prices(db: AsyncSession = Depends(get_db)):
+    return [_price_out(r) for r in await usage_service.list_prices(db)]
+
+
+@router.put("/model-prices/{model:path}", dependencies=[Depends(require_super_admin)])
+async def set_model_price(model: str, payload: ModelPriceUpdate, context: UserContext = Depends(get_current_user_context), db: AsyncSession = Depends(get_db)):
+    """Super admins only. Applies to calls recorded from now on; recorded history keeps its cost."""
+    return _price_out(await usage_service.set_price(db, context.user, model, payload.input_per_m, payload.output_per_m, payload.per_page_usd))
+
+
+@router.delete("/model-prices/{model:path}", status_code=204, dependencies=[Depends(require_super_admin)])
+async def delete_model_price(model: str, db: AsyncSession = Depends(get_db)):
+    await usage_service.delete_price(db, model)
+    return Response(status_code=204)
+
+
+@router.get("/usage/cost-summary")
+async def cost_summary(days: int = Query(30, ge=1, le=365), db: AsyncSession = Depends(get_db)):
+    """Org-wide cost per purpose / model / user (monitoring; nothing is blocked by cost yet)."""
+    return await usage_service.cost_summary(db, days)
 
 
 @router.get("/users", response_model=list[UserRead])

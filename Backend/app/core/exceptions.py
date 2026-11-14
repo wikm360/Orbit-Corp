@@ -28,8 +28,13 @@ class ConflictError(HTTPException):
 class QuotaExceededError(HTTPException):
     """The user's token quota is used up (429). Clients key on the detail text."""
 
-    def __init__(self, detail: str = "token_quota_exceeded"):
-        super().__init__(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=detail)
+    def __init__(self, detail: str = "token_quota_exceeded", *, window: str | None = None, resets_at=None):
+        headers: dict[str, str] = {}
+        if window:
+            headers["X-Quota-Window"] = window  # five_hour | weekly | monthly (dollar quota)
+        if resets_at is not None:
+            headers["X-Quota-Resets-At"] = resets_at.isoformat()
+        super().__init__(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=detail, headers=headers or None)
 
 
 class BadRequestError(HTTPException):

@@ -211,6 +211,9 @@ async def detect_tables_with_mistral(
                 timeout=timeout_sec + 2.0,
             )
 
+        from app.features.usage.service import record_pages
+
+        await record_pages(model, 1, purpose="ocr")  # one page image per call; per-page price from /admin/model-prices
         pages = getattr(response, "pages", None) or []
         if not pages:
             return DocumentLayoutResult()

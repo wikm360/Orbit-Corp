@@ -375,11 +375,13 @@ export function AppSidebar({
 
       <div className="mt-auto border-t border-white/10 pt-3">
         <div className={cn("flex items-center gap-2 rounded-xl p-2 hover:bg-white/[0.05]", isCollapsed && "md:justify-center")}>
-          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-teal-500/20 text-xs font-semibold text-teal-100">{avatarLetter}</span>
-          <div className={cn("min-w-0 flex-1", isCollapsed && "md:hidden")}>
-            <p className="truncate text-xs font-semibold text-slate-100">{userLabel}</p>
-            <p className="mt-0.5 truncate text-[10px] text-slate-400">{user?.role === "super_admin" ? "مدیر ارشد سازمان" : user?.role === "admin" ? "مدیر سازمان" : "عضو سازمان"}</p>
-          </div>
+          <Link href="/profile" onClick={onClose} title="پروفایل و مصرف من" aria-label="پروفایل و مصرف من" className="flex min-w-0 flex-1 items-center gap-2 rounded-lg">
+            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-teal-500/20 text-xs font-semibold text-teal-100">{avatarLetter}</span>
+            <div className={cn("min-w-0 flex-1", isCollapsed && "md:hidden")}>
+              <p className="truncate text-xs font-semibold text-slate-100">{userLabel}</p>
+              <p className="mt-0.5 truncate text-[10px] text-slate-400">{user?.role === "super_admin" ? "مدیر ارشد سازمان" : user?.role === "admin" ? "مدیر سازمان" : "عضو سازمان"} · مصرف من</p>
+            </div>
+          </Link>
           <button
             type="button"
             onClick={onLogout}
