@@ -57,6 +57,15 @@ class UserContext:
         """The Rahkaran accounting tools: super admins always, anyone else only when a super admin granted it."""
         return self.user.has_accounting_access
 
+    @property
+    def manages_workspace(self) -> bool:
+        """Team/project administration: admins, or a user a super admin delegated it to. This is *management* only — it
+        deliberately does not feed `leads_team`/`is_project_member`, so it never opens project documents, chats or memory."""
+        return self.user.has_workspace_access
+
+    def can_manage_team(self, team_id: UUID) -> bool:
+        return self.manages_workspace or team_id in self.led_team_ids
+
     def leads_team(self, team_id: UUID) -> bool:
         return self.is_admin or team_id in self.led_team_ids
 
@@ -140,6 +149,47 @@ async def require_accounting_admin(user: User = Depends(get_current_user)) -> Us
     if user.role not in ADMIN_ROLES or not user.has_accounting_access:
         raise ForbiddenError("Admin role with accounting access is required for this action")
     return user
+
+
+async def require_workspace_manager(
+    context: UserContext = Depends(get_current_user_context),
+) -> UserContext:
+    """Admins and holders of the delegated workspace permission (create teams, list all teams, user directory)."""
+    if not context.manages_workspace:
+        raise ForbiddenError("Workspace-management access is required for this action")
+    return context
+
+
+def forbid_self_grant(context: UserContext, team_id: UUID, target_user_id: UUID) -> None:
+    """A delegated manager must not be able to put themselves into a team/project (or raise their own project
+    permissions): that would turn a management permission into read access to content. Real leaders/admins are unaffected."""
+    if target_user_id == context.id and not context.leads_team(team_id):
+        raise ForbiddenError("You cannot grant yourself access; ask a team leader or an admin")
+
+
+async def require_team_workspace_manager(
+    team_id: UUID,
+    context: UserContext = Depends(get_current_user_context),
+) -> UserContext:
+    """Like `require_team_manager`, plus delegated workspace managers (membership/project administration only)."""
+    if not context.can_manage_team(team_id):
+        raise ForbiddenError("Team leader or workspace-management privileges required")
+    return context
+
+
+async def require_project_membership_manager(
+    project_id: UUID,
+    context: UserContext = Depends(get_current_user_context),
+    db: AsyncSession = Depends(get_db),
+) -> Project:
+    """Project *membership* administration (members, delegated permissions): leader, admin or workspace manager.
+    Documents/memory keep `require_project_manager` / `require_project_permission`."""
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    if not context.can_manage_team(project.team_id):
+        raise ForbiddenError("Team leader or workspace-management privileges required")
+    return project
 
 
 async def require_team_manager(

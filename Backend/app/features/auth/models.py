@@ -50,6 +50,15 @@ class User(Base):
         PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     user_management_access_granted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Delegated by a super admin: lets this user administer teams and projects (create them, manage team/project members and
+    # project permissions) without being an org admin. Never grants read access to project content. Admins always have it.
+    workspace_access: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
+    workspace_access_granted_by: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    workspace_access_granted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Token quota (see features/usage): `token_limit` NULL = unlimited; `tokens_used` counts the current period, which a
     # reset restarts (`token_period_start`). Super admins are never limited whatever these say.
     token_limit: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
@@ -76,6 +85,10 @@ class User(Base):
     @property
     def has_user_management_access(self) -> bool:
         return self.role == UserRole.SUPER_ADMIN or bool(self.user_management_access)
+
+    @property
+    def has_workspace_access(self) -> bool:
+        return self.role in (UserRole.SUPER_ADMIN, UserRole.ADMIN) or bool(self.workspace_access)
 
     team_memberships: Mapped[list["TeamMembership"]] = relationship(
         back_populates="user",

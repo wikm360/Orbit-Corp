@@ -103,6 +103,7 @@ async def create_project(
     name: str,
     description: str | None,
     created_by: uuid.UUID,
+    add_creator: bool = True,
 ) -> Project:
     existing = await db.execute(
         select(Project).where(Project.team_id == team_id, Project.name == name)
@@ -115,9 +116,11 @@ async def create_project(
     await db.commit()
     await db.refresh(project)
 
-    # The creator (a team leader or admin) automatically gets access to what they made.
-    db.add(ProjectMembership(project_id=project.id, user_id=created_by, added_by=created_by))
-    await db.commit()
+    # The creator (a team leader or admin) automatically gets access to what they made. A delegated workspace manager
+    # does not: management must never double as access to the project's content.
+    if add_creator:
+        db.add(ProjectMembership(project_id=project.id, user_id=created_by, added_by=created_by))
+        await db.commit()
     return project
 
 

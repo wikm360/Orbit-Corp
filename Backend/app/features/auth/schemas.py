@@ -34,6 +34,8 @@ class UserRead(BaseModel):
     accounting_access_granted_at: datetime | None = None
     # Effective access to /user-management (super admins always; others only when granted).
     user_management_access: bool = Field(default=False, validation_alias="has_user_management_access")
+    # Effective access to team/project administration (the workspace page): admins always; others only when granted.
+    workspace_access: bool = Field(default=False, validation_alias="has_workspace_access")
     # Token quota (`token_limit` None = unlimited; super admins are never limited).
     token_limit: int | None = None
     tokens_used: int = 0

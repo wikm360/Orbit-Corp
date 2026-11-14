@@ -57,6 +57,10 @@ class UserManagementAccessUpdate(BaseModel):
     enabled: bool
 
 
+class WorkspaceAccessUpdate(BaseModel):
+    enabled: bool
+
+
 class TokenLimitUpdate(BaseModel):
     limit: int | None  # None = unlimited
 
@@ -263,6 +267,21 @@ async def set_user_management_access(
     from app.features.user_management import service as user_management_service
 
     return await user_management_service.set_access(db, user_id, enabled=payload.enabled, granted_by=context.id)
+
+
+@router.put(
+    "/users/{user_id}/workspace-access",
+    response_model=UserRead,
+    dependencies=[Depends(require_super_admin)],
+)
+async def set_workspace_access(
+    user_id: uuid.UUID,
+    payload: WorkspaceAccessUpdate,
+    context: UserContext = Depends(get_current_user_context),
+    db: AsyncSession = Depends(get_db),
+):
+    """Super admins delegate (or take back) team/project administration to any non-admin user."""
+    return await service.set_workspace_access(db, user_id, enabled=payload.enabled, granted_by=context.id)
 
 
 @router.get("/documents", response_model=list[DocumentRead])

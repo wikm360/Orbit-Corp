@@ -69,7 +69,7 @@ const NAV_ITEMS = [
   { href: "/chat", label: "دستیار", icon: "chat" as const },
   { href: "/documents", label: "اسناد", icon: "document" as const },
   { href: "/memories", label: "حافظه پروژه", icon: "memory" as const },
-  { href: "/workspace", label: "فضای کاری", icon: "workspace" as const },
+  { href: "/workspace", label: "فضای کاری", icon: "workspace" as const, requiresWorkspaceAccess: true },
   { href: "/volume-reports", label: "گزارش حجم عملیات", icon: "chart" as const, requiresVolumeModule: true },
   { href: "/admin", label: "مدیریت", icon: "admin" as const, adminOnly: true },
   { href: "/user-management", label: "مدیریت کاربران", icon: "users" as const, requiresUserManagement: true },
@@ -278,7 +278,7 @@ export function AppSidebar({
       </button>
 
       <nav aria-label="ناوبری اصلی" className="space-y-1">
-        {NAV_ITEMS.filter((item) => (!item.adminOnly || user?.role === "admin" || user?.role === "super_admin") && (!("requiresVolumeModule" in item) || volumeModuleEnabled === true) && (!("requiresUserManagement" in item) || user?.user_management_access === true)).map((item) => {
+        {NAV_ITEMS.filter((item) => (!item.adminOnly || user?.role === "admin" || user?.role === "super_admin") && (!("requiresVolumeModule" in item) || volumeModuleEnabled === true) && (!("requiresWorkspaceAccess" in item) || user?.workspace_access === true) && (!("requiresUserManagement" in item) || user?.user_management_access === true)).map((item) => {
           const isActive = pathname.startsWith(item.href);
           return (
             <Link

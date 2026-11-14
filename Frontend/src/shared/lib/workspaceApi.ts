@@ -1,5 +1,5 @@
 import { apiRequest } from "./apiClient";
-import type { Branding, CostSummary, ManagedUser, ModelPrice, Project, ProjectMembership, ProjectPermission, QuotaOverview, TokenUsageReport, UserQuota, Team, TeamMembership, User, UserRole } from "@/shared/types";
+import type { Branding, CostSummary, DirectoryUser, ManagedUser, ModelPrice, Project, ProjectMembership, ProjectPermission, QuotaOverview, TokenUsageReport, UserQuota, Team, TeamMembership, User, UserRole } from "@/shared/types";
 
 export const workspaceApi = {
   myTeams: () => apiRequest<Team[]>("/teams/mine"),
@@ -39,6 +39,8 @@ export const workspaceApi = {
   updateManagedUser: (userId: string, body: { email?: string; full_name?: string }) => apiRequest<ManagedUser>(`/user-management/users/${userId}`, { method: "PATCH", body }),
   resetManagedUserPassword: (userId: string, password: string) => apiRequest<void>(`/user-management/users/${userId}/reset-password`, { method: "POST", body: { password } }),
   deleteManagedUser: (userId: string) => apiRequest<void>(`/user-management/users/${userId}`, { method: "DELETE" }),
+  userDirectory: () => apiRequest<DirectoryUser[]>("/teams/directory/users"),
+  setWorkspaceAccess: (userId: string, enabled: boolean) => apiRequest<User>(`/admin/users/${userId}/workspace-access`, { method: "PUT", body: { enabled } }),
   users: () => apiRequest<User[]>("/admin/users"),
   updateUserRole: (userId: string, role: UserRole) => apiRequest<User>(`/admin/users/${userId}/role`, { method: "PATCH", body: { role } }),
   setAccountingAccess: (userId: string, enabled: boolean) => apiRequest<User>(`/admin/users/${userId}/accounting-access`, { method: "PUT", body: { enabled } }),
@@ -50,8 +52,10 @@ export interface WorkspaceOverview {
   managedTeamIds: Set<string>;
 }
 
-export async function loadWorkspace(user: User): Promise<WorkspaceOverview> {
-  const isAdmin = user.role === "admin" || user.role === "super_admin";
+/** `manageAll`: the workspace admin page — admins and delegated workspace managers see and manage every team. Everything else
+ * (sidebar, pickers) keeps the member-scoped view so a manager is not shown projects they cannot open. */
+export async function loadWorkspace(user: User, options: { manageAll?: boolean } = {}): Promise<WorkspaceOverview> {
+  const isAdmin = user.role === "admin" || user.role === "super_admin" || Boolean(options.manageAll && user.workspace_access);
   const teams = await (isAdmin ? workspaceApi.allTeams() : workspaceApi.myTeams()).catch(() => [] as Team[]);
   const [myProjects, teamProjects, memberships] = await Promise.all([
     workspaceApi.myProjects().catch(() => [] as Project[]),

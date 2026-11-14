@@ -8,11 +8,12 @@ from app.core.database import get_db
 from app.core.dependencies import (
     UserContext,
     get_current_user_context,
+    forbid_self_grant,
     require_project_access,
-    require_project_manager,
-    require_team_manager,
+    require_project_membership_manager,
+    require_team_workspace_manager,
 )
-from app.core.exceptions import ForbiddenError
+from app.core.exceptions import ForbiddenError, NotFoundError
 from app.features.auth.models import User
 from app.features.auth.schemas import UserRead
 from app.features.projects import service
@@ -63,10 +64,10 @@ class ProjectMemberAdd(BaseModel):
 async def create_project(
     team_id: uuid.UUID,
     payload: ProjectCreate,
-    context: UserContext = Depends(require_team_manager),
+    context: UserContext = Depends(require_team_workspace_manager),
     db: AsyncSession = Depends(get_db),
 ):
-    project = await service.create_project(db, team_id, payload.name, payload.description, context.id)
+    project = await service.create_project(db, team_id, payload.name, payload.description, context.id, add_creator=context.leads_team(team_id))
     return _project_read(project, context)
 
 
@@ -76,10 +77,10 @@ async def list_team_projects(
     context: UserContext = Depends(get_current_user_context),
     db: AsyncSession = Depends(get_db),
 ):
-    if team_id not in context.team_ids and not context.is_admin:
+    if team_id not in context.team_ids and not context.manages_workspace:
         raise ForbiddenError("You are not a member of this team")
     all_projects = await service.list_team_projects(db, team_id)
-    if context.is_admin or team_id in context.led_team_ids:
+    if context.can_manage_team(team_id):
         return [_project_read(p, context) for p in all_projects]
     # Regular team members only see the projects they've actually been added to.
     return [_project_read(p, context) for p in all_projects if p.id in context.project_ids]
@@ -103,9 +104,16 @@ async def get_project(
 
 @router.get("/projects/{project_id}/members", response_model=list[ProjectMemberRead])
 async def list_project_members(
-    project: Project = Depends(require_project_access),
+    project_id: uuid.UUID,
+    context: UserContext = Depends(get_current_user_context),
     db: AsyncSession = Depends(get_db),
 ):
+    # Members/leaders/admins as before, plus delegated workspace managers (the list is metadata, not content).
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    if not (context.is_project_member(project.id) or context.can_manage_team(project.team_id)):
+        raise ForbiddenError("You are not a member of this project")
     rows = await service.list_project_members(db, project.id)
     return [ProjectMemberRead(user=UserRead.model_validate(user), permissions=list(membership.permissions or [])) for user, membership in rows]
 
@@ -114,16 +122,17 @@ async def list_project_members(
 async def add_project_member(
     payload: ProjectMemberAdd,
     context: UserContext = Depends(get_current_user_context),
-    project: Project = Depends(require_project_manager),
+    project: Project = Depends(require_project_membership_manager),
     db: AsyncSession = Depends(get_db),
 ):
+    forbid_self_grant(context, project.team_id, payload.user_id)
     await service.add_project_member(db, project.id, payload.user_id, context.id)
 
 
 @router.delete("/projects/{project_id}/members/{user_id}", status_code=204)
 async def remove_project_member(
     user_id: uuid.UUID,
-    project: Project = Depends(require_project_manager),
+    project: Project = Depends(require_project_membership_manager),
     db: AsyncSession = Depends(get_db),
 ):
     await service.remove_project_member(db, project.id, user_id)
@@ -139,10 +148,13 @@ async def list_project_permissions(_: UserContext = Depends(get_current_user_con
 async def set_member_permissions(
     user_id: uuid.UUID,
     payload: MemberPermissionsUpdate,
-    project: Project = Depends(require_project_manager),
+    context: UserContext = Depends(get_current_user_context),
+    project: Project = Depends(require_project_membership_manager),
     db: AsyncSession = Depends(get_db),
 ):
-    """Team leader / admin only (never delegable). Replaces the member's permission set in this project."""
+    """Team leader / admin / delegated workspace manager only; a project member can never raise their own access.
+    Replaces the member's permission set in this project."""
+    forbid_self_grant(context, project.team_id, user_id)
     membership = await service.set_member_permissions(db, project.id, user_id, payload.permissions)
     user = await db.get(User, user_id)
     return ProjectMemberRead(user=UserRead.model_validate(user), permissions=list(membership.permissions))

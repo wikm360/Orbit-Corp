@@ -7,7 +7,7 @@ import { Input } from "@/shared/components/ui/Input";
 import { Select } from "@/shared/components/ui/Select";
 import { friendlyErrorMessage } from "@/shared/lib/errorMessages";
 import { loadWorkspace, workspaceApi, WorkspaceOverview } from "@/shared/lib/workspaceApi";
-import { ProjectMembership, ProjectPermission, TeamMembership } from "@/shared/types";
+import { DirectoryUser, ProjectMembership, ProjectPermission, TeamMembership } from "@/shared/types";
 
 const PERMISSION_OPTIONS: { key: ProjectPermission; label: string }[] = [
   { key: "documents", label: "مدیریت اسناد" },
@@ -26,6 +26,9 @@ export function WorkspaceScreen() {
   const [newProjectName, setNewProjectName] = useState("");
   const [newTeamMemberId, setNewTeamMemberId] = useState("");
   const [newProjectMemberId, setNewProjectMemberId] = useState("");
+  const [directory, setDirectory] = useState<DirectoryUser[]>([]);
+  const [newTeamName, setNewTeamName] = useState("");
+  const [newMemberRole, setNewMemberRole] = useState<"leader" | "member">("member");
   const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const selectedTeam = overview?.teams.find((team) => team.id === teamId);
@@ -39,7 +42,7 @@ export function WorkspaceScreen() {
   const refreshOverview = useCallback(async () => {
     if (!user) return;
     try {
-      const data = await loadWorkspace(user);
+      const data = await loadWorkspace(user, { manageAll: true });
       setOverview(data);
       setTeamId((current) => data.teams.some((team) => team.id === current) ? current : data.teams[0]?.id ?? "");
       setError(null);
@@ -50,6 +53,10 @@ export function WorkspaceScreen() {
     const timer = window.setTimeout(() => void refreshOverview(), 0);
     return () => window.clearTimeout(timer);
   }, [refreshOverview]);
+  useEffect(() => {
+    if (!user?.workspace_access) return;
+    workspaceApi.userDirectory().then(setDirectory).catch((err) => setError(friendlyErrorMessage(err)));
+  }, [user?.workspace_access]);
   useEffect(() => {
     if (!teamId) return;
     let cancelled = false;
@@ -80,8 +87,15 @@ export function WorkspaceScreen() {
   async function addTeamMember(event: FormEvent) {
     event.preventDefault();
     if (!newTeamMemberId.trim() || !teamId) return;
-    await mutate(() => workspaceApi.addTeamMember(teamId, newTeamMemberId.trim(), "member"));
+    await mutate(() => workspaceApi.addTeamMember(teamId, newTeamMemberId.trim(), newMemberRole));
     setNewTeamMemberId("");
+  }
+
+  async function createTeam(event: FormEvent) {
+    event.preventDefault();
+    if (!newTeamName.trim()) return;
+    await mutate(() => workspaceApi.createTeam(newTeamName.trim()));
+    setNewTeamName("");
   }
 
   async function togglePermission(userId: string, current: ProjectPermission[], permission: ProjectPermission, enabled: boolean) {
@@ -96,19 +110,25 @@ export function WorkspaceScreen() {
     setNewProjectMemberId("");
   }
 
+  if (user && !user.workspace_access) return <main className="mx-auto max-w-5xl p-6"><p role="alert" className="rounded-xl bg-white p-4 text-sm text-gray-600">دسترسی به مدیریت فضای کاری برای شما فعال نیست.</p></main>;
+
   return <main className="mx-auto max-w-5xl space-y-6 p-4 sm:p-6 lg:p-8">
     <div className="page-heading rounded-2xl border border-slate-200 bg-white p-6"><h1 className="text-2xl font-bold text-gray-900">فضای کاری</h1><p className="mt-1 text-sm text-gray-500">تیم‌ها، پروژه‌ها و اعضای هر پروژه</p></div>
     {error && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p>}
     {!overview && !error && <p className="text-sm text-gray-500">در حال دریافت اطلاعات...</p>}
-    {overview && overview.teams.length === 0 && <p className="rounded-xl bg-white p-4 text-sm text-gray-500">هنوز عضو تیمی نیستید.</p>}
+    <section className="rounded-2xl border border-gray-200 bg-white p-5">
+      <h2 className="mb-3 font-semibold">تیم جدید</h2>
+      <form onSubmit={createTeam} className="flex flex-wrap gap-2"><Input aria-label="نام تیم جدید" placeholder="نام تیم جدید" maxLength={80} value={newTeamName} onChange={(event) => setNewTeamName(event.target.value)} /><Button type="submit" disabled={isBusy || !newTeamName.trim()}>ایجاد تیم</Button></form>
+    </section>
+    {overview && overview.teams.length === 0 && <p className="rounded-xl bg-white p-4 text-sm text-gray-500">هنوز تیمی ساخته نشده است.</p>}
     {overview && overview.teams.length > 0 && <>
       <section className="rounded-2xl border border-gray-200 bg-white p-5">
         <label htmlFor="workspace-team" className="mb-2 block text-sm font-medium">تیم</label>
         <Select id="workspace-team" value={teamId} onValueChange={setTeamId} options={overview.teams.map((team) => ({ value: team.id, label: team.name, description: team.description }))} className="max-w-sm" />
         {selectedTeam?.description && <p className="mt-2 text-sm text-gray-500">{selectedTeam.description}</p>}
         <h2 className="mt-5 font-semibold">اعضای تیم</h2>
-        <div className="mt-2 space-y-2">{visibleTeamMembers.map((membership) => <div key={membership.user.id} className="flex flex-wrap items-center gap-2 text-sm"><span className="flex-1 break-all">{membership.user.full_name || membership.user.email} — {membership.role === "leader" ? "سرپرست" : "عضو"}</span>{canManage && membership.role === "member" && <Button type="button" variant="ghost" size="sm" disabled={isBusy} onClick={() => void mutate(() => workspaceApi.removeTeamMember(teamId, membership.user.id))}>حذف</Button>}</div>)}</div>
-        {canManage && <form onSubmit={addTeamMember} className="mt-4 flex flex-wrap gap-2"><Input aria-label="شناسه کاربر" placeholder="شناسه کاربر جدید" value={newTeamMemberId} onChange={(event) => setNewTeamMemberId(event.target.value)} /><Button type="submit" disabled={isBusy || !newTeamMemberId.trim()}>افزودن عضو</Button></form>}
+        <div className="mt-2 space-y-2">{visibleTeamMembers.map((membership) => <div key={membership.user.id} className="flex flex-wrap items-center gap-2 text-sm"><span className="flex-1 break-all">{membership.user.full_name || membership.user.email} — {membership.role === "leader" ? "سرپرست" : "عضو"}</span>{canManage && (membership.role === "member" || user?.workspace_access) && <Button type="button" variant="ghost" size="sm" disabled={isBusy} onClick={() => void mutate(() => workspaceApi.removeTeamMember(teamId, membership.user.id))}>حذف</Button>}</div>)}</div>
+        {canManage && <form onSubmit={addTeamMember} className="mt-4 flex flex-wrap gap-2"><Select aria-label="کاربر جدید تیم" value={newTeamMemberId} onValueChange={setNewTeamMemberId} options={directory.filter((candidate) => !visibleTeamMembers.some((member) => member.user.id === candidate.id)).map((candidate) => ({ value: candidate.id, label: candidate.full_name || candidate.email, description: candidate.full_name ? candidate.email : undefined }))} placeholder="انتخاب کاربر" className="min-w-56 flex-1 sm:flex-none" /><Select aria-label="نقش در تیم" value={newMemberRole} onValueChange={(next) => setNewMemberRole(next as "leader" | "member")} options={[{ value: "member", label: "عضو" }, { value: "leader", label: "سرپرست" }]} className="w-36" /><Button type="submit" disabled={isBusy || !newTeamMemberId.trim()}>افزودن عضو</Button></form>}
       </section>
       <section className="rounded-2xl border border-gray-200 bg-white p-5">
         <h2 className="mb-3 font-semibold">پروژه‌های تیم</h2>

@@ -40,6 +40,11 @@ async def list_teams(db: AsyncSession) -> list[Team]:
     return list(result.scalars().all())
 
 
+async def list_user_directory(db: AsyncSession) -> list[User]:
+    result = await db.execute(select(User).order_by(User.full_name, User.email))
+    return list(result.scalars().all())
+
+
 async def get_team(db: AsyncSession, team_id: uuid.UUID) -> Team:
     team = await db.get(Team, team_id)
     if team is None:

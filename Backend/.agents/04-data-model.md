@@ -28,7 +28,7 @@ erDiagram
 ## جدول‌ها
 
 ### `users` (`auth/models.py`)
-`id` UUID PK · `email` unique+index · `hashed_password` (bcrypt) · `full_name` nullable · `role` enum `user_role` (`super_admin|admin|user`، پیش‌فرض user) · **`accounting_access`** bool (پیش‌فرض false؛ واگذاری مالی توسط super_admin، مستقل از role) · `accounting_access_granted_by` FK→users SET NULL · `accounting_access_granted_at` · **`user_management_access`** bool (پیش‌فرض false؛ migration `0030`) + `user_management_access_granted_by/at` · `created_at`. property `has_user_management_access` (super_admin یا فلگ) · property `has_accounting_access` = super_admin یا فلگ.
+`id` UUID PK · `email` unique+index · `hashed_password` (bcrypt) · `full_name` nullable · `role` enum `user_role` (`super_admin|admin|user`، پیش‌فرض user) · **`accounting_access`** bool (پیش‌فرض false؛ واگذاری مالی توسط super_admin، مستقل از role) · `accounting_access_granted_by` FK→users SET NULL · `accounting_access_granted_at` · **`user_management_access`** bool (پیش‌فرض false؛ migration `0030`) + `user_management_access_granted_by/at` · `created_at`. **`workspace_access`** bool (migration `0031`) + `_granted_by/at` · property `has_workspace_access` (admin+ یا فلگ) · property `has_user_management_access` (super_admin یا فلگ) · property `has_accounting_access` = super_admin یا فلگ.
 رابطه: `team_memberships` (cascade delete-orphan).
 
 ### `refresh_tokens`
@@ -107,6 +107,7 @@ erDiagram
 | `0009_ocr_cache` | جدول `ocr_cache` (نتیجه‌ی OCR بر اساس هش تصویر + مدل/prompt) |
 | `0010_ocr_cache_rotation` | ستون `ocr_cache.rotation` (چرخش پیداشده برای تصویر) |
 | `0011_file_manager` | جدول‌های `document_folders` و `archive_imports`، ستون `documents.folder_id`، مقدارهای `cancelled`/`unsupported` برای `document_status` (در downgrade حذف نمی‌شوند: Postgres حذف مقدار enum را ندارد) |
+| `0031_workspace_access` | ستون‌های `users.workspace_access/_granted_by/_granted_at` (پیش‌فرض false) |
 | `0030_user_management_access` | ستون‌های `users.user_management_access/_granted_by/_granted_at` (پیش‌فرض false) |
 | `0013_accounting_access` | ستون‌های `users.accounting_access/_granted_by/_granted_at` (ادمین‌های موجود `true`)، `messages.contains_financial` (backfill از artifact `sql_result`) |
 | `0012_ocr_cache_document_source` | ستون‌های `document_id`، `source_filename` و `page_number` در `ocr_cache` برای اتصال کش OCR به سند، ردیابی و امکان حذف انتخابی/خودکار کش |

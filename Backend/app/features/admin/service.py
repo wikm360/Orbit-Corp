@@ -72,6 +72,24 @@ async def set_accounting_access(
     return user
 
 
+async def set_workspace_access(
+    db: AsyncSession, user_id: uuid.UUID, *, enabled: bool, granted_by: uuid.UUID
+) -> User:
+    user = await db.get(User, user_id)
+    if user is None:
+        raise NotFoundError("User not found")
+    if user.role in (UserRole.SUPER_ADMIN, UserRole.ADMIN):
+        raise BadRequestError("Admins always have workspace access; it cannot be changed")
+    if user.workspace_access != enabled:
+        user.workspace_access = enabled
+        user.workspace_access_granted_by = granted_by if enabled else None
+        user.workspace_access_granted_at = datetime.now(timezone.utc) if enabled else None
+        await db.commit()
+        await db.refresh(user)
+        logger.info("Workspace access %s for user %s by %s", "granted" if enabled else "revoked", user.id, granted_by)
+    return user
+
+
 async def list_all_documents(db: AsyncSession) -> list[Document]:
     result = await db.execute(select(Document).order_by(Document.created_at.desc()))
     return list(result.scalars().all())
