@@ -13,9 +13,10 @@ export const SUMMARY_CANVAS_W = 1472; // 1536 - 2*32 horizontal padding
 export const SUMMARY_CANVAS_H = 699; // 864 - header - footer - vertical padding
 export const SUMMARY_GAP = 16;
 
-/** Formats quantities rounded half-up to whole integers (no decimal places) across presentation slides. */
-export function formatPresentationQuantity(value: string | null | undefined): string {
-  return formatQuantity(value, 0);
+/** Formats quantities rounded half-up to whole integers (no decimal places) across presentation slides.
+ * When decimals is specified, formats with that precision. */
+export function formatPresentationQuantity(value: string | null | undefined, decimals = 0): string {
+  return formatQuantity(value, decimals);
 }
 
 function parseDecimalToBigInt(raw: string): { value: bigint; scale: number } | null {

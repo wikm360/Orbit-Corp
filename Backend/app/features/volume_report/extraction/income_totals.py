@@ -107,10 +107,19 @@ def _starts_with_number(raw: str) -> bool:
     return bool(re.match(r"\s*-?\d", raw))
 
 
-def detect_basis(sheet_name: str, rows: list[list[Any]], file_name: str | None) -> str:
-    """planned = a forecast ("پیش بینی" in the file name, the sheet name or the title lines, or a "برنامه درآمد" sheet)."""
+def detect_basis(sheet_name: str, rows: list[list[Any]], file_name: str | None, period_label: str | None = None) -> str:
+    """planned = a forecast ("پیش بینی", "pishbini", "forecast", etc. in file/sheet name or title, or title period after report period)."""
+    from app.features.volume_report.extraction.period_range import find_period_range
+
     title = normalize_text(" ".join(str(c) for r in rows[:4] for c in r if c is not None))
     names = normalize_text(f"{sheet_name} {file_name or ''}")
-    if "پیش بینی" in title or "پیش بینی" in names or ("برنامه" in names and "درآمد" in names):
+    text = f"{title} {names}"
+    if any(w in text for w in ("پیش بینی", "پیش‌بینی", "pishbini", "pish bini", "forecast", "برنامه ای", "برنامه‌ای")) or ("برنامه" in names and "درآمد" in names):
         return "planned"
+    if period_label:
+        rep_range = find_period_range(period_label)
+        sheet_range = find_period_range(text)
+        if rep_range and sheet_range and rep_range.month == sheet_range.month:
+            if sheet_range.first_day > rep_range.last_day:
+                return "planned"
     return "actual"

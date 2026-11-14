@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import localFont from "next/font/local";
 
+import { BrandingProvider } from "@/features/branding/BrandingProvider";
+import { brandingCss, getBranding } from "@/shared/lib/branding";
 import "./globals.css";
 
 // Fallback for B Nazanin (see globals.css). Self-hosted (OFL licence) so the
@@ -12,16 +14,25 @@ const vazirmatn = localFont({
   display: "swap",
 });
 
-export const metadata: Metadata = {
-  title: "دستیار هوشمند محور گستر",
-  description: "دستیار داخلی شرکت محور گستر نصر، متصل به اسناد و قراردادهای سازمان",
-  icons: { icon: "/logo.jpg" },
-};
+// Title, description and favicon come from the organisation's branding (set by a super admin in the admin panel).
+export async function generateMetadata(): Promise<Metadata> {
+  const branding = await getBranding();
+  return {
+    title: branding.app_title,
+    description: branding.description,
+    icons: branding.logo_url ? { icon: branding.logo_url } : undefined,
+  };
+}
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const branding = await getBranding();
+  const css = brandingCss(branding.palette);
   return (
-    <html lang="fa" dir="rtl" className={vazirmatn.variable}>
-      <body className="bg-gray-50 text-gray-900">{children}</body>
+    <html lang="fa" dir="rtl" className={vazirmatn.variable} data-brand={css ? "" : undefined}>
+      <head>{css && <style dangerouslySetInnerHTML={{ __html: css }} />}</head>
+      <body className="bg-gray-50 text-gray-900">
+        <BrandingProvider branding={branding}>{children}</BrandingProvider>
+      </body>
     </html>
   );
 }

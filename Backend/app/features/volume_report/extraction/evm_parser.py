@@ -26,7 +26,7 @@ _DECIMAL = re.compile(r"^\d+\.\d{1,3}$")
 _RATIO = re.compile(r"^\d{1,2}(?:\.\d{1,3})?$")  # after the amounts: CPI, SPI (an Excel 0.0 / 1.0 arrives as "0" / "1")
 _INT = re.compile(r"^\d{1,4}$")
 _TOTAL_WORDS = ("جمع",)
-_PLAN_WORDS = ("پیش بینی",)
+_PLAN_WORDS = ("پیش بینی", "پیش‌بینی", "pishbini", "pish bini", "forecast", "برنامه ای", "برنامه‌ای")
 _TOLERANCE = Decimal("0.02")
 # Header cells that wrap onto the rows below the CPI/SPI row; a text row with one of these is never part of a project name.
 HEADER_WORDS = ("ریال", "ردیف", "bcws", "ضریب", "واقعی", "برنامه ای", "توضیحات", "مدت", "پیشرفت", "درصد", "( ماه )", "نام پروژه", "کارکرد")
@@ -120,10 +120,19 @@ def _find_header(rows: list[list[Any]]) -> int | None:
     return None
 
 
-def _basis(rows: list[list[Any]], header_index: int, sheet_name: str, file_name: str | None) -> str:
+def _basis(rows: list[list[Any]], header_index: int, sheet_name: str, file_name: str | None, period_label: str | None = None) -> str:
     title = normalize_text(" ".join(str(c) for r in rows[:header_index] for c in r if c is not None))
     names = normalize_text(f"{sheet_name} {file_name or ''}")
-    return "planned" if any(w in title or w in names for w in _PLAN_WORDS) else "actual"
+    text = f"{title} {names}"
+    if any(w in text for w in _PLAN_WORDS):
+        return "planned"
+    if period_label:
+        rep_range = find_period_range(period_label)
+        sheet_range = find_period_range(text)
+        if rep_range and sheet_range and rep_range.month == sheet_range.month:
+            if sheet_range.first_day > rep_range.last_day:
+                return "planned"
+    return "actual"
 
 
 def _ratio(numerator: Decimal | None, denominator: Decimal | None) -> Decimal | None:
@@ -204,7 +213,7 @@ def _join(tokens: list[str]) -> str:
     return " ".join(tokens).strip()
 
 
-def _parse_budget_template(sheet_name: str, rows: list[list[Any]], file_name: str | None) -> ParsedEvm | None:
+def _parse_budget_template(sheet_name: str, rows: list[list[Any]], file_name: str | None, period_label: str | None = None) -> ParsedEvm | None:
     """The annual "بودجه عملیاتی" summary of one project (Sirjan roads): "Y-BCWS  M-BCWS  PV  EV  ev  AC  CPI  CPI  SPI" with no
     contract column and the budgets in million rial. Only EV / ev / AC (the last three rial amounts) and CPI = ev / AC are
     trusted: its PV cell holds a placeholder (10), so SPI stays empty."""
@@ -227,7 +236,7 @@ def _parse_budget_template(sheet_name: str, rows: list[list[Any]], file_name: st
             if "پروژه" in text:
                 project = re.sub(r"\s+", " ", text.split("پروژه", 1)[1]).strip(" :-") or None
                 break
-        basis = _basis(rows, header, sheet_name, file_name)
+        basis = _basis(rows, header, sheet_name, file_name, period_label)
         data = EvmRowData(row_no=offset, project_name=project, is_total=False, ev=ev, ev_net=ev_net, ac=ac, cpi=_ratio(ev_net, ac))
         parsed = ParsedEvm(sheet_name=sheet_name, basis=basis, header_row=header + 1, rows=[data])
         parsed.warnings.append({"row": offset, "code": "budget_template_pv_spi_skipped"})
@@ -350,13 +359,13 @@ def _scale_million_rial(parsed: ParsedEvm) -> None:
     parsed.warnings.append({"row": parsed.header_row, "code": "million_rial_scaled"})
 
 
-def parse_evm_sheet(sheet_name: str, rows: list[list[Any]], file_name: str | None = None) -> ParsedEvm | None:
+def parse_evm_sheet(sheet_name: str, rows: list[list[Any]], file_name: str | None = None, period_label: str | None = None) -> ParsedEvm | None:
     """None when the sheet is not an EVM summary at all."""
     header = _find_header(rows)
     if header is None:
-        return _parse_budget_template(sheet_name, rows, file_name)
+        return _parse_budget_template(sheet_name, rows, file_name, period_label)
     notes_cols = _notes_columns(rows, header)
-    parsed = ParsedEvm(sheet_name=sheet_name, basis=_basis(rows, header, sheet_name, file_name), header_row=header + 1)
+    parsed = ParsedEvm(sheet_name=sheet_name, basis=_basis(rows, header, sheet_name, file_name, period_label), header_row=header + 1)
     parsed.period = find_period_range(" ".join(str(c) for row in rows[:header] for c in row if isinstance(c, str)))
     columns = _header_columns(rows, header)
     if columns is not None:

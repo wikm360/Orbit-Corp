@@ -543,6 +543,8 @@ def extract_pdf_page_grid(page: pypdf.PageObject) -> Rows:
         row_cells: list[list[tuple[float, str]]] = [[] for _ in range(len(col_defs))]
         for x, text in row_words:
             c_idx = assign_col(x)
+            if col_defs[c_idx]["text"] == "واحد" and text.strip() in {"ریال", "ريال"} and c_idx + 1 < len(col_defs):
+                c_idx += 1
             row_cells[c_idx].append((x, text))
 
         row: list[Any] = []

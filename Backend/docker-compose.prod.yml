@@ -166,6 +166,9 @@ services:
       args:
         NEXT_PUBLIC_API_URL: /api/v1
         NEXT_PUBLIC_AI_TRIGGER_TOKEN: ${AI_TRIGGER_TOKEN:-@bot}
+    environment:
+      # The frontend server reads the organisation's branding (GET /branding) per request over the internal network.
+      INTERNAL_API_URL: http://backend:8000/api/v1
     user: "10001:10001"
     tmpfs:
       - /tmp

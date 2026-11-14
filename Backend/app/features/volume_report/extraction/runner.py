@@ -81,7 +81,7 @@ def extract_file(
                     "pv_rows": len(plan.rows) if plan is not None else None, "basis": "planned",
                 })
                 continue
-            evm = None if sheet.is_hidden else parse_evm_sheet(sheet.name, sheet.rows(), os.path.basename(path))
+            evm = None if sheet.is_hidden else parse_evm_sheet(sheet.name, sheet.rows(), os.path.basename(path), period_label)
             if evm is not None:
                 # The EVM summary (PV/EV/AC/CPI/SPI per project) is its own data set, never an income table.
                 if force_planned:
@@ -96,7 +96,7 @@ def extract_file(
             if not sheet.is_hidden:
                 totals = parse_income_totals(sheet.rows())
                 if totals is not None:
-                    totals_basis = "planned" if force_planned else detect_basis(sheet.name, sheet.rows(), os.path.basename(path))
+                    totals_basis = "planned" if force_planned else detect_basis(sheet.name, sheet.rows(), os.path.basename(path), period_label)
                     result.income_totals.append((sheet.name, totals_basis, totals))
             if not sheet.is_hidden and probe.kind == "other" and _unreadable(sheet.rows()):
                 # Broken font encoding: the PDF holds control characters instead of letters, nothing can be read from it.
@@ -107,7 +107,7 @@ def extract_file(
             # A forecast file ("پیش بینی" in its name or title) keeps plain "درآمد …" sheet names: those are still the forecast.
             if evm_only:
                 continue  # re-reading only the EVM / income-totals / PV-plan rows: no income lines, nothing for the classification
-            basis = "planned" if force_planned or probe.kind == "planned" or detect_basis(sheet.name, sheet.rows(), os.path.basename(path)) == "planned" else "actual"
+            basis = "planned" if force_planned or probe.kind == "planned" or detect_basis(sheet.name, sheet.rows(), os.path.basename(path), period_label) == "planned" else "actual"
             parsed = parse_income_sheet(
                 sheet.name, sheet.rows(), lexicon, period_label, (layout_overrides or {}).get(sheet.name), basis,
             ) if probe.used else None

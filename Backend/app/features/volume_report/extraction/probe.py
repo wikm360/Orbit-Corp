@@ -7,7 +7,7 @@ from app.features.volume_report.extraction.normalize import normalize_text
 from app.features.volume_report.extraction.workbook import SheetData, WorkbookData
 
 _INCOME_WORDS = ("درآمد", "درامد")
-_PLAN_WORDS = ("برنامه", "پیش بینی")
+_PLAN_WORDS = ("برنامه", "پیش بینی", "پیش‌بینی", "pishbini", "pish bini", "forecast")
 _COMPANY_PATTERN = re.compile(r"شرکت\s+(?:[^\s،,:;()\d]+\s*){1,5}")
 _COMPANY_SCAN_ROWS = 12
 _COMPANY_SCAN_COLS = 12

@@ -1,4 +1,7 @@
-import Image from "next/image";
+"use client";
+
+import { BrandLogo } from "@/features/branding/BrandLogo";
+import { useBranding } from "@/features/branding/BrandingProvider";
 
 const HIGHLIGHTS = [
   { title: "پاسخ از دل اسناد", text: "قراردادها، دستورالعمل‌ها و مدارک پروژه‌ها را می‌خواند و جواب دقیق می‌دهد." },
@@ -11,6 +14,7 @@ const HIGHLIGHTS = [
  * colours (yellow / teal) as soft "peaks" echoing the mountain mark.
  */
 export function BrandPanel() {
+  const branding = useBranding();
   return (
     <section className="relative hidden overflow-hidden bg-brand-800 text-white lg:flex lg:flex-col lg:justify-between lg:p-12">
       {/* decorative peaks */}
@@ -23,31 +27,24 @@ export function BrandPanel() {
           fill="none"
           preserveAspectRatio="none"
         >
-          <path d="M0 260 L220 40 L400 200 L560 20 L800 260 Z" fill="#e8c523" />
-          <path d="M120 260 L380 60 L520 190 L700 40 L800 260 Z" fill="#3fd0cb" />
+          <path d="M0 260 L220 40 L400 200 L560 20 L800 260 Z" className="fill-accent-500" />
+          <path d="M120 260 L380 60 L520 190 L700 40 L800 260 Z" className="fill-teal-400" />
         </svg>
       </div>
 
       <div className="relative">
         <div className="inline-flex items-center gap-4 rounded-2xl bg-white/95 p-3 pe-5 shadow-card">
-          <Image
-            src="/logo.jpg"
-            alt="لوگوی شرکت محور گستر نصر"
-            width={72}
-            height={64}
-            priority
-            className="h-16 w-auto rounded-lg"
-          />
+          <BrandLogo className="h-16 w-16" rounded="rounded-lg" />
           <div className="text-brand-800">
-            <p className="text-lg font-bold leading-tight">شرکت محور گستر نصر</p>
-            <p className="text-sm text-brand-500">دستیار هوشمند سازمانی</p>
+            <p className="text-lg font-bold leading-tight">{branding.name}</p>
+            <p className="text-sm text-brand-500">{branding.tagline}</p>
           </div>
         </div>
       </div>
 
       <div className="relative max-w-md">
         <h2 className="text-balance text-3xl font-bold leading-snug">
-          هر سؤالی درباره‌ی اسناد شرکت داری، همین‌جا بپرس.
+          {branding.login_headline}
         </h2>
         <ul className="mt-8 space-y-5">
           {HIGHLIGHTS.map((item, index) => (
@@ -65,7 +62,7 @@ export function BrandPanel() {
       </div>
 
       <p className="relative text-xs text-brand-200/80">
-        ابزار داخلی کارکنان محور گستر • دسترسی فقط با حساب سازمانی
+        {branding.login_footer}
       </p>
     </section>
   );

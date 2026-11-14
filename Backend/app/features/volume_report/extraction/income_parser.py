@@ -23,7 +23,7 @@ TITLE_SCAN_ROWS = 3
 _QTY_LABELS = {"حجم", "درصد حجم", "حجم درصد"}
 _ALT_QTY_LABELS = {"تعداد دستگاه"}
 _QUOTES = '"«»“”'
-_MINING_WORDS = ("معدن", "باطله")
+_MINING_WORDS = ("معدن", "باطله برداری", "باطله‌برداری")
 
 
 @dataclass
@@ -96,18 +96,24 @@ def find_layout(rows: list[list[Any]]) -> tuple[int, dict[str, int | None]] | No
 
 _DATE = r"\d{2,4}\s*[/\-.]\s*\d{1,2}\s*[/\-.]\s*\d{1,4}"
 _MONTHS = "|".join(("فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور", "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند"))
-_PERIOD_TAIL = re.compile(
-    rf"(?:(?:\s+از)?\s*{_DATE}\s+الی\s+{_DATE}|\s*(?:تاریخ\s*[:：]?\s*)?{_DATE}|\s+(?:{_MONTHS})\s*ماه(?:\s+\d{{4}})?|\s+تاریخ\s*[:：]?)\s*$"
-)
+_PERIOD_PATTERNS = [
+    re.compile(r"\s*\(\s*(?:از\s*)?\d{1,2}\s*(?:الی|تا|[-–])\s*\d{1,2}\s*(?:(?:" + _MONTHS + r")(?:\s*ماه)?)?(?:\s*\d{4})?\s*\)\s*$"),
+    re.compile(r"\s+در\s+\d{1,2}\s*(?:الی|تا|[-–])\s*\d{1,2}(?:\s*(?:" + _MONTHS + r")(?:\s*ماه)?)?(?:\s*\d{4})?\s*$"),
+    re.compile(rf"(?:(?:\s+از)?\s*{_DATE}\s+الی\s+{_DATE}|\s*(?:تاریخ\s*[:：]?\s*)?{_DATE}|\s+(?:{_MONTHS})\s*ماه(?:\s+\d{{4}})?|\s+تاریخ\s*[:：]?)\s*$"),
+    re.compile(r"(?<!قطعه\s)(?<!باند\s)(?<!فاز\s)(?<!معدن\s)(?<!شماره\s)\b\d{1,2}\s+(?:" + _MONTHS + r")(?:\s*ماه)?(?:\s*\d{4})?\s*$"),
+]
 
 
 def strip_period_from_name(name: str) -> str:
     """A site is the same site every week: drop the report date / month the title carries after the project name
     ("… زاهدان خاش 1405/08/11", "… قطعه 2 آبان ماه 1405 تاریخ : 1405/08/11"). Digits that are part of the name stay."""
+    name = re.sub(r"([^\d\s])(\d{1,2}\s+(?:" + _MONTHS + r"))", r"\1 \2", name)
+    name = re.sub(r"([a-zA-Z]+)(\d+)", r"\1 \2", name)
     previous = None
     while previous != name:
         previous = name
-        name = _PERIOD_TAIL.sub("", name).strip(" :-–")
+        for pat in _PERIOD_PATTERNS:
+            name = pat.sub("", name).strip(" :-–")
     return name
 
 
@@ -134,6 +140,8 @@ def extract_site_name(rows: list[list[Any]], sheet_name: str) -> str:
 
 
 def guess_site_kind(site_name_norm: str) -> str:
+    if "سد" in site_name_norm:
+        return "road"
     return "mining" if any(word in site_name_norm for word in _MINING_WORDS) else "road"
 
 

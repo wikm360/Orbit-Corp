@@ -1,9 +1,10 @@
 "use client";
 
-import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 
+import { BrandLogo } from "@/features/branding/BrandLogo";
+import { useBranding } from "@/features/branding/BrandingProvider";
 import { Button } from "@/shared/components/ui/Button";
 import { Input } from "@/shared/components/ui/Input";
 
@@ -33,6 +34,7 @@ const COPY: Record<Mode, { title: string; subtitle: string; submit: string; swit
 
 export function LoginScreen() {
   const router = useRouter();
+  const branding = useBranding();
   const setSession = useAuthStore((state) => state.setSession);
   const token = useAuthStore((state) => state.token);
   const hasHydrated = useAuthStore((state) => state.hasHydrated);
@@ -84,17 +86,10 @@ export function LoginScreen() {
       <section className="flex flex-col items-center justify-center px-4 py-10 sm:px-8">
         {/* compact brand header for mobile / tablet, where the panel is hidden */}
         <div className="mb-8 flex items-center gap-3 lg:hidden">
-          <Image
-            src="/logo.jpg"
-            alt="لوگوی شرکت محور گستر نصر"
-            width={56}
-            height={50}
-            priority
-            className="h-12 w-auto rounded-lg"
-          />
+          <BrandLogo className="h-12 w-12" rounded="rounded-lg" />
           <div>
-            <p className="font-bold text-brand-800">شرکت محور گستر نصر</p>
-            <p className="text-xs text-gray-500">دستیار هوشمند سازمانی</p>
+            <p className="font-bold text-brand-800">{branding.name}</p>
+            <p className="text-xs text-gray-500">{branding.tagline}</p>
           </div>
         </div>
 

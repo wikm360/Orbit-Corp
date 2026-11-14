@@ -2,6 +2,43 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Brand colours as RGB triplets so Tailwind can add opacity (`rgb(var(--x) / <alpha-value>)`). These are the shipped defaults;
+   the root layout overrides them from the organisation's branding (GET /branding) with `:root[data-brand]`. */
+:root {
+    --brand-50: 238 240 251;
+    --brand-100: 219 223 246;
+    --brand-200: 183 191 238;
+    --brand-300: 138 151 226;
+    --brand-400: 91 107 211;
+    --brand-500: 52 70 184;
+    --brand-600: 34 48 158;
+    --brand-700: 24 35 132;
+    --brand-800: 18 26 102;
+    --brand-900: 12 18 71;
+    --accent-50: 254 251 232;
+    --accent-100: 253 245 194;
+    --accent-200: 248 236 185;
+    --accent-300: 247 226 107;
+    --accent-400: 239 210 58;
+    --accent-500: 232 197 35;
+    --accent-600: 201 167 15;
+    --accent-700: 158 130 10;
+    --accent-800: 116 98 18;
+    --accent-900: 79 67 12;
+    --teal-50: 235 252 251;
+    --teal-100: 203 247 244;
+    --teal-200: 185 232 231;
+    --teal-300: 111 226 220;
+    --teal-400: 63 208 203;
+    --teal-500: 37 184 180;
+    --teal-600: 26 147 145;
+    --teal-700: 23 117 116;
+    --teal-800: 18 92 90;
+    --teal-900: 13 63 61;
+    --ground: 20 43 64;
+    --ground-button: 22 59 72;
+}
+
 @keyframes select-in {
   from {
     opacity: 0;
@@ -38,12 +75,12 @@
   }
 
   ::selection {
-    background: #b9ebe4;
-    color: #142b40;
+    background: rgb(var(--teal-100));
+    color: rgb(var(--ground));
   }
 
   :focus-visible {
-    outline: 2px solid #1a9391;
+    outline: 2px solid rgb(var(--teal-600));
     outline-offset: 3px;
   }
 
@@ -56,7 +93,7 @@
 @layer components {
   .chat-surface {
     background-color: #f9fbfc;
-    background-image: radial-gradient(ellipse at 15% 8%, rgba(37, 184, 180, 0.045), transparent 48%);
+    background-image: radial-gradient(ellipse at 15% 8%, rgb(var(--teal-500) / 0.045), transparent 48%);
   }
 
   .orbit-sidebar {

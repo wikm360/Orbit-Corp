@@ -1,7 +1,8 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
+import { BrandLogo } from "@/features/branding/BrandLogo";
+import { useBranding } from "@/features/branding/BrandingProvider";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -88,6 +89,7 @@ export function AppSidebar({
 }: AppSidebarProps) {
   const pathname = usePathname();
   const volumeModuleEnabled = useVolumeEnabled();
+  const branding = useBranding();
   const router = useRouter();
   const searchParams = useSearchParams();
   const activeConversationId = searchParams.get("conversation");
@@ -213,7 +215,7 @@ export function AppSidebar({
     <aside
       aria-label="نوار کناری اصلی"
       className={cn(
-        "orbit-sidebar fixed inset-y-0 right-0 z-50 flex w-[272px] flex-col border-l border-white/5 bg-[#142b40] p-3 transition-[transform,width] duration-200 ease-out md:relative md:z-20 md:translate-x-0",
+        "orbit-sidebar fixed inset-y-0 right-0 z-50 flex w-[272px] flex-col border-l border-white/5 bg-ground p-3 transition-[transform,width] duration-200 ease-out md:relative md:z-20 md:translate-x-0",
         isOpen ? "translate-x-0 shadow-2xl" : "translate-x-full",
         isCollapsed && "md:w-[72px]"
       )}
@@ -226,10 +228,10 @@ export function AppSidebar({
             "flex min-w-0 flex-1 items-center gap-2 rounded-xl p-1.5 transition hover:bg-white/[0.05]",
             isCollapsed && "md:hidden"
           )}
-          aria-label="دستیار هوشمند محور گستر"
+          aria-label={branding.app_title}
         >
-          <Image src="/logo.jpg" alt="" width={30} height={30} className="h-9 w-9 rounded-xl object-cover" />
-          <span className={cn("min-w-0", isCollapsed && "md:hidden")}><span className="block truncate text-sm font-bold text-white">محور گستر</span><span className="mt-1 block text-[9px] tracking-[0.18em] text-slate-400" dir="ltr">ORBIT WORKSPACE</span></span>
+          <BrandLogo className="h-9 w-9 shrink-0" />
+          <span className={cn("min-w-0", isCollapsed && "md:hidden")}><span className="block truncate text-sm font-bold text-white">{branding.short_name}</span><span className="mt-1 block text-[9px] tracking-[0.18em] text-slate-400" dir="ltr">{branding.product_label}</span></span>
         </Link>
         <button
           type="button"

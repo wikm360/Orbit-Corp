@@ -24,7 +24,7 @@ UNIT_DIMENSIONS: dict[str, str] = {
 
 # Keys have all whitespace removed (see `_squash`), so "متر مکعب", "مترمکعب" and "متر\nمکعب" are one entry.
 _EXACT: dict[str, str] = {
-    "مترمکعب": "m3", "m3": "m3", "متر3": "m3", "cubicmeter": "m3",
+    "مترمکعب": "m3", "m3": "m3", "متر3": "m3", "cubicmeter": "m3", "مترمرکعب": "m3",
     "مترمربع": "m2", "m2": "m2", "متر2": "m2", "squaremeter": "m2",
     "مترطول": "m", "مترطولی": "m", "متر": "m", "m": "m", "ml": "m",
     "کیلوگرم": "kg", "kg": "kg", "کیلو": "kg",
@@ -51,6 +51,7 @@ def _squash(text: str) -> str:
 def normalize_unit(raw: object) -> UnitInfo:
     """Empty unit -> `other` with `empty=True` so the parser can warn; anything unknown is `other` (nonphysical)."""
     text = "" if raw is None else str(raw)
+    text = re.sub(r"ریال|ريال", "", text)
     key = _squash(text)
     if not key:
         return UnitInfo("other", UNIT_DIMENSIONS["other"], empty=True)

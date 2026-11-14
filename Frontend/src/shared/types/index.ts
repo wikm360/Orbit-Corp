@@ -97,3 +97,19 @@ export interface ProjectMembership {
   user: User;
   permissions?: ProjectPermission[];
 }
+
+/** Organisation identity (GET /branding, public). `palette` holds space-separated RGB triplets per shade for the CSS variables. */
+export interface Branding {
+  name: string;
+  short_name: string;
+  app_title: string;
+  description: string;
+  tagline: string;
+  product_label: string;
+  login_headline: string;
+  login_footer: string;
+  colors: { brand: string; accent: string; highlight: string };
+  palette: { brand: Record<string, string>; accent: Record<string, string>; teal: Record<string, string>; ground: { base: string; button: string } };
+  logo_url: string | null;
+  updated_at: string | null;
+}

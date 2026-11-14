@@ -7,7 +7,7 @@ from datetime import date
 from app.features.volume_report.jalali import MONTHS, month_length, nearest_month_range, to_gregorian
 
 _FULL = re.compile(r"(\d{4})\s*/\s*(\d{1,2})\s*/\s*(\d{1,2})\s*(?:الی|تا|-|–)\s*(\d{4})\s*/\s*(\d{1,2})\s*/\s*(\d{1,2})")
-_SHORT = re.compile(r"(\d{1,2})\s*(?:الی|تا|-|–)\s*(\d{1,2})\s*(" + "|".join(MONTHS) + r")")
+_SHORT = re.compile(r"(\d{1,2})\s*(?:الی|تا|-|–)\s*(\d{1,2})\s*(" + "|".join(MONTHS) + r")(?:\s*ماه)?(?:\s*(\d{4}))?")
 _DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
 
 
@@ -25,10 +25,15 @@ def find_period_range(text: str) -> PeriodRange | None:
     full = _FULL.search(text)
     if full:
         y1, m1, d1, y2, m2, d2 = (int(g) for g in full.groups())
+        if (y2, m2, d2) < (y1, m1, d1):
+            y1, m1, d1, y2, m2, d2 = y2, m2, d2, y1, m1, d1
         return PeriodRange(y1, m1, d1, d2, end_month=m2 if (m2, y2) != (m1, y1) else None)
     short = _SHORT.search(text)
     if short:
-        return PeriodRange(None, MONTHS.index(short.group(3)) + 1, int(short.group(1)), int(short.group(2)))
+        d1, d2 = int(short.group(1)), int(short.group(2))
+        month = MONTHS.index(short.group(3)) + 1
+        year = int(short.group(4)) if short.group(4) else None
+        return PeriodRange(year, month, min(d1, d2), max(d1, d2))
     return None
 
 

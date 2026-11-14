@@ -1,6 +1,7 @@
 "use client";
 
-import Image from "next/image";
+import { BrandLogo } from "@/features/branding/BrandLogo";
+import { useBranding } from "@/features/branding/BrandingProvider";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
@@ -11,6 +12,7 @@ import { TokenResponse } from "@/features/auth/types";
 
 export default function MainLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
+  const branding = useBranding();
   const pathname = usePathname();
   const { token, user, logout, hasHydrated } = useAuthStore();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -89,8 +91,8 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
             </svg>
           </button>
           <div className="flex items-center gap-2">
-            <Image src="/logo.jpg" alt="" width={28} height={28} className="h-7 w-7 rounded-lg object-cover" />
-            <span className="text-sm font-semibold text-gray-900">محور گستر</span>
+            <BrandLogo className="h-7 w-7" rounded="rounded-lg" />
+            <span className="text-sm font-semibold text-gray-900">{branding.short_name}</span>
           </div>
           <button
             type="button"

@@ -8,6 +8,7 @@ import { Select } from "@/shared/components/ui/Select";
 import { useAuthStore } from "@/features/auth/hooks/useAuthStore";
 import { UserRole } from "@/shared/types";
 import { TokenQuotaControls } from "../components/TokenQuotaControls";
+import { BrandingPanel } from "../components/BrandingPanel";
 import { QuotaAdminPanel } from "../components/QuotaAdminPanel";
 import { UserQuotaControls } from "../components/UserQuotaControls";
 import { DocumentAdminTable } from "../components/DocumentAdminTable";
@@ -62,6 +63,7 @@ export function AdminScreen() {
         </div>;
       })}</div>
     </section>
+    {currentUser?.role === "super_admin" && <BrandingPanel />}
     <QuotaAdminPanel canEdit={currentUser?.role === "super_admin"} />
     <section className="rounded-2xl border border-gray-200 bg-white p-5">
       <h2 className="mb-1 font-semibold text-gray-800">کاربران</h2>

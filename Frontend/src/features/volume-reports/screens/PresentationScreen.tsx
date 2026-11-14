@@ -45,6 +45,12 @@ function chunks<T>(items: T[], size: number): T[][] {
   return result;
 }
 
+function balancedChunks<T>(items: T[], max: number): T[][] {
+  if (!items.length) return [];
+  const parts = Math.ceil(items.length / max);
+  return chunks(items, Math.ceil(items.length / parts));
+}
+
 interface ScorecardRow {
   id: string;
   name: string;
@@ -171,6 +177,12 @@ function ScorecardTable({
   const entityNames = useMemo(() => groups.map((g) => g.name), [groups]);
   const hasSubtitles = useMemo(() => !isCompany && groups.some((g) => Boolean(g.companyName)), [groups, isCompany]);
 
+  const itemDecimals = useCallback(
+    (val: string | null | undefined, item: CatalogItem) =>
+      val && Number.parseFloat(val) > 0 && Number.parseFloat(val) < 10 && item.output_unit === "t" ? 2 : 0,
+    [],
+  );
+
   const { hasPlanned, formattedValues, formattedPlanned, maxVal, maxPlan } = useMemo(() => {
     const vals: string[] = [];
     const plans: string[] = [];
@@ -178,20 +190,20 @@ function ScorecardTable({
       const planGroup = plannedGroupMap?.get(group.id);
       for (const item of metrics) {
         const row = group.rows.get(item.key);
-        if (row) vals.push(formatPresentationQuantity(row.qty));
+        if (row) vals.push(formatPresentationQuantity(row.qty, itemDecimals(row.qty, item)));
         const planRow = planGroup?.get(item.key);
         if (planRow && Number.parseFloat(planRow.qty || "0") > 0) {
-          plans.push(`برنامه: ${formatPresentationQuantity(planRow.qty)}`);
+          plans.push(`برنامه: ${formatPresentationQuantity(planRow.qty, itemDecimals(planRow.qty, item))}`);
         }
       }
     }
     if (showTotal) {
       for (const item of metrics) {
         const row = holdingMap.get(item.key);
-        if (row) vals.push(formatPresentationQuantity(row.qty));
+        if (row) vals.push(formatPresentationQuantity(row.qty, itemDecimals(row.qty, item)));
         const planRow = plannedHoldingMap?.get(item.key);
         if (planRow && Number.parseFloat(planRow.qty || "0") > 0) {
-          plans.push(`برنامه: ${formatPresentationQuantity(planRow.qty)}`);
+          plans.push(`برنامه: ${formatPresentationQuantity(planRow.qty, itemDecimals(planRow.qty, item))}`);
         }
       }
     }
@@ -204,7 +216,7 @@ function ScorecardTable({
       maxVal: maxV,
       maxPlan: maxP || undefined,
     };
-  }, [groups, holdingMap, metrics, plannedGroupMap, plannedHoldingMap, showTotal]);
+  }, [groups, holdingMap, itemDecimals, metrics, plannedGroupMap, plannedHoldingMap, showTotal]);
 
   const fallback = useMemo(
     () =>
@@ -419,7 +431,7 @@ function ScorecardTable({
                       <span className="flex items-center gap-2.5">
                         <CompanyMark name={group.name} size={typo.logoSizePx} />
                         <span
-                          className="line-clamp-2 font-bold leading-snug"
+                          className="line-clamp-3 font-bold leading-snug"
                           style={{ fontSize: `${typo.entityNamePx}px` }}
                         >
                           {group.name}
@@ -428,7 +440,7 @@ function ScorecardTable({
                     ) : (
                       <div className="flex min-w-0 flex-col">
                         <span
-                          className="line-clamp-2 font-bold leading-snug text-[#252850]"
+                          className="line-clamp-3 font-bold leading-snug text-[#252850]"
                           style={{ fontSize: `${typo.entityNamePx}px` }}
                         >
                           {group.name}
@@ -454,14 +466,14 @@ function ScorecardTable({
                           className="whitespace-nowrap font-extrabold leading-none text-[#252850]"
                           style={{ fontSize: `${typo.cellValuePx}px` }}
                         >
-                          {row ? formatPresentationQuantity(row.qty) : <span className="font-normal text-slate-300">—</span>}
+                          {row ? formatPresentationQuantity(row.qty, itemDecimals(row.qty, item)) : <span className="font-normal text-slate-300">—</span>}
                         </div>
                         {hasPlan && (
                           <div
                             className="mt-1 whitespace-nowrap font-semibold leading-none text-slate-500"
                             style={{ fontSize: `${typo.planTextPx}px` }}
                           >
-                            برنامه: {formatPresentationQuantity(planRow.qty)}
+                            برنامه: {formatPresentationQuantity(planRow.qty, itemDecimals(planRow.qty, item))}
                           </div>
                         )}
                       </td>
@@ -495,14 +507,14 @@ function ScorecardTable({
                         className="whitespace-nowrap font-black leading-none text-[#252850]"
                         style={{ fontSize: `${typo.totalValuePx}px` }}
                       >
-                        {row ? formatPresentationQuantity(row.qty) : <span className="font-normal text-slate-300">—</span>}
+                        {row ? formatPresentationQuantity(row.qty, itemDecimals(row.qty, item)) : <span className="font-normal text-slate-300">—</span>}
                       </div>
                       {hasPlan && (
                         <div
                           className="mt-1 whitespace-nowrap font-bold leading-none text-[#9b7a05]"
                           style={{ fontSize: `${typo.planTextPx}px` }}
                         >
-                          برنامه: {formatPresentationQuantity(planRow.qty)}
+                          برنامه: {formatPresentationQuantity(planRow.qty, itemDecimals(planRow.qty, item))}
                         </div>
                       )}
                     </td>
@@ -1273,7 +1285,7 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
               className="h-3 w-3 shrink-0 rounded-full shadow-sm"
               style={{ backgroundColor: getCompanyColor(comp.name, idx) }}
             />
-            <span className="max-w-[160px] truncate">{comp.name}</span>
+            <span className="whitespace-nowrap">{comp.name}</span>
           </span>
         ))}
       </div>
@@ -1301,8 +1313,8 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
       });
     });
 
-    const PROJECT_ROWS_PER_SLIDE = 10;
-    const projectPages = chunks(projects, PROJECT_ROWS_PER_SLIDE);
+    const PROJECT_ROWS_PER_SLIDE = 8;
+    const projectPages = balancedChunks(projects, PROJECT_ROWS_PER_SLIDE);
     if (!projectPages.length) projectPages.push([]);
     projectPages.forEach((groupSet, pageIndex) => {
       result.push({

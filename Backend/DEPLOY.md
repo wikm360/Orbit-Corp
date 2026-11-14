@@ -127,6 +127,9 @@ ALLOW_PUBLIC_REGISTRATION=false
 - **GitHub Actions** (`.github/workflows/deploy.yml`): با هر push به `main` به سرور SSH می‌زند، `git reset --hard origin/main`، سپس `cd Frontend && npm install && npm run build` و `systemctl restart front`. **بک‌اند/migration/compose را deploy نمی‌کند.** این مسیر مربوط به اجرای فرانت با systemd است و با سرویس `frontend` در compose موازی/تکراری است؛ یکی را انتخاب کنید (در حالت compose، سرویس `front` را stop کنید تا پورت/منابع دوبار مصرف نشود). نیازمند secretهای repo: `SERVER_HOST`، `SERVER_USER`، `SERVER_SSH_KEY`.
 - پس بعد از هر push که کد بک‌اند را عوض می‌کند، روی سرور خودتان `git pull && docker compose up -d --build` را بزنید (بخش ۶.۱).
 
+## ۳.۱. هویت سازمان (نام، لوگو، رنگ)
+بعد از اولین ورود super admin: «مدیریت» ← «هویت سازمان (برند)». نام‌ها، متن صفحه‌ی ورود، سه رنگ و لوگو (PNG/JPEG/WebP، ≤ ۵۱۲KB) را همان‌جا تنظیم کنید؛ بدون build مجدد و بلافاصله برای همه اعمال می‌شود. برند در دیتابیس (و backup) است. نصبی که از نسخه‌ی قبل آپدیت شده نام و رنگ قبلی را نگه می‌دارد ولی **لوگو را یک بار باید آپلود کنید** (تا آن موقع حرف اول نام نمایش داده می‌شود). فرانت‌اند برند را از `INTERNAL_API_URL` (در compose پروداکشن تنظیم است) می‌خواند. جزئیات: `.agents/flows/branding.md`.
+
 ## ۴. دسترسی کاربران
 
 | حالت | تنظیمات |

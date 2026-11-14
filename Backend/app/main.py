@@ -17,6 +17,7 @@ from app.features.access_control.router import router as teams_router
 from app.features.admin.panel import setup_admin_panel
 from app.features.admin.router import inspector_router, router as admin_router
 from app.features.auth.router import router as auth_router
+from app.features.branding.router import admin_router as branding_admin_router, public_router as branding_public_router
 from app.features.chat.router import router as chat_router
 from app.features.db_connector.router import router as accounting_db_router
 from app.features.documents.router import router as documents_router
@@ -119,6 +120,8 @@ app.include_router(documents_router, prefix=settings.api_prefix)
 app.include_router(memory_router, prefix=settings.api_prefix)
 app.include_router(chat_router, prefix=settings.api_prefix)
 app.include_router(accounting_db_router, prefix=settings.api_prefix)
+app.include_router(branding_public_router, prefix=settings.api_prefix)
+app.include_router(branding_admin_router, prefix=settings.api_prefix)
 app.include_router(admin_router, prefix=settings.api_prefix)
 app.include_router(inspector_router, prefix=settings.api_prefix)
 if settings.volume_report_enabled:

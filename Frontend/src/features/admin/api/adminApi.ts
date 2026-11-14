@@ -26,6 +26,9 @@ export const adminApi = {
   modelPrices: workspaceApi.modelPrices,
   setModelPrice: workspaceApi.setModelPrice,
   costSummary: workspaceApi.costSummary,
+  updateBranding: workspaceApi.updateBranding,
+  uploadBrandLogo: workspaceApi.uploadBrandLogo,
+  deleteBrandLogo: workspaceApi.deleteBrandLogo,
   listAllDocuments: () => apiRequest<Document[]>("/admin/documents"),
 };
 
