@@ -35,6 +35,9 @@
 | endpoint | دسترسی |
 |---|---|
 | `GET /projects/{id}/documents` | عضو پروژه (لیست تخت همه‌ی اسناد) |
+| `GET /projects/{id}/documents/{doc}/file?disposition=` | عضو پروژه (فایل با هدر Content-Disposition inline یا attachment) |
+| `GET /projects/{id}/documents/{doc}/download` | عضو پروژه (دانلود مستقیم فایل سند با نام اصلی) |
+| `GET /projects/{id}/documents/{doc}/preview` | عضو پروژه (`DocumentPreviewResponse`: صفحات و متن استخراج‌شده / OCR) |
 | `POST /projects/{id}/documents` (multipart `file` + اختیاری `folder_id`) | manager |
 | `POST /projects/{id}/documents/batch` (multipart `files[]` ≤۲۰ + اختیاری `folder_id`) | manager |
 | `POST /projects/{id}/documents/{doc}/retry` | manager (`failed`/`cancelled`/`unsupported` که حالا پشتیبانی می‌شود) |
@@ -72,6 +75,7 @@
 | `GET /chat/conversations/{id}/messages?after=<uuid>` | catch-up |
 | `POST /chat/conversations/{id}/messages` `{content}` | پیام گروهی (فقط group) |
 | `GET /chat/conversations/{id}/documents` | وضعیت اسناد گفتگو |
+| `GET /chat/conversations/{id}/documents/{doc}/file` و `/download` و `/preview` | دسترسی گفتگو (فایل/دانلود/پیش‌نمایش) |
 | `POST /chat/conversations/{id}/documents` · `/documents/batch` | آپلود سند گفتگو |
 | `WS /chat/conversations/{id}/ws?token=<access>` | رویدادهای زنده |
 `MessageRead{id,sender_type,sender_id,content,sources:[SourceCitation],artifacts:[dict],reply_to_message_id,created_at}`.

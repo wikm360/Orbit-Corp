@@ -1,8 +1,9 @@
-import { apiRequest, uploadRequest } from "@/shared/lib/apiClient";
+import { ApiError, apiRequest, authorizedFetch, parseErrorMessage, uploadRequest } from "@/shared/lib/apiClient";
 import {
   BatchUploadResponse,
   BulkResult,
   Document,
+  DocumentPreviewResponse,
   DocumentSearchHit,
   FileSelection,
   Folder,
@@ -48,4 +49,30 @@ export const documentsApi = {
   retryItems: (projectId: string, selection: FileSelection) => post<BulkResult>(`/projects/${projectId}/files/retry`, selection),
   cancelItems: (projectId: string, selection: FileSelection) => post<BulkResult>(`/projects/${projectId}/files/cancel`, selection),
   dismissArchive: (projectId: string, archiveId: string) => apiRequest<void>(`/projects/${projectId}/archives/${archiveId}`, { method: "DELETE" }),
+  downloadFile: async (projectId: string, documentId: string, filename: string) => {
+    const response = await authorizedFetch(`/projects/${projectId}/documents/${documentId}/file?disposition=attachment`);
+    if (!response.ok) {
+      throw new ApiError(response.status, await parseErrorMessage(response));
+    }
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => window.URL.revokeObjectURL(url), 2000);
+  },
+  getFileBlob: async (projectId: string, documentId: string) => {
+    const response = await authorizedFetch(`/projects/${projectId}/documents/${documentId}/file?disposition=inline`);
+    if (!response.ok) {
+      throw new ApiError(response.status, await parseErrorMessage(response));
+    }
+    const blob = await response.blob();
+    const contentType = response.headers.get("Content-Type") || blob.type;
+    return { blob, contentType };
+  },
+  getPreview: (projectId: string, documentId: string) =>
+    apiRequest<DocumentPreviewResponse>(`/projects/${projectId}/documents/${documentId}/preview`),
 };

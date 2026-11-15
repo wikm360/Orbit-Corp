@@ -3,13 +3,16 @@
 import { useRouter } from "next/navigation";
 import { useMemo, useRef, useState } from "react";
 import { Button } from "@/shared/components/ui/Button";
+import { friendlyErrorMessage } from "@/shared/lib/errorMessages";
 import { toFaDigits } from "@/shared/lib/utils";
 import { useVolumeEnabled } from "@/features/volume-reports/hooks/useVolumeEnabled";
+import { documentsApi } from "../api/documentsApi";
 import { useBatchUpload } from "../hooks/useBatchUpload";
 import { useFileManager } from "../hooks/useFileManager";
 import { canDropOn, docKey, folderKey, selectionFromKeys, selectionSize } from "../lib/fileManager";
-import type { FileSelection } from "../types";
+import type { Document, FileSelection } from "../types";
 import { ArchiveImportCard } from "./ArchiveImportCard";
+import { DocumentViewerModal } from "./DocumentViewerModal";
 import { ConflictDialog, DeleteDialog, NameDialog } from "./FileDialogs";
 import { DRAG_TYPE, FileTable, readDragged } from "./FileTable";
 import { StatusBadge } from "./StatusBadge";
@@ -41,6 +44,22 @@ export function FileManager({ projectId, canManage }: { projectId: string; canMa
     ? (renameTarget.startsWith("f:") ? listing.folders.find((f) => folderKey(f.folder.id) === renameTarget)?.folder.name : listing.documents.find((d) => docKey(d.id) === renameTarget)?.filename) ?? ""
     : "";
   const singleKey = count === 1 ? [...selected][0] : null;
+  const singleDoc = count === 1 && singleKey?.startsWith("d:") && listing
+    ? listing.documents.find((d) => docKey(d.id) === singleKey) ?? null
+    : null;
+  const [viewingDoc, setViewingDoc] = useState<Document | null>(null);
+  const [downloadingDocId, setDownloadingDocId] = useState<string | null>(null);
+
+  const handleDownload = async (doc: Document) => {
+    setDownloadingDocId(doc.id);
+    try {
+      await documentsApi.downloadFile(projectId, doc.id, doc.filename);
+    } catch (err) {
+      alert(friendlyErrorMessage(err, "دانلود فایل ناموفق بود."));
+    } finally {
+      setDownloadingDocId(null);
+    }
+  };
 
   function pick(input: HTMLInputElement | null, picked: FileList | null) {
     const list = Array.from(picked ?? []);
@@ -76,6 +95,12 @@ export function FileManager({ projectId, canManage }: { projectId: string; canMa
         <Button type="button" size="sm" variant="ghost" disabled={!count || fm.busy} onClick={() => void fm.cancel(selection)}>لغو پردازش</Button>
         <Button type="button" size="sm" variant="ghost" className="text-red-600 hover:bg-red-50" disabled={!count || fm.busy} onClick={() => setDialog({ kind: "delete", selection })}>حذف</Button>
       </>}
+      {singleDoc && (
+        <>
+          <Button type="button" size="sm" variant="ghost" onClick={() => setViewingDoc(singleDoc)}>مشاهده</Button>
+          <Button type="button" size="sm" variant="ghost" disabled={downloadingDocId === singleDoc.id} onClick={() => void handleDownload(singleDoc)}>دانلود</Button>
+        </>
+      )}
       {volumeModule && (
         <Button type="button" size="sm" variant="ghost" className="text-teal-700" disabled={!selection.document_ids.length}
           title="فقط فایل‌های اکسل و PDF آماده در گزارش لحاظ می‌شوند"
@@ -121,7 +146,12 @@ export function FileManager({ projectId, canManage }: { projectId: string; canMa
     </div>}
 
     {searching
-      ? <SearchResults hits={fm.hits} onShow={(folderId) => fm.open(folderId)} />
+      ? <SearchResults
+          hits={fm.hits}
+          onShow={(folderId) => fm.open(folderId)}
+          onView={(doc) => setViewingDoc(doc)}
+          onDownload={(doc) => void handleDownload(doc)}
+        />
       : fm.isLoading && !listing
         ? <div className="space-y-3" aria-label="در حال بارگذاری اسناد">{[0, 1, 2].map((item) => <div key={item} className="h-10 animate-pulse rounded-xl bg-gray-100" />)}</div>
         : listing && <FileTable
@@ -136,12 +166,21 @@ export function FileManager({ projectId, canManage }: { projectId: string; canMa
           onRetry={(id) => void fm.retry({ document_ids: [id], folder_ids: [] })}
           onCancel={(id) => void fm.cancel({ document_ids: [id], folder_ids: [] })}
           onRename={(key) => setDialog({ kind: "rename", key })}
+          onView={(doc) => setViewingDoc(doc)}
+          onDownload={(doc) => void handleDownload(doc)}
         />}
 
     {dialog?.kind === "new-folder" && <NameDialog title="پوشهٔ جدید" submitLabel="ساخت" onSubmit={fm.createFolder} onClose={() => setDialog(null)} />}
     {dialog?.kind === "rename" && <NameDialog title="تغییر نام" initial={renameInitial} submitLabel="ذخیره" onSubmit={(name) => fm.renameItem(dialog.key, name)} onClose={() => setDialog(null)} />}
     {dialog?.kind === "delete" && <DeleteDialog files={dialog.selection.document_ids.length} folders={dialog.selection.folder_ids.length} busy={fm.busy} onClose={() => setDialog(null)} onConfirm={() => { void fm.remove(dialog.selection).then(() => setDialog(null)); }} />}
     {fm.conflict && <ConflictDialog conflict={fm.conflict} onClose={fm.dismissConflict} />}
+
+    <DocumentViewerModal
+      projectId={projectId}
+      document={viewingDoc}
+      isOpen={Boolean(viewingDoc)}
+      onClose={() => setViewingDoc(null)}
+    />
   </section>;
 }
 
@@ -157,13 +196,28 @@ function Crumb({ label, onOpen, onDropItems }: { label: string; onOpen: () => vo
   ><bdi>{label}</bdi></button>;
 }
 
-function SearchResults({ hits, onShow }: { hits: { document: { id: string; filename: string; status: import("../types").DocumentStatus; folder_id?: string | null }; path: string[] }[] | null; onShow: (folderId: string | null) => void }) {
+function SearchResults({
+  hits,
+  onShow,
+  onView,
+  onDownload,
+}: {
+  hits: { document: Document; path: string[] }[] | null;
+  onShow: (folderId: string | null) => void;
+  onView: (doc: Document) => void;
+  onDownload: (doc: Document) => void;
+}) {
   if (hits === null) return <p className="text-sm text-gray-400">در حال جست‌وجو…</p>;
   if (hits.length === 0) return <p className="py-6 text-center text-sm text-gray-400">فایلی با این نام پیدا نشد.</p>;
   return <ul className="divide-y divide-gray-100 text-sm" aria-label="نتایج جست‌وجو">
     {hits.map(({ document, path }) => <li key={document.id} className="flex flex-wrap items-center justify-between gap-2 py-2.5">
       <div className="min-w-0"><p className="break-words font-medium text-gray-800"><bdi>{document.filename}</bdi></p><p className="text-xs text-gray-500"><bdi>{["ریشهٔ پروژه", ...path].join(" / ")}</bdi></p></div>
-      <div className="flex items-center gap-2"><StatusBadge status={document.status} /><Button type="button" variant="ghost" size="sm" onClick={() => onShow(document.folder_id ?? null)}>نمایش در پوشه</Button></div>
+      <div className="flex items-center gap-2">
+        <StatusBadge status={document.status} />
+        <Button type="button" variant="ghost" size="sm" onClick={() => onView(document)}>مشاهده</Button>
+        <Button type="button" variant="ghost" size="sm" onClick={() => onDownload(document)}>دانلود</Button>
+        <Button type="button" variant="ghost" size="sm" onClick={() => onShow(document.folder_id ?? null)}>نمایش در پوشه</Button>
+      </div>
     </li>)}
   </ul>;
 }

@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.features.usage.service import enforce_upload_quota
@@ -14,6 +14,7 @@ from app.features.documents.schemas import (
     BatchUploadResponse,
     BulkResult,
     DocumentRead,
+    DocumentPreviewResponse,
     DocumentSearchHit,
     DocumentUpdate,
     DocumentUploadResponse,
@@ -273,3 +274,40 @@ async def delete_project_document(
     if document.project_id != project.id:
         raise BadRequestError("This document does not belong to the given project")
     await service.delete_document(db, document_id)
+
+
+@router.get("/projects/{project_id}/documents/{document_id}/file")
+async def get_project_document_file(
+    document_id: uuid.UUID,
+    disposition: str = Query("inline", pattern="^(inline|attachment)$"),
+    project: Project = Depends(require_project_access),
+    db: AsyncSession = Depends(get_db),
+):
+    document = await service.get_document(db, document_id)
+    if document.project_id != project.id:
+        raise BadRequestError("This document does not belong to the given project")
+    return service.get_document_file_response(document, disposition=disposition)
+
+
+@router.get("/projects/{project_id}/documents/{document_id}/download")
+async def download_project_document(
+    document_id: uuid.UUID,
+    project: Project = Depends(require_project_access),
+    db: AsyncSession = Depends(get_db),
+):
+    document = await service.get_document(db, document_id)
+    if document.project_id != project.id:
+        raise BadRequestError("This document does not belong to the given project")
+    return service.get_document_file_response(document, disposition="attachment")
+
+
+@router.get("/projects/{project_id}/documents/{document_id}/preview", response_model=DocumentPreviewResponse)
+async def get_project_document_preview(
+    document_id: uuid.UUID,
+    project: Project = Depends(require_project_access),
+    db: AsyncSession = Depends(get_db),
+):
+    document = await service.get_document(db, document_id)
+    if document.project_id != project.id:
+        raise BadRequestError("This document does not belong to the given project")
+    return await service.get_document_preview(db, document)

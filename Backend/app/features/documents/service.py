@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import logging
+import mimetypes
 import uuid
 from collections.abc import Sequence
 from pathlib import Path
@@ -10,6 +11,7 @@ from redis import Redis
 from rq import Queue
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.responses import FileResponse
 
 from app.core.config import get_settings
 from app.core.exceptions import BadRequestError, NotFoundError
@@ -28,6 +30,7 @@ from app.features.documents.folder_service import (
     unique_name,
 )
 from app.features.documents.models import Document, DocumentChunk, DocumentStatus
+from app.features.documents.schemas import DocumentPagePreview, DocumentPreviewResponse
 from app.features.documents.spreadsheet import cleanup_tables_cache
 from app.features.retrieval.access_filter import accessible_documents_filter
 
@@ -769,5 +772,125 @@ async def get_full_document_content(
         }
 
     return full_text
+
+
+def get_document_file_response(document: Document, disposition: str = "inline") -> FileResponse:
+    file_path = Path(document.file_path)
+    if not file_path.exists():
+        raise NotFoundError("The document file was not found on disk")
+
+    media_type = document.content_type
+    if not media_type or media_type == "application/octet-stream":
+        guessed, _ = mimetypes.guess_type(document.filename)
+        if guessed:
+            media_type = guessed
+        else:
+            media_type = "application/octet-stream"
+
+    return FileResponse(
+        path=file_path,
+        media_type=media_type,
+        filename=document.filename,
+        content_disposition_type=disposition,
+    )
+
+
+async def get_document_preview(db: AsyncSession, document: Document) -> DocumentPreviewResponse:
+    # 1. Try to load reconstructed document JSON
+    recon = load_reconstructed_document(document.file_path)
+    if recon and "pages" in recon and recon["pages"]:
+        pages = [
+            DocumentPagePreview(
+                page=p.get("page", i + 1),
+                text=p.get("text", ""),
+                has_images=p.get("has_images", False),
+                metadata=p.get("metadata", {}),
+            )
+            for i, p in enumerate(recon.get("pages", []))
+        ]
+        total_pages = recon.get("total_pages", len(pages))
+        return DocumentPreviewResponse(
+            document_id=document.id,
+            filename=document.filename,
+            content_type=document.content_type,
+            status=document.status,
+            total_pages=total_pages,
+            pages=pages,
+        )
+
+    # 2. Check if reconstructed txt exists
+    recon_txt_path = get_reconstructed_txt_path(document.file_path)
+    if recon_txt_path.exists():
+        try:
+            raw_text = recon_txt_path.read_text(encoding="utf-8")
+            return DocumentPreviewResponse(
+                document_id=document.id,
+                filename=document.filename,
+                content_type=document.content_type,
+                status=document.status,
+                total_pages=1,
+                pages=[DocumentPagePreview(page=1, text=raw_text)],
+                raw_text=raw_text,
+            )
+        except Exception:
+            pass
+
+    # 3. Check document chunks in database if document is ready
+    chunks = list(
+        (
+            await db.execute(
+                select(DocumentChunk)
+                .where(DocumentChunk.document_id == document.id)
+                .order_by(DocumentChunk.chunk_index)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if chunks:
+        page_dict: dict[int, list[str]] = {}
+        for chunk in chunks:
+            page_num = chunk.chunk_metadata.get("page", 1) if chunk.chunk_metadata else 1
+            page_dict.setdefault(page_num, []).append(chunk.content)
+        pages = [
+            DocumentPagePreview(page=p, text="\n\n".join(texts))
+            for p, texts in sorted(page_dict.items())
+        ]
+        return DocumentPreviewResponse(
+            document_id=document.id,
+            filename=document.filename,
+            content_type=document.content_type,
+            status=document.status,
+            total_pages=len(pages),
+            pages=pages,
+        )
+
+    # 4. If plain text or csv file on disk, read text
+    suffix = Path(document.filename).suffix.lower()
+    if suffix in [".txt", ".csv", ".json", ".xml", ".html", ".md"]:
+        file_path = Path(document.file_path)
+        if file_path.exists():
+            try:
+                raw_text = file_path.read_text(encoding="utf-8", errors="replace")
+                return DocumentPreviewResponse(
+                    document_id=document.id,
+                    filename=document.filename,
+                    content_type=document.content_type,
+                    status=document.status,
+                    total_pages=1,
+                    pages=[DocumentPagePreview(page=1, text=raw_text)],
+                    raw_text=raw_text,
+                )
+            except Exception:
+                pass
+
+    return DocumentPreviewResponse(
+        document_id=document.id,
+        filename=document.filename,
+        content_type=document.content_type,
+        status=document.status,
+        total_pages=0,
+        pages=[],
+    )
 
 

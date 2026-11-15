@@ -1,8 +1,8 @@
 import uuid
-from typing import Literal
+from typing import Any, Literal
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.features.documents.models import ArchiveImportStatus, DocumentStatus
 
@@ -20,6 +20,23 @@ class DocumentRead(BaseModel):
     folder_id: uuid.UUID | None = None
     uploaded_by: uuid.UUID | None
     created_at: datetime
+
+
+class DocumentPagePreview(BaseModel):
+    page: int
+    text: str
+    has_images: bool = False
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class DocumentPreviewResponse(BaseModel):
+    document_id: uuid.UUID
+    filename: str
+    content_type: str
+    status: DocumentStatus
+    total_pages: int
+    pages: list[DocumentPagePreview]
+    raw_text: str | None = None
 
 
 class ArchiveImportRead(BaseModel):

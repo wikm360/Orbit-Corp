@@ -82,3 +82,20 @@ export interface BulkResult {
   count: number;
   skipped: number;
 }
+
+export interface DocumentPagePreview {
+  page: number;
+  text: string;
+  has_images?: boolean;
+  metadata?: Record<string, unknown>;
+}
+
+export interface DocumentPreviewResponse {
+  document_id: string;
+  filename: string;
+  content_type: string;
+  status: DocumentStatus;
+  total_pages: number;
+  pages: DocumentPagePreview[];
+  raw_text?: string | null;
+}

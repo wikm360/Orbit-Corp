@@ -2,7 +2,7 @@ import { Button } from "@/shared/components/ui/Button";
 import { OrbitIcon } from "@/shared/components/ui/OrbitIcon";
 import { formatDate, toFaDigits } from "@/shared/lib/utils";
 import { canDropOn, countTotal, docKey, dragSelection, folderKey, summarizeCounts } from "../lib/fileManager";
-import type { FileSelection, FolderListing } from "../types";
+import type { Document, FileSelection, FolderListing } from "../types";
 import { StatusBadge } from "./StatusBadge";
 
 export const DRAG_TYPE = "application/x-orbit-files";
@@ -17,7 +17,7 @@ export function readDragged(event: React.DragEvent): FileSelection | null {
 }
 
 /** The rows of one folder: subfolders first, then documents. Rows are draggable (managers) and folders are drop targets. */
-export function FileTable({ listing, selected, onToggle, onToggleAll, onOpen, canManage, cutKeys, onDropOnFolder, onRetry, onCancel, onRename }: {
+export function FileTable({ listing, selected, onToggle, onToggleAll, onOpen, canManage, cutKeys, onDropOnFolder, onRetry, onCancel, onRename, onView, onDownload }: {
   listing: FolderListing;
   selected: Set<string>;
   onToggle: (key: string) => void;
@@ -29,6 +29,8 @@ export function FileTable({ listing, selected, onToggle, onToggleAll, onOpen, ca
   onRetry: (documentId: string) => void;
   onCancel: (documentId: string) => void;
   onRename: (key: string) => void;
+  onView?: (document: Document) => void;
+  onDownload?: (document: Document) => void;
 }) {
   const total = listing.folders.length + listing.documents.length;
   if (total === 0) return <p className="py-6 text-center text-sm text-gray-400">این پوشه خالی است.</p>;
@@ -93,7 +95,22 @@ export function FileTable({ listing, selected, onToggle, onToggleAll, onOpen, ca
           return <tr key={key} data-testid="document-row" className={`border-b border-gray-100 last:border-0 ${selected.has(key) ? "bg-teal-50" : ""} ${cutKeys.has(key) ? "opacity-50" : ""}`} {...dragProps(key)}>
             <td className="py-2.5"><input type="checkbox" aria-label={`انتخاب ${doc.filename}`} checked={selected.has(key)} onChange={() => onToggle(key)} /></td>
             <td className="max-w-xs py-2.5 pe-3 font-medium text-gray-800">
-              <span className="flex items-center gap-2"><OrbitIcon name="document" className="h-5 w-5 text-slate-400" /><span className="break-words"><bdi>{doc.filename}</bdi></span></span>
+              {onView ? (
+                <button
+                  type="button"
+                  onClick={() => onView(doc)}
+                  className="group flex items-center gap-2 text-start font-medium text-gray-800 hover:text-teal-700 focus:outline-none"
+                  title="مشاهده سند"
+                >
+                  <OrbitIcon name="document" className="h-5 w-5 text-slate-400 group-hover:text-teal-600" />
+                  <span className="break-words underline-offset-2 hover:underline"><bdi>{doc.filename}</bdi></span>
+                </button>
+              ) : (
+                <span className="flex items-center gap-2">
+                  <OrbitIcon name="document" className="h-5 w-5 text-slate-400" />
+                  <span className="break-words"><bdi>{doc.filename}</bdi></span>
+                </span>
+              )}
             </td>
             <td className="py-2.5">
               <StatusBadge status={doc.status} />
@@ -101,9 +118,37 @@ export function FileTable({ listing, selected, onToggle, onToggleAll, onOpen, ca
             </td>
             <td className="whitespace-nowrap py-2.5 text-gray-500">{formatDate(doc.created_at)}</td>
             <td className="whitespace-nowrap py-2.5 text-end">
-              {canManage && (doc.status === "failed" || doc.status === "cancelled") && <Button type="button" variant="secondary" size="sm" onClick={() => onRetry(doc.id)} aria-label={`تلاش مجدد برای ${doc.filename}`}>تلاش مجدد</Button>}
-              {canManage && doc.status === "processing" && <Button type="button" variant="ghost" size="sm" onClick={() => onCancel(doc.id)} aria-label={`لغو پردازش ${doc.filename}`}>لغو</Button>}
-              {canManage && <Button type="button" variant="ghost" size="sm" onClick={() => onRename(key)} aria-label={`تغییر نام ${doc.filename}`}>تغییر نام</Button>}
+              <div className="flex items-center justify-end gap-1">
+                {onView && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => onView(doc)}
+                    title="مشاهده سند"
+                    aria-label={`مشاهده ${doc.filename}`}
+                  >
+                    <OrbitIcon name="eye" className="h-4 w-4" />
+                    <span className="hidden sm:inline">مشاهده</span>
+                  </Button>
+                )}
+                {onDownload && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => onDownload(doc)}
+                    title="دانلود سند"
+                    aria-label={`دانلود ${doc.filename}`}
+                  >
+                    <OrbitIcon name="download" className="h-4 w-4" />
+                    <span className="hidden sm:inline">دانلود</span>
+                  </Button>
+                )}
+                {canManage && (doc.status === "failed" || doc.status === "cancelled") && <Button type="button" variant="secondary" size="sm" onClick={() => onRetry(doc.id)} aria-label={`تلاش مجدد برای ${doc.filename}`}>تلاش مجدد</Button>}
+                {canManage && doc.status === "processing" && <Button type="button" variant="ghost" size="sm" onClick={() => onCancel(doc.id)} aria-label={`لغو پردازش ${doc.filename}`}>لغو</Button>}
+                {canManage && <Button type="button" variant="ghost" size="sm" onClick={() => onRename(key)} aria-label={`تغییر نام ${doc.filename}`}>تغییر نام</Button>}
+              </div>
             </td>
           </tr>;
         })}

@@ -31,6 +31,7 @@ from app.features.documents import service as documents_service
 from app.features.documents.schemas import (
     BatchUploadItem,
     BatchUploadResponse,
+    DocumentPreviewResponse,
     DocumentRead,
     DocumentUploadResponse,
 )
@@ -182,6 +183,43 @@ async def list_conversation_documents(
     pushed on this conversation's websocket the moment ingestion completes,
     so a connected client doesn't have to poll."""
     return await documents_service.list_conversation_documents(db, conversation.id)
+
+
+@router.get("/conversations/{conversation_id}/documents/{document_id}/file")
+async def get_conversation_document_file(
+    document_id: uuid.UUID,
+    disposition: str = Query("inline", pattern="^(inline|attachment)$"),
+    conversation: Conversation = Depends(require_conversation_access),
+    db: AsyncSession = Depends(get_db),
+):
+    document = await documents_service.get_document(db, document_id)
+    if document.conversation_id != conversation.id:
+        raise BadRequestError("This document does not belong to the given conversation")
+    return documents_service.get_document_file_response(document, disposition=disposition)
+
+
+@router.get("/conversations/{conversation_id}/documents/{document_id}/download")
+async def download_conversation_document(
+    document_id: uuid.UUID,
+    conversation: Conversation = Depends(require_conversation_access),
+    db: AsyncSession = Depends(get_db),
+):
+    document = await documents_service.get_document(db, document_id)
+    if document.conversation_id != conversation.id:
+        raise BadRequestError("This document does not belong to the given conversation")
+    return documents_service.get_document_file_response(document, disposition="attachment")
+
+
+@router.get("/conversations/{conversation_id}/documents/{document_id}/preview", response_model=DocumentPreviewResponse)
+async def get_conversation_document_preview(
+    document_id: uuid.UUID,
+    conversation: Conversation = Depends(require_conversation_access),
+    db: AsyncSession = Depends(get_db),
+):
+    document = await documents_service.get_document(db, document_id)
+    if document.conversation_id != conversation.id:
+        raise BadRequestError("This document does not belong to the given conversation")
+    return await documents_service.get_document_preview(db, document)
 
 
 async def _authenticate_websocket(db: AsyncSession, token: str) -> UserContext | None:
