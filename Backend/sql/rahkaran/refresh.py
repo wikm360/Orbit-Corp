@@ -154,8 +154,12 @@ def main():
         smoke = smoke_conn.cursor()
         smoke.execute("SELECT COUNT(*) FROM ai.view_catalog")
         n_views = smoke.fetchone()[0]
+        smoke.execute("SELECT COUNT_BIG(*) FROM ai.ledger_lines")
+        n_lines = smoke.fetchone()[0]
+        if not n_lines:
+            raise RuntimeError("smoke test failed: ai.ledger_lines is empty")
         smoke.execute("SELECT TOP 1 * FROM ai.data_freshness")
-        log(f"smoke test ok: {n_views} documented views, data_freshness={smoke.fetchone()}")
+        log(f"smoke test ok: {n_views} documented views, {n_lines} ledger lines, data_freshness={smoke.fetchone()}")
         smoke_conn.close()
     except BaseException:
         log("FAILED before the swap - the live database was NOT changed; removing the half-restored copy")

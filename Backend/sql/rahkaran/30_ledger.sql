@@ -46,7 +46,8 @@ LEFT JOIN (SELECT i.VoucherRef, SUM(ISNULL(i.Debit,0)) AS total_debit, SUM(ISNUL
            FROM FIN3.VoucherItem i GROUP BY i.VoucherRef) t ON t.VoucherRef = v.VoucherID;
 GO
 
--- ai.ledger_lines: THE main fact view. One row per accounting document line (FIN3.VoucherItem, ~693K rows) joined with its document,
+-- ai.ledger_lines (SOURCE query, lives in the hidden schema ai_src; 35_ledger_materialize.sql copies it into the table ai.ledger_lines_mat
+-- and re-exposes it as the view ai.ledger_lines - this is what everything else and the model query): THE main fact view. One row per accounting document line (FIN3.VoucherItem, ~693K rows) joined with its document,
 -- account hierarchy, Jalali/fiscal calendar and the resolved tafsili dimensions (counterparty, contract cost-center, equipment, cost-center, project,
 -- bank account, facility, other detail). debit/credit are NULL-safe; net_debit = debit - credit.
 -- ALWAYS filter on fiscal_year / voucher_date and is_valid_for_reports = 1 for financial answers. is_valid_for_reports = states 1 (temporary, i.e. entered but not
@@ -57,7 +58,7 @@ GO
 -- is_wip_transfer = 1 marks the year-end vouchers that move cost from 1117 (work in progress) to 5111 (recognized cost). They carry NO machine / item /
 -- counterparty, and they make the net of 1117 equal ZERO for closed years: for any breakdown below contract level (machine, item, vendor) in a closed year
 -- filter is_wip_transfer = 0 and read the 1117 lines (pnl_class = 'project_cost_wip'), never the net of 1117 + 5111.
-CREATE OR ALTER VIEW ai.ledger_lines AS
+CREATE OR ALTER VIEW ai_src.ledger_lines AS
 SELECT i.VoucherItemID AS line_id,
        v.VoucherID AS voucher_id,
        v.Number AS voucher_number,

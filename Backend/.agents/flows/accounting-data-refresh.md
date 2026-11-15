@@ -20,11 +20,17 @@ Postgres.schema_hints (embedding + متن)  ← مصرف: db_connector/hints.ret
 دیتابیس «MehvarGostar» (راهکاران نسل ۳، SQL Server 2022، ~۵GB، collation `Persian_100_CI_AI`) متعلق به «شرکت محور گستر نصر». ۳۴۹۴ جدول که فقط ~۳۹۳ جدول داده دارد؛ فقط **FIN3 (مالی)، HCM3 (منابع انسانی/حقوق)، FAM3 (دارایی ثابت)** + RPA3/GNR3 استفاده واقعی دارند. جزئیات در [../../docs/rahkaran/README.md](../../docs/rahkaran/README.md) و `schema/*.md`، glossaryها (`GLOSSARY_ACCOUNTS/DIMENSIONS/PAYROLL/ENUMS`).
 
 ## لایه‌ی `ai` (`sql/rahkaran/*.sql`)
-فایل‌ها به ترتیب شماره اجرا می‌شوند (batch با خط `GO`): `00_schema, 10_calendar_lookup, 15_taxonomy, 20_reference, 30_ledger, 40_finance_reports, 50_hr, 60_payroll, 70_assets, 80_meta`. سپس `descriptions.py` توضیح فارسی هر view/ستون را به‌صورت `MS_Description` می‌نویسد (و پوشش را چاپ می‌کند)، و کاربر خواننده ساخته می‌شود.
+فایل‌ها به ترتیب شماره اجرا می‌شوند (batch با خط `GO`): `00_schema, 10_calendar_lookup, 15_taxonomy, 20_reference, 30_ledger, 35_ledger_materialize, 40_finance_reports, 50_hr, 60_payroll, 70_assets, 80_meta`. سپس `descriptions.py` توضیح فارسی هر view/ستون را به‌صورت `MS_Description` می‌نویسد (و پوشش را چاپ می‌کند)، و کاربر خواننده ساخته می‌شود.
 - ۸۴ view با نام‌های `snake_case` انگلیسی؛ **نام ستون یکسان = معنی یکسان در همه‌ی view ها** (`fiscal_year`, `jalali_ym`, `net_debit`, `contract_dl_code`).
 - فهرست کامل view ها با توضیح: [../../sql/rahkaran/README.md](../../sql/rahkaran/README.md).
 - طبقه‌بندی حسابدار (`15_taxonomy.sql`، view `ai.account_taxonomy` از فایل Excel حسابدار `docs/rahkaran/data/mehvargostar_code.xlsx` با `docs/rahkaran/tools/gen_taxonomy.py`): سرفصل سود و زیان ← `detail_category` ← معین؛ معین‌های آینه‌ای با تطبیق پسوند/شباهت عنوان `taxonomy_source='derived'` می‌گیرند؛ موارد مبهم در `TAXONOMY_REVIEW.md` برای حسابدار.
 - کاربر `rahkaran_ai_reader` (ساخته‌شده در `apply.py` وقتی `RAHKARAN_AI_PASSWORD` ست باشد): `GRANT SELECT ON SCHEMA::ai`. view ها owner=`dbo` هستند و **ownership chaining** اجازه می‌دهد جدول‌های خام FIN3/HCM3 را بخوانند بدون دسترسی مستقیم. جدول خام برای reader بسته است.
+
+### مادی‌سازی `ai.ledger_lines` (`35_ledger_materialize.sql`)
+- query منبع در schema مخفی `ai_src.ledger_lines` (فایل `30_ledger.sql`؛ ستون جدید را **آنجا** اضافه کنید). در هر apply کپی فیزیکی `ai.ledger_lines_mat` (کلاستر `fiscal_year, voucher_date, line_id`، PAGE compression، ایندکس روی counterparty/حساب/قرارداد/دستگاه/voucher) ساخته می‌شود و `ai.ledger_lines` یک **view** روی همین جدول می‌ماند؛ بقیه‌ی view ها، descriptions، catalog و hint ها دست‌نخورده‌اند.
+- دلیل: view های تجمیعی روی ledger (`counterparty_balances` ← `vendor_balances`…) روی SQL Server 30–100ث بودند و query timeout می‌خوردند (مثلاً «مانده بستانکار فلان شخص»). ساخت جدول ≈ ۲۴ث و ≈ ۰٫۹GB خام (فشرده کمتر).
+- امن: DB فقط با بک‌آپ جدید عوض می‌شود و refresh همیشه دوباره می‌سازد. اگر تعداد ردیف یا جمع debit/credit کپی با منبع نخواند `THROW` می‌شود و refresh قبل از swap شکست می‌خورد (DB زنده دست‌نخورده). smoke test هم خالی نبودن `ai.ledger_lines` را چک می‌کند.
+- reader به `ai_src` دسترسی ندارد؛ جدول `ai.ledger_lines_mat` در catalog نیست.
 
 ### `apply.py`
 `python sql/rahkaran/apply.py [prefix…]` (مثلاً `30 40`، یا `descr` فقط برای توضیحات). Env: `RAHKARAN_SA_PASSWORD` (الزامی)، `RAHKARAN_HOST/PORT/DB`، `RAHKARAN_AI_PASSWORD/USER`، `RAHKARAN_SKIP_TF4138=1`.

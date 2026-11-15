@@ -16,7 +16,8 @@ python sql/rahkaran/apply.py descr         # فقط توضیحات (MS_Descripti
 - idempotent است؛ بعد از **هر ریستور بک‌آپ جدید** دوباره اجرا شود (view ها و جدول تقویم `ai.calendar_data` با ریستور از بین می‌روند).
 - اگر دیتابیس `READ_ONLY` باشد موقتاً `READ_WRITE` می‌شود و در پایان برمی‌گردد.
 - محیط: `RAHKARAN_HOST` (پیش‌فرض 127.0.0.1)، `RAHKARAN_PORT` (14330)، `RAHKARAN_DB` (MehvarGostar)، `RAHKARAN_AI_USER` (rahkaran_ai_reader)، `RAHKARAN_SKIP_TF4138=1` برای نزدن trace flag.
-- ترتیب فایل‌ها: `00_schema` → `10_calendar_lookup` → `15_taxonomy` → `20_reference` → `30_ledger` → `40_finance_reports` → `50_hr` → `60_payroll` → `70_assets` → `80_meta`؛ سپس `descriptions.py` (توضیح فارسی هر view و ستون) و ساخت کاربر.
+- ترتیب فایل‌ها: `00_schema` → `10_calendar_lookup` → `15_taxonomy` → `20_reference` → `30_ledger` → `35_ledger_materialize` → `40_finance_reports` → `50_hr` → `60_payroll` → `70_assets` → `80_meta`؛ سپس `descriptions.py` (توضیح فارسی هر view و ستون) و ساخت کاربر.
+- **مادی‌سازی `ai.ledger_lines`** (`35_ledger_materialize.sql`): query سنگین منبع (۶۹۷K ردیف × ۸ join) در schema مخفی `ai_src.ledger_lines` است و در هر apply به جدول `ai.ledger_lines_mat` (فشرده PAGE + ایندکس) کپی می‌شود؛ `ai.ledger_lines` همچنان یک **view** با همان ستون‌هاست که از این جدول می‌خواند (پس توضیح‌ها، catalog و hint ها بدون تغییر کار می‌کنند). دلیل: view های تجمیعی روی آن (`counterparty_balances`، `vendor_balances`…) ۳۰–۱۰۰ث طول می‌کشیدند و timeout می‌خوردند. تطابق تعداد ردیف و جمع بدهکار/بستانکار با منبع چک می‌شود و ناهمخوانی refresh را قبل از swap رد می‌کند. هنگام تغییر ستون‌های ledger همیشه `ai_src.ledger_lines` (در `30_ledger.sql`) را ویرایش کنید و دوباره `apply.py 30 35 40 …` بزنید.
 - تست: `examples/run.py` (با `RAHKARAN_AI_PASSWORD`) ۶۷ سؤال نمونه ([../../docs/rahkaran/QUESTIONS.md](../../docs/rahkaran/QUESTIONS.md)) را با کاربر فقط‌خواندنی اجرا و زمان/خطا را گزارش می‌کند.
 
 ## قراردادهای نام‌گذاری
