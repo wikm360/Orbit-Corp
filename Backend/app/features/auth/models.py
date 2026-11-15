@@ -90,6 +90,15 @@ class User(Base):
     def has_workspace_access(self) -> bool:
         return self.role in (UserRole.SUPER_ADMIN, UserRole.ADMIN) or bool(self.workspace_access)
 
+    @property
+    def is_impersonated(self) -> bool:
+        return getattr(self, "_impersonator", None) is not None
+
+    @property
+    def impersonator_email(self) -> str | None:
+        imp = getattr(self, "_impersonator", None)
+        return imp.email if imp else None
+
     team_memberships: Mapped[list["TeamMembership"]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",

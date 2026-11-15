@@ -1,4 +1,5 @@
 import { apiRequest } from "./apiClient";
+import type { TokenResponse } from "@/features/auth/types";
 import type { Branding, CostSummary, DirectoryUser, ManagedUser, ModelPrice, Project, ProjectMembership, ProjectPermission, QuotaOverview, TokenUsageReport, UserQuota, Team, TeamMembership, User, UserRole } from "@/shared/types";
 
 export const workspaceApi = {
@@ -44,6 +45,8 @@ export const workspaceApi = {
   users: () => apiRequest<User[]>("/admin/users"),
   updateUserRole: (userId: string, role: UserRole) => apiRequest<User>(`/admin/users/${userId}/role`, { method: "PATCH", body: { role } }),
   setAccountingAccess: (userId: string, enabled: boolean) => apiRequest<User>(`/admin/users/${userId}/accounting-access`, { method: "PUT", body: { enabled } }),
+  impersonateUser: (userId: string) => apiRequest<TokenResponse>(`/admin/impersonate/${userId}`, { method: "POST" }),
+  stopImpersonation: () => apiRequest<TokenResponse>("/admin/stop-impersonation", { method: "POST" }),
 };
 
 export interface WorkspaceOverview {

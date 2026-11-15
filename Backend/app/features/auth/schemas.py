@@ -40,6 +40,8 @@ class UserRead(BaseModel):
     token_limit: int | None = None
     tokens_used: int = 0
     token_period_start: datetime | None = None
+    is_impersonated: bool = False
+    impersonator_email: str | None = None
     created_at: datetime
 
 

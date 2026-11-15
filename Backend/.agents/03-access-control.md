@@ -22,7 +22,13 @@
 
 **دسترسی واگذارشده‌ی پروژه** — `project_memberships.permissions` (JSONB، پیش‌فرض خالی؛ migration `0016`). فهرست مجاز در `projects/permissions.py`: `documents` (آپلود/حذف/تغییر نام/انتقال/کپی/پوشه/retry/cancel در فایل‌منیجر) و `memory` (حافظه‌ی پروژه). **روی هر پروژه جدا** است (در پروژه‌ی A بله، در B نه). فقط leader همان تیم، admin یا super_admin می‌دهد/می‌گیرد: `PUT /projects/{id}/members/{user_id}/permissions {permissions:[…]}` (نام ناشناخته 400، غیرعضو پروژه 404). leader/admin همیشه همه را دارند. **مدیریت اعضای پروژه و خود واگذاری هرگز واگذار نمی‌شود** (عضو نمی‌تواند دسترسی خودش را بالا ببرد). دسترسی مالی همان‌طور سراسری و فقط super_admin می‌ماند.
 
-سلسله‌مراتب سازمانی: `System Admin` ← `CEO(admin)` ← `Leader Team` ← `User`. «افراد باید توسط لیدر تیم به پروژه assign شوند و پروژه هم توسط لیدر ساخته می‌شود.»
+**سلسله‌مراتب سازمانی**: `System Admin` ← `CEO(admin)` ← `Leader Team` ← `User`. «افراد باید توسط لیدر تیم به پروژه assign شوند و پروژه هم توسط لیدر ساخته می‌شود.»
+
+**سوییچ حساب / جعل هویت کاربر (Impersonation)**:
+- فقط `super_admin` مجاز است بدون نیاز به کلمه عبور وارد حساب هر کاربر دیگر شود (`POST /api/v1/admin/impersonate/{user_id}`).
+- توکن JWT کاربر هدف با claim اختیاری `impersonator_id` تولید می‌شود و `UserContext` فیلدهای `impersonator` و `is_impersonated` را ست می‌کند.
+- برای انجام عملیات عادی (چت، اسناد، پروژه‌ها، سهمیه توکن)، سیستم دقیقاً با هویت و دسترسی‌های کاربر هدف رفتار می‌کند.
+- در وابستگی‌های مدیریتی (`require_role`)، اگر `impersonator` سوپر ادمین باشد، دسترسی به endpointهای مدیریت کاربران و سوییچ کاربر حفظ می‌شود تا سوپر ادمین بتواند مستقیم بین کاربران جابه‌جا شود یا با `POST /api/v1/admin/stop-impersonation` به حساب اصلی خود برگردد.
 
 ## `UserContext` (`core/dependencies.py`)
 در هر درخواست احراز‌هویت‌شده ساخته می‌شود (`get_current_user_context`) و شامل:

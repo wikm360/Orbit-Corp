@@ -5,9 +5,17 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
-from app.core.security import hash_password
-from app.features.auth.models import User, UserRole
+from app.core.exceptions import BadRequestError, ConflictError, ForbiddenError, NotFoundError
+from app.core.security import (
+    create_access_token,
+    generate_refresh_token,
+    hash_password,
+    hash_token,
+    refresh_token_expiry,
+)
+from app.features.auth.models import RefreshToken, User, UserRole
+from app.features.auth.schemas import TokenResponse
+from app.features.auth.service import _issue_tokens
 from app.features.documents.models import Document
 
 logger = logging.getLogger(__name__)
@@ -93,3 +101,38 @@ async def set_workspace_access(
 async def list_all_documents(db: AsyncSession) -> list[Document]:
     result = await db.execute(select(Document).order_by(Document.created_at.desc()))
     return list(result.scalars().all())
+
+
+async def impersonate_user(
+    db: AsyncSession,
+    target_user_id: uuid.UUID,
+    impersonator_id: uuid.UUID,
+) -> TokenResponse:
+    target_user = await db.get(User, target_user_id)
+    if target_user is None:
+        raise NotFoundError("User not found")
+
+    imp_id = None if target_user.id == impersonator_id else impersonator_id
+    access_token = create_access_token(
+        user_id=target_user.id,
+        role=target_user.role.value,
+        impersonator_id=imp_id,
+    )
+    raw_refresh_token = generate_refresh_token()
+    db.add(
+        RefreshToken(
+            user_id=target_user.id,
+            token_hash=hash_token(raw_refresh_token),
+            expires_at=refresh_token_expiry(),
+        )
+    )
+    await db.commit()
+    logger.info("User %s impersonated by super admin %s", target_user.id, impersonator_id)
+    return TokenResponse(access_token=access_token, refresh_token=raw_refresh_token, user=target_user)
+
+
+async def stop_impersonation(db: AsyncSession, impersonator_id: uuid.UUID) -> TokenResponse:
+    admin_user = await db.get(User, impersonator_id)
+    if admin_user is None or admin_user.role != UserRole.SUPER_ADMIN:
+        raise ForbiddenError("Original impersonator not found or not a super admin")
+    return await _issue_tokens(db, admin_user)

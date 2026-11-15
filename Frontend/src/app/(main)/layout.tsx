@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 
 import { useAuthStore } from "@/features/auth/hooks/useAuthStore";
 import { AppSidebar } from "@/shared/components/layout/AppSidebar";
+import { UserSwitcherHeader } from "@/shared/components/layout/UserSwitcherHeader";
 import { AUTH_REFRESHED_EVENT, AUTH_UNAUTHORIZED_EVENT } from "@/shared/lib/apiClient";
 import { TokenResponse } from "@/features/auth/types";
 
@@ -105,6 +106,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
             </svg>
           </button>
         </header>
+        <UserSwitcherHeader />
         <div className="app-shell-scroll min-h-0 flex-1 overflow-y-auto">{children}</div>
       </div>
     </div>

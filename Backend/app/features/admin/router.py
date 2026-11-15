@@ -18,7 +18,7 @@ from app.features.admin import service
 from app.features.admin.ocr_inspector_template import OCR_INSPECTOR_HTML
 from app.features.auth.models import User, UserRole
 from app.features.usage import quota as quota_module, service as usage_service
-from app.features.auth.schemas import UserRead
+from app.features.auth.schemas import TokenResponse, UserRead
 from app.features.documents import service as documents_service
 from app.features.documents.ingestion.parser import IMAGE_EXTENSIONS, render_pdf_page
 from app.features.documents.ingestion.ocr_debugger import (
@@ -282,6 +282,32 @@ async def set_workspace_access(
 ):
     """Super admins delegate (or take back) team/project administration to any non-admin user."""
     return await service.set_workspace_access(db, user_id, enabled=payload.enabled, granted_by=context.id)
+
+
+@router.post(
+    "/impersonate/{user_id}",
+    response_model=TokenResponse,
+    dependencies=[Depends(require_super_admin)],
+)
+async def impersonate_user(
+    user_id: uuid.UUID,
+    context: UserContext = Depends(get_current_user_context),
+    db: AsyncSession = Depends(get_db),
+):
+    """Allows a super admin to impersonate any user without credentials."""
+    real_admin_id = context.impersonator.id if context.impersonator else context.id
+    return await service.impersonate_user(db, target_user_id=user_id, impersonator_id=real_admin_id)
+
+
+@router.post("/stop-impersonation", response_model=TokenResponse)
+async def stop_impersonation(
+    context: UserContext = Depends(get_current_user_context),
+    db: AsyncSession = Depends(get_db),
+):
+    """Exits an active impersonation session and returns a fresh token for the original super admin."""
+    if not context.is_impersonated or not context.impersonator:
+        raise BadRequestError("Not currently in an impersonation session")
+    return await service.stop_impersonation(db, context.impersonator.id)
 
 
 @router.get("/documents", response_model=list[DocumentRead])

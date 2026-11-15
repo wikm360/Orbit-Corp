@@ -31,6 +31,8 @@ export const adminApi = {
   updateBranding: workspaceApi.updateBranding,
   uploadBrandLogo: workspaceApi.uploadBrandLogo,
   deleteBrandLogo: workspaceApi.deleteBrandLogo,
+  impersonateUser: workspaceApi.impersonateUser,
+  stopImpersonation: workspaceApi.stopImpersonation,
   listAllDocuments: () => apiRequest<Document[]>("/admin/documents"),
 };
 

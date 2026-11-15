@@ -34,6 +34,7 @@ class UserContext:
     led_team_ids: list[UUID] = field(default_factory=list)
     project_ids: list[UUID] = field(default_factory=list)
     project_permissions: dict[UUID, frozenset[str]] = field(default_factory=dict)
+    impersonator: User | None = None
 
     @property
     def id(self) -> UUID:
@@ -46,11 +47,15 @@ class UserContext:
     @property
     def is_admin(self) -> bool:
         """SUPER_ADMIN or ADMIN (CEO) — org-wide privileges."""
-        return self.role in ADMIN_ROLES
+        return self.role in ADMIN_ROLES or (self.impersonator is not None and self.impersonator.role in ADMIN_ROLES)
 
     @property
     def is_super_admin(self) -> bool:
-        return self.role == UserRole.SUPER_ADMIN
+        return self.role == UserRole.SUPER_ADMIN or (self.impersonator is not None and self.impersonator.role == UserRole.SUPER_ADMIN)
+
+    @property
+    def is_impersonated(self) -> bool:
+        return self.impersonator is not None
 
     @property
     def can_use_accounting(self) -> bool:
@@ -89,6 +94,7 @@ async def get_current_user(
     try:
         payload = decode_access_token(credentials.credentials)
         user_id = payload.get("sub")
+        impersonator_id = payload.get("impersonator_id")
     except jwt.PyJWTError as exc:
         raise UnauthorizedError() from exc
 
@@ -99,6 +105,16 @@ async def get_current_user(
     user = result.scalar_one_or_none()
     if user is None:
         raise UnauthorizedError()
+
+    if impersonator_id:
+        try:
+            imp_result = await db.execute(select(User).where(User.id == UUID(impersonator_id)))
+            imp_user = imp_result.scalar_one_or_none()
+            if imp_user and imp_user.role == UserRole.SUPER_ADMIN:
+                user._impersonator = imp_user
+        except Exception:
+            pass
+
     return user
 
 
@@ -110,8 +126,12 @@ async def get_current_user_context(
     led_team_ids = await get_user_led_team_ids(db, user.id)
     project_permissions = await get_user_project_permissions(db, user.id)
     return UserContext(
-        user=user, team_ids=team_ids, led_team_ids=led_team_ids,
-        project_ids=list(project_permissions), project_permissions=project_permissions,
+        user=user,
+        team_ids=team_ids,
+        led_team_ids=led_team_ids,
+        project_ids=list(project_permissions),
+        project_permissions=project_permissions,
+        impersonator=getattr(user, "_impersonator", None),
     )
 
 
@@ -119,7 +139,8 @@ def require_role(*roles: UserRole):
     """Dependency factory: only users whose global role is one of `roles`."""
 
     async def _dependency(user: User = Depends(get_current_user)) -> User:
-        if user.role not in roles:
+        impersonator = getattr(user, "_impersonator", None)
+        if user.role not in roles and (impersonator is None or impersonator.role not in roles):
             raise ForbiddenError("You do not have permission to perform this action")
         return user
 

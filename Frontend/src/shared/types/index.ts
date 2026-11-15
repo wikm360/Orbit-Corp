@@ -17,6 +17,8 @@ export interface User {
   tokens_used?: number;
   token_period_start?: string | null;
   created_at: string;
+  is_impersonated?: boolean;
+  impersonator_email?: string | null;
 }
 
 export interface DirectoryUser {

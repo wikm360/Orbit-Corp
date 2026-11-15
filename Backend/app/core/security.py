@@ -19,11 +19,13 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
 
 
-def create_access_token(*, user_id: UUID, role: str) -> str:
+def create_access_token(*, user_id: UUID, role: str, impersonator_id: UUID | None = None) -> str:
     expire = datetime.now(timezone.utc) + timedelta(
         minutes=settings.access_token_expire_minutes
     )
     payload = {"sub": str(user_id), "role": role, "exp": expire}
+    if impersonator_id is not None:
+        payload["impersonator_id"] = str(impersonator_id)
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 
 
