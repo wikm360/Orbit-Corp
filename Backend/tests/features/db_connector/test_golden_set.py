@@ -135,3 +135,9 @@ def test_project_pnl_question_retrieves_the_yearly_view_and_the_definition_note(
 def test_all_years_contract_view_warns_against_use_without_explicit_all_time():
     chunk = next(c for c in H.load_corpus() if c["id"] == "view:contract_financials:1")
     assert "همه‌ی سال‌های مالی" in chunk["text"] and "contract_financials_year" in chunk["text"]
+
+
+def test_core_prompt_limits_norm_columns_to_the_views_that_have_them():
+    prompt = H.load_core_prompt()
+    assert "فقط** در ai.cost_lines و ai.equipment_project_cost_year" in prompt
+    assert "Invalid column name" in prompt
