@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
@@ -21,6 +22,7 @@ from app.features.documents.models import Document, DocumentStatus
 from app.features.projects.models import Project
 from app.features.volume_report import compute, jalali, memory
 from app.features.volume_report.extraction.normalize import Lexicon, LexiconEntry as LexEntry, normalize_text
+from app.features.volume_report.extraction.period_range import find_period_range, resolve_period
 from app.features.volume_report.models import (
     Classification, ClassificationSource, Company, Conversion, Decision, EvmRow, FileStatus, IncomeTotal, ItemRule, PvPlanRow, PvOverride, DecisionSource, Disposition, Effect,
     Dimension, ExcludeReason, Item, Line, LexiconKind, LineResult, Question, QuestionStatus, Report, ReportFile, ReportStatus, Result,
@@ -32,7 +34,7 @@ from app.features.volume_report.seed import bump_catalog_version, current_catalo
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-EXCEL_SUFFIXES = {".xls", ".xlsx", ".xlsm", ".pdf"}
+EXCEL_SUFFIXES = {".xls", ".xlsx", ".xlsm", ".xlsb", ".pdf"}
 _FROZEN = (ReportStatus.PUBLISHED, ReportStatus.PROCESSING)
 
 
@@ -135,6 +137,63 @@ def plan_factor(report: Report, f: ReportFile) -> Decimal:
     return Decimal(1) if info is None else Decimal(info["overlap_days"]) / Decimal(info["plan_days"])
 
 
+# ---- which period is a forecast file for? ---------------------------------------------------------------------------
+# A forecast file is the forecast of the report's OWN period (written the week before: it only supplies PV) or the plan of the
+# period AFTER it (its volumes are "next week's plan"). Titles are often last week's copy and file names are named after the week
+# they were sent, so neither is trusted alone: a hint that names neither this period nor the next one is ignored as stale, and two
+# hints that disagree are reported (the user then picks `forecast_for`).
+
+_BARE_RANGE = re.compile(r"(?<!\d)(\d{1,2})\s*(?:[-–]|الی|تا)\s*(\d{1,2})(?!\d)")
+_DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
+
+
+def _filename_period(report: Report, filename: str) -> tuple[date, date] | None:
+    stem = Path(filename).stem.translate(_DIGITS)
+    named = find_period_range(stem)
+    if named is not None:
+        return resolve_period(named, report.period_end)
+    match = _BARE_RANGE.search(stem)  # "18-24" without the month: read it in the month of this period / the next one
+    if match is None:
+        return None
+    first, last = int(match.group(1)), int(match.group(2))
+    if not 1 <= first <= last <= 31:
+        return None
+    for anchor in (report.period_start, next_period(report)[0]):
+        year, month, _ = jalali.to_jalali(anchor)
+        try:
+            span = (jalali.to_gregorian(year, month, first), jalali.to_gregorian(year, month, last))
+        except ValueError:
+            continue
+        if span in ((report.period_start, report.period_end), next_period(report)):
+            return span
+    return None
+
+
+def forecast_scope(report: Report, f: ReportFile, has_actual: bool = False) -> dict:
+    """{"scope": "this" | "next", "source": override | title | filename | title+filename | ambiguous | mixed | unknown, ...hints}.
+    this = the forecast of the report's own period (PV only); next = the plan of the period after it (also the default when nothing
+    can be told, which is how every forecast was read before). A file that also carries ACTUAL sheets is a normal report whose
+    planned sheets are the next period's, whatever its titles say."""
+    this, following = (report.period_start, report.period_end), next_period(report)
+    title = (f.title_period_start, f.title_period_end) if f.title_period_start and f.title_period_end else None
+    name = _filename_period(report, f.filename)
+    hints = {"title_period": title, "filename_period": name}
+    if f.forecast_for in ("this_period", "next_period"):
+        return {"scope": "this" if f.forecast_for == "this_period" else "next", "source": "override", **hints}
+    if has_actual:
+        return {"scope": "next", "source": "mixed", **hints}
+    votes = {label: "this" if period == this else "next" for label, period in (("title", title), ("filename", name)) if period in (this, following)}
+    if not votes:
+        return {"scope": "next", "source": "unknown", **hints}
+    if len(set(votes.values())) > 1:
+        return {"scope": "next", "source": "ambiguous", **hints}
+    return {"scope": next(iter(votes.values())), "source": "+".join(votes), **hints}
+
+
+def is_this_period_forecast(report: Report, f: ReportFile, has_actual: bool = False) -> bool:
+    return f.kind == "period" and forecast_scope(report, f, has_actual)["scope"] == "this"
+
+
 async def _build_file_selections(
     db: AsyncSession, report: Report, selections: list[FileSelection]
 ) -> tuple[dict[uuid.UUID, ReportFile], dict[uuid.UUID, str | None], dict[uuid.UUID, tuple[str, int | None]]]:
@@ -151,7 +210,7 @@ async def _build_file_selections(
         if document.status != DocumentStatus.READY:
             raise BadRequestError("Document is not ready")
         if Path(document.filename).suffix.lower() not in EXCEL_SUFFIXES:
-            raise BadRequestError("Only .xls, .xlsx, .xlsm and .pdf files are supported")
+            raise BadRequestError("Only .xls, .xlsx, .xlsm, .xlsb and .pdf files are supported")
         company = await db.get(Company, sel.company_id)
         if company is None or not company.is_active:
             raise NotFoundError("Company not found")
@@ -159,7 +218,7 @@ async def _build_file_selections(
             raise BadRequestError("Duplicate document in the selection")
         wanted[sel.document_id] = ReportFile(
             report_id=report.id, document_id=document.id, filename=document.filename,
-            content_hash=document.content_hash, company_id=company.id, kind=sel.kind,
+            content_hash=document.content_hash, company_id=company.id, kind=sel.kind, forecast_for=sel.forecast_for,
         )
         try:
             path = resolve_document_path(document)
@@ -180,6 +239,7 @@ async def _build_file_selections(
 def _apply_file_selection(existing_file: ReportFile, updated: ReportFile) -> None:
     existing_file.company_id = updated.company_id
     existing_file.kind = updated.kind
+    existing_file.forecast_for = updated.forecast_for
     existing_file.plan_start = updated.plan_start
     existing_file.plan_end = updated.plan_end
 
@@ -197,7 +257,7 @@ async def _serialize_report_files(
         {"id": f.id, "document_id": f.document_id, "filename": f.filename, "company_id": f.company_id,
          "status": f.status.value, "error_message": f.error_message,
          "suggested_company": suggestions.get(f.document_id) or f.suggested_company,
-         "kind": f.kind, "plan_start": f.plan_start, "plan_end": f.plan_end,
+         "kind": f.kind, "forecast_for": f.forecast_for, "plan_start": f.plan_start, "plan_end": f.plan_end,
          "plan_month": jalali.to_jalali(f.plan_start)[1] if f.kind in ("monthly_plan", "monthly_pv") and f.plan_start else None,
          "plan": plan_info(report, f),
          "suggested_kind": kind_suggestions.get(f.document_id, ("period", None))[0],
@@ -375,9 +435,15 @@ async def recompute(db: AsyncSession, report: Report) -> list[dict]:
     factors = {fid: plan_factor(report, f) for fid, f in files.items()}
     # A site with a forecast of its own (a normal file) never takes the monthly one; otherwise a monthly forecast counts for the
     # days of the next period inside its month (a superseded line stays, with quantity 0, so every line keeps a result).
-    own_plan_sites = {s.id for l, s in pairs if l.basis == "planned" and files[l.report_file_id].kind == "period"}
+    # A forecast OF THIS period (written last week) is the PV source, not "next week's plan": its lines stay (so every line keeps a
+    # result) with quantity 0 and never count as a site's own plan.
+    actual_files = {l.report_file_id for l, _ in pairs if l.basis == "actual"}
+    this_period_files = {fid for fid, f in files.items() if is_this_period_forecast(report, f, fid in actual_files)}
+    own_plan_sites = {s.id for l, s in pairs if l.basis == "planned" and files[l.report_file_id].kind == "period" and l.report_file_id not in this_period_files}
 
     def effective_quantity(l: Line, s: Site) -> Decimal:
+        if l.basis == "planned" and l.report_file_id in this_period_files:
+            return Decimal(0)
         if l.basis == "planned" and files[l.report_file_id].kind == "monthly_plan":
             return Decimal(0) if s.id in own_plan_sites else l.quantity * factors[l.report_file_id]
         return l.quantity
@@ -753,7 +819,9 @@ def _income_read(rows: list[IncomeTotal]) -> dict | None:
 
 
 _PV_SOURCE_LABELS = {"manual": "ورود دستی", "file": "فایل گزارش", "forecast_file": "پیش‌بینیِ همین دوره (EV پیش‌بینی)", "previous_report": "پیش‌بینیِ گزارش قبلی (EV پیش‌بینی)",
+                     "forecast_income": "پیش‌بینیِ همین دوره (جمع کل درآمد)", "previous_income": "پیش‌بینیِ گزارش قبلی (جمع کل درآمد)",
                      "monthly_pv": "برنامه‌ی PV ماهانه"}
+_SPI_EXTREME = Decimal(3)  # an SPI above this is almost always a placeholder PV, not a project three times ahead of its programme
 
 
 def _name_tokens(name: str | None) -> set[str]:
@@ -794,11 +862,46 @@ async def _adjacent_previous_planned_rows(db: AsyncSession, report: Report) -> l
     return []
 
 
+async def _adjacent_previous_forecast_income(db: AsyncSession, report: Report) -> list[tuple[Any, uuid.UUID, uuid.UUID | None]]:
+    """(income totals, company id, site id) of the forecast pages of the report that ends right before this one. Its forecast is for
+    this period unless it says otherwise; used when the forecast has no EVM page (the totals block "جمع کل درآمد" is its EV)."""
+    candidates = (await db.execute(
+        select(Report).where(Report.project_id == report.project_id, Report.id != report.id, Report.period_end < report.period_start,
+                             Report.status.notin_((ReportStatus.DRAFT, ReportStatus.FAILED)))
+        .order_by(Report.period_end.desc(), Report.version.desc())
+    )).scalars().all()
+    for cand in candidates:
+        if (report.period_start - cand.period_end).days > 1:
+            break
+        files = {f.id: f for f in (await db.execute(select(ReportFile).where(ReportFile.report_id == cand.id, ReportFile.kind == "period"))).scalars()}
+        if not files:
+            continue
+        totals = (await db.execute(select(IncomeTotal).where(IncomeTotal.report_file_id.in_(list(files)), IncomeTotal.basis == "planned"))).scalars().all()
+        if not totals:
+            continue
+        actual_ids = set((await db.execute(select(IncomeTotal.report_file_id).where(IncomeTotal.report_file_id.in_(list(files)), IncomeTotal.basis == "actual"))).scalars())
+        sites = await _sheet_sites(db, list(files))
+        out = []
+        for t in totals:
+            f = files[t.report_file_id]
+            if forecast_scope(cand, f, f.id in actual_ids)["scope"] == "next" and t.income_total is not None:  # relative to ITS report: it is for the period after
+                out.append((t, f.company_id, sites.get((f.id, t.sheet_name))))
+        return out
+    return []
+
+
+async def _sheet_sites(db: AsyncSession, file_ids: list[uuid.UUID]) -> dict[tuple[uuid.UUID, str], uuid.UUID]:
+    """(file, sheet) -> the site its lines belong to: what ties an income sheet's totals to a project without trusting its name."""
+    rows = (await db.execute(select(Line.report_file_id, Line.sheet_name, Line.site_id).where(Line.report_file_id.in_(file_ids)).distinct())).all()
+    return {(fid, sheet): site for fid, sheet, site in rows}
+
+
 async def store_evm_extraction(db: AsyncSession, report: Report, rfile: ReportFile, extraction) -> None:
     """Stores the EVM rows, income totals and PV-plan rows an extraction found in one file (the run and the EVM re-read share it)."""
     from app.features.volume_report import activity
-    from app.features.volume_report.extraction.period_range import resolve_period
 
+    span = resolve_period(extraction.title_period, report.period_end) if getattr(extraction, "title_period", None) is not None else None
+    rfile.title_period_start, rfile.title_period_end = span if span else (None, None)
     if extraction.pv_plan is not None:
         for pv_row in extraction.pv_plan.rows:
             db.add(PvPlanRow(report_file_id=rfile.id, row_no=pv_row.row_no, project_name=pv_row.project_name, pv_month=pv_row.pv_month))
@@ -836,7 +939,7 @@ async def reparse_evm(db: AsyncSession, report: Report) -> dict:
             raise BadRequestError(f"The source document of «{rfile.filename}» is no longer available")
         try:
             extraction = await asyncio.to_thread(
-                extract_file, resolve_document_path(document), Lexicon([]), None, None, rfile.kind == "monthly_plan", rfile.kind == "monthly_pv", True)
+                extract_file, resolve_document_path(document), Lexicon([]), None, None, rfile.kind == "monthly_plan" or rfile.forecast_for != "auto", rfile.kind == "monthly_pv", True, file_name=rfile.filename)
         except Exception as exc:  # noqa: BLE001 - a file that cannot be read must not wipe the rows we already have
             raise BadRequestError(f"«{rfile.filename}» could not be read: {getattr(exc, 'detail', None) or exc}") from exc
         fresh.append((rfile, extraction))
@@ -869,21 +972,63 @@ async def get_evm(db: AsyncSession, report: Report) -> dict:
         .order_by(ReportFile.created_at, PvPlanRow.row_no)
     )).all()
     override_rows = (await db.execute(select(PvOverride).where(PvOverride.report_id == report.id))).scalars().all()
+    all_income = (await db.execute(
+        select(IncomeTotal, ReportFile).join(ReportFile, ReportFile.id == IncomeTotal.report_file_id).where(ReportFile.report_id == report.id)
+    )).all()
+    sheet_site = await _sheet_sites(db, list({f.id for _, f, _ in rows} | {f.id for _, f in all_income})) if (rows or all_income) else {}
     overrides = {(o.company_id, o.project_key): o.pv for o in override_rows}
     overrides_named = {(o.company_id, o.project_key): (o.project_name, o.pv) for o in override_rows}
     manual_mode = report.pv_mode == "manual"
     period = (report.period_start, report.period_end)
-    same_period_forecast = [(r, f.company_id) for r, f, _ in rows
-                            if r.basis == "planned" and not r.is_total and f.kind == "period" and (r.period_start, r.period_end) == period]
-    previous_forecast = await _adjacent_previous_planned_rows(db, report)
+    actual_files = {f.id for r, f, _ in rows if r.basis == "actual"} | {f.id for t, f in all_income if t.basis == "actual"}
+    scope_of = {f.id: forecast_scope(report, f, f.id in actual_files) for _, f, _ in rows} | {f.id: forecast_scope(report, f, f.id in actual_files) for _, f in all_income}
 
-    def pv_for(row: EvmRow, company_id: uuid.UUID) -> tuple[Decimal | None, str, str | None, str | None]:
+    def forecast_row_is_for_this_period(r: EvmRow, f: ReportFile) -> bool:
+        """A forecast row is the PV of this period when the file is (the user's choice, else the title/file name); a row that names its
+        own period is judged by that period unless the user decided."""
+        if f.kind != "period":
+            return False
+        if f.forecast_for != "auto":
+            return f.forecast_for == "this_period"
+        if r.period_start is not None:
+            return (r.period_start, r.period_end) == period
+        return scope_of[f.id]["scope"] == "this"
+
+    same_period_forecast = [(r, f.company_id) for r, f, _ in rows if r.basis == "planned" and not r.is_total and forecast_row_is_for_this_period(r, f)]
+    previous_forecast = await _adjacent_previous_planned_rows(db, report)
+    # Forecast pages with no EVM page ("جمع کل درآمد" of the project's forecast income sheet = its EV), summed per (company, site)
+    forecast_income: dict[tuple[uuid.UUID, uuid.UUID], Decimal] = {}
+    for t, f in all_income:
+        site_id = sheet_site.get((f.id, t.sheet_name))
+        if t.basis == "planned" and t.income_total is not None and f.kind == "period" and scope_of[f.id]["scope"] == "this" and site_id is not None:
+            forecast_income[(f.company_id, site_id)] = forecast_income.get((f.company_id, site_id), Decimal(0)) + t.income_total
+    previous_income: dict[tuple[uuid.UUID, uuid.UUID], Decimal] = {}
+    for t, company_id, site_id in await _adjacent_previous_forecast_income(db, report):
+        if site_id is not None:
+            previous_income[(company_id, site_id)] = previous_income.get((company_id, site_id), Decimal(0)) + t.income_total
+
+    def site_of(row: EvmRow, f: ReportFile) -> uuid.UUID | None:
+        """The site whose income sheet totals to this row's EV (exactly: EV is that sheet's "جمع کل درآمد"), so the project is tied to
+        its forecast by value, not by a name the two files may spell differently."""
+        if row.ev is None:
+            return None
+        tolerance = max(Decimal(2), abs(row.ev) / 100000)
+        hits = [t for t, f2 in all_income if f2.id == f.id and t.basis == "actual" and t.income_total is not None and abs(t.income_total - row.ev) <= tolerance]
+        return sheet_site.get((f.id, hits[0].sheet_name)) if len(hits) == 1 else None
+
+    def pv_for(row: EvmRow, f: ReportFile) -> tuple[Decimal | None, str, str | None, str | None]:
         """(pv, source, match kind, note)"""
+        company_id = f.company_id
         for source, candidates in (("forecast_file", same_period_forecast), ("previous_report", previous_forecast)):
             mine = [(r, c) for r, c in candidates if c == company_id and r.ev is not None]
             hit = _match_project(row.project_name, [r.project_name for r, _ in mine])
             if hit:
                 return mine[hit[0]][0].ev, source, hit[1], None
+        site_id = site_of(row, f)
+        if site_id is not None:
+            for source, amounts in (("forecast_income", forecast_income), ("previous_income", previous_income)):
+                if amounts.get((company_id, site_id)):
+                    return amounts[(company_id, site_id)], source, "value", None
         monthly = [(r, f) for r, f in pv_rows if plan_factor(report, f) > 0]
         hit = _match_project(row.project_name, [r.project_name for r, _ in monthly])
         if hit:
@@ -894,14 +1039,25 @@ async def get_evm(db: AsyncSession, report: Report) -> dict:
 
     companies: dict[uuid.UUID, dict] = {}
     overridden: set[uuid.UUID] = set()
+    # One project can appear in several files of a company (a shared EVM sheet lists the sibling projects too): keep the row that
+    # carries the most figures, so its cost is not counted twice.
+    best: dict[tuple[uuid.UUID, str], EvmRow] = {}
+    for row, f, _ in rows:
+        if row.basis == "actual" and not row.is_total and row.project_name:
+            key = (f.company_id, normalize_text(row.project_name))
+            figures = lambda r: sum(v is not None for v in (r.pv, r.ev, r.ev_net, r.ac))  # noqa: E731
+            if key not in best or figures(row) > figures(best[key]):
+                best[key] = row
     for row, f, company_name in rows:
         if row.basis != "actual":
+            continue
+        if not row.is_total and row.project_name and best[(f.company_id, normalize_text(row.project_name))] is not row:
             continue
         company = companies.setdefault(f.company_id, {"company_id": f.company_id, "company": company_name, "projects": [], "_rows": [], "_reported": []})
         if row.is_total:
             company["_reported"].append(row)
             continue
-        auto_pv, auto_source, auto_match, auto_note = pv_for(row, f.company_id)
+        auto_pv, auto_source, auto_match, auto_note = pv_for(row, f)
         manual = overrides.get((f.company_id, normalize_text(row.project_name or "")))
         # manual mode: only the typed value counts (blank = the file's own PV); the automatic value stays as the suggestion
         pv, source, match, note = (manual, "manual", None, None) if manual_mode and manual is not None else \
@@ -911,7 +1067,13 @@ async def get_evm(db: AsyncSession, report: Report) -> dict:
             overridden.add(f.company_id)
             item.pv = pv
             item.spi = _ratio(item.ev, pv)
-        company["projects"].append({**_evm_row_read(item), "filename": f.filename, "pv_source": source, "pv_source_label": _PV_SOURCE_LABELS[source],
+        notes = []
+        if source == "file":
+            notes.append("pv_from_file" if item.pv is not None else "pv_missing")
+        if item.spi is not None and item.spi > _SPI_EXTREME:
+            notes.append("spi_extreme")
+        company["projects"].append({**_evm_row_read(item), "filename": f.filename, "notes": notes,
+                                    "pv_source": source, "pv_source_label": _PV_SOURCE_LABELS[source],
                                     "pv_match": match, "pv_share": note,
                                     "pv_auto": _opt(auto_pv) if auto_source != "file" else None, "pv_manual": _opt(manual)})
         company["_rows"].append(item)
@@ -967,6 +1129,10 @@ async def report_detail(db: AsyncSession, report: Report) -> dict:
     }
 
 
+def _span(period: tuple[date, date] | None) -> dict | None:
+    return None if period is None else {"start": period[0], "end": period[1]}
+
+
 async def sources(db: AsyncSession, report: Report) -> list[dict]:
     files = (await db.execute(select(ReportFile).where(ReportFile.report_id == report.id))).scalars().all()
     ids = [f.id for f in files]
@@ -1002,9 +1168,15 @@ async def sources(db: AsyncSession, report: Report) -> list[dict]:
                                  "is_this_period": (forecast_periods[f.id][0], forecast_periods[f.id][1]) == (report.period_start, report.period_end)}
                                 if forecast_periods.get(f.id) and forecast_periods[f.id][0] else None),
         }
+        has_planned = bool(evm.get((f.id, "planned", False)) or totals.get((f.id, "planned")) or income["planned"])
+        has_actual = bool(evm.get((f.id, "actual", False)) or totals.get((f.id, "actual")) or income["actual"])
+        forecast = None
+        if f.kind == "period" and has_planned:
+            forecast = forecast_scope(report, f, has_actual)
+            forecast = {**forecast, "title_period": _span(forecast["title_period"]), "filename_period": _span(forecast["filename_period"])}
         out.append({"id": f.id, "filename": f.filename, "status": f.status.value, "error_message": f.error_message,
                     "suggested_company": f.suggested_company, "sheet_log": f.sheet_log, "warnings": f.warnings, "reads": reads,
-                    "kind": f.kind, "plan": plan_info(report, f)})
+                    "kind": f.kind, "forecast_for": f.forecast_for, "forecast": forecast, "plan": plan_info(report, f)})
     return out
 
 

@@ -1,6 +1,7 @@
 """File-level extraction: probe every sheet, parse the income ones, build the `sheet_log` stored on `vr_report_files`."""
 
 import os
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -11,6 +12,7 @@ from app.features.volume_report.extraction.income_totals import IncomeTotals, de
 from app.features.volume_report.extraction.income_parser import ParsedSheet, parse_income_sheet
 from app.features.volume_report.extraction.normalize import Lexicon
 from app.features.volume_report.extraction.pv_plan import ParsedPvPlan, parse_pv_plan
+from app.features.volume_report.extraction.period_range import PeriodRange, find_period_range
 from app.features.volume_report.extraction.probe import SheetProbe, probe_workbook, suggest_company
 from app.features.volume_report.extraction.workbook import open_workbook
 
@@ -23,6 +25,7 @@ class FileExtraction:
     income_totals: list[tuple[str, str, IncomeTotals]] = field(default_factory=list)  # (sheet, basis, totals)
     pv_plan: ParsedPvPlan | None = None
     suggested_company: str | None = None
+    title_period: PeriodRange | None = None  # the period most of the sheet titles name (a forecast file's own period), if any
     warnings: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -62,14 +65,22 @@ def extract_file(
     force_planned: bool = False,
     pv_only: bool = False,
     evm_only: bool = False,
+    file_name: str | None = None,
 ) -> FileExtraction:
-    """Blocking (file I/O): run in a worker/thread."""
+    """Blocking (file I/O): run in a worker/thread. `file_name` is the name the user gave the file: the stored path is `<uuid>.<ext>`,
+    so without it a "پیش بینی" in the file name (the only hint of some forecasts) would never be seen."""
+    display_name = file_name or os.path.basename(path)
     result = FileExtraction()
     last_income: ParsedSheet | None = None
+    title_periods: Counter = Counter()
     with open_workbook(path) as workbook:
         probes = probe_workbook(workbook)
         result.suggested_company = suggest_company(workbook, probes)
         for sheet, probe in zip(workbook.sheets, probes):
+            if not pv_only and not sheet.is_hidden:
+                named = find_period_range(" ".join(str(c) for row in sheet.rows()[:6] for c in row if isinstance(c, str)))
+                if named is not None:
+                    title_periods[named] += 1
             if pv_only:
                 # A monthly PV plan file: only its PV sheet is read (the company-wide EVM workbook has dozens of other sheets).
                 plan = None if sheet.is_hidden else parse_pv_plan(sheet.name, sheet.rows())
@@ -81,7 +92,7 @@ def extract_file(
                     "pv_rows": len(plan.rows) if plan is not None else None, "basis": "planned",
                 })
                 continue
-            evm = None if sheet.is_hidden else parse_evm_sheet(sheet.name, sheet.rows(), os.path.basename(path), period_label)
+            evm = None if sheet.is_hidden else parse_evm_sheet(sheet.name, sheet.rows(), display_name, period_label)
             if evm is not None:
                 # The EVM summary (PV/EV/AC/CPI/SPI per project) is its own data set, never an income table.
                 if force_planned:
@@ -96,7 +107,7 @@ def extract_file(
             if not sheet.is_hidden:
                 totals = parse_income_totals(sheet.rows())
                 if totals is not None:
-                    totals_basis = "planned" if force_planned else detect_basis(sheet.name, sheet.rows(), os.path.basename(path), period_label)
+                    totals_basis = "planned" if force_planned else detect_basis(sheet.name, sheet.rows(), display_name, period_label)
                     result.income_totals.append((sheet.name, totals_basis, totals))
             if not sheet.is_hidden and probe.kind == "other" and _unreadable(sheet.rows()):
                 # Broken font encoding: the PDF holds control characters instead of letters, nothing can be read from it.
@@ -107,7 +118,7 @@ def extract_file(
             # A forecast file ("پیش بینی" in its name or title) keeps plain "درآمد …" sheet names: those are still the forecast.
             if evm_only:
                 continue  # re-reading only the EVM / income-totals / PV-plan rows: no income lines, nothing for the classification
-            basis = "planned" if force_planned or probe.kind == "planned" or detect_basis(sheet.name, sheet.rows(), os.path.basename(path), period_label) == "planned" else "actual"
+            basis = "planned" if force_planned or probe.kind == "planned" or detect_basis(sheet.name, sheet.rows(), display_name, period_label) == "planned" else "actual"
             parsed = parse_income_sheet(
                 sheet.name, sheet.rows(), lexicon, period_label, (layout_overrides or {}).get(sheet.name), basis,
             ) if probe.used else None
@@ -137,6 +148,8 @@ def extract_file(
             if probe.used and (layout_overrides or {}).get(sheet.name):
                 entry["layout_override"] = layout_overrides[sheet.name]  # kept so a re-run applies the confirmed layout again
             result.sheet_log.append(entry)
+    if title_periods:
+        result.title_period = title_periods.most_common(1)[0][0]
     return result
 
 

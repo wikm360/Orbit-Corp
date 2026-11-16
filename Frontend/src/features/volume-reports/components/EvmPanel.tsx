@@ -116,6 +116,13 @@ function CompanyCard({ company, manual, draft, setDraft }: { company: EvmCompany
           ))}
         </ul>
       )}
+      {company.projects.some((p) => p.notes?.length) && (
+        <ul className="mt-2 space-y-0.5 text-[11px] text-amber-700">
+          {company.projects.flatMap((p) => (p.notes ?? []).map((n) => ({ p, n }))).map(({ p, n }, i) => (
+            <li key={`${p.project}-${n}-${i}`}>⚠ «{p.project}»: {EVM_NOTE_TEXT[n] ?? n}</li>
+          ))}
+        </ul>
+      )}
       {differs && reported && (
         <p className="mt-2 text-[11px] text-slate-500">
           جمع اعلام‌شده در خودِ فایل: SPI {formatRatio(reported.spi)} · CPI {formatRatio(reported.cpi)} · EV {formatBillionRial(reported.ev)} · AC {formatBillionRial(reported.ac)} (میلیارد ریال)
@@ -124,6 +131,13 @@ function CompanyCard({ company, manual, draft, setDraft }: { company: EvmCompany
     </Card>
   );
 }
+
+/** What the platform noticed about one project's PV / SPI (no number is changed by any of these). */
+const EVM_NOTE_TEXT: Record<string, string> = {
+  pv_from_file: "پیش‌بینیِ این هفته پیدا نشد؛ PV خودِ فایل به‌کار رفته است (ممکن است PV ماهانه باشد)",
+  pv_missing: "PV ندارد؛ SPI محاسبه نمی‌شود",
+  spi_extreme: "SPI بیشتر از ۳ است؛ معمولاً یعنی PV درست وارد نشده است",
+};
 
 function BasisView({ data, manual, draft, setDraft }: { data: EvmBasis; manual: boolean; draft: Record<string, string>; setDraft: (key: string, text: string) => void }) {
   if (data.companies.length === 0) return <EmptyState title="جدول EVM در فایل‌ها پیدا نشد" hint="صفحه/شیت «گزارش مدیریت ارزش کسب شده (EVM)» باید در فایل باشد؛ اگر هست، گزارش را دوباره اجرا کنید." />;

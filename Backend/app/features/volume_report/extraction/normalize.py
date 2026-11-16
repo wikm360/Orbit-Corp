@@ -29,6 +29,12 @@ def normalize_text(text: object) -> str:
     return re.sub(r"\s+", " ", normalize(str(text))).strip()
 
 
+def site_key(name_norm: str) -> str:
+    """Comparison key of a site name: letters and digits only, no spaces. The same project is typed "شماره 4 3و8" in the actual
+    report and "شماره 4 3 و 8" in its forecast (or "قطعه2" / "قطعه 2"); a space-sensitive match would split it into two sites."""
+    return re.sub(r"[\W_]+", "", name_norm)
+
+
 def light_clean(text: object) -> str:
     """Letter/digit unification only (no punctuation stripping) -- used where punctuation carries structure."""
     value = str(text).replace("ي", "ی").replace("ك", "ک").replace("‌", " ")

@@ -1,6 +1,6 @@
 # راهنما: پشتیبانی از فرمت فایل جدید
 
-فرمت‌های فعلی: `.pdf .docx .pptx .xlsx .csv .txt` + قدیمی/OpenDocument با LibreOffice (`.xls .xlsm .ods .doc .rtf .odt .ppt .odp`) + تصاویر `.png .jpg .jpeg .webp .bmp .tif .tiff`. جریان کامل: [../flows/document-ingestion.md](../flows/document-ingestion.md).
+فرمت‌های فعلی: `.pdf .docx .pptx .xlsx .csv .txt` + قدیمی/OpenDocument با LibreOffice (`.xls .xlsm .xlsb .ods .doc .rtf .odt .ppt .odp`) + تصاویر `.png .jpg .jpeg .webp .bmp .tif .tiff`. جریان کامل: [../flows/document-ingestion.md](../flows/document-ingestion.md).
 
 ## قدم‌ها
 1. `app/features/documents/ingestion/parser.py`:

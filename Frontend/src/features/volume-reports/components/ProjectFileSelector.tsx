@@ -216,7 +216,7 @@ export function ProjectFileSelector({
     setUploadError(null);
     setUploadNotice(null);
     if (!valid.length) {
-      setUploadError("فقط فایل‌های غیرخالی اکسل (.xls/.xlsx/.xlsm) و PDF قابل قبول هستند.");
+      setUploadError("فقط فایل‌های غیرخالی اکسل (.xls/.xlsx/.xlsm/.xlsb) و PDF قابل قبول هستند.");
       return;
     }
 
@@ -363,7 +363,7 @@ export function ProjectFileSelector({
                 ref={fileInputRef}
                 type="file"
                 multiple
-                accept=".xls,.xlsx,.xlsm,.pdf"
+                accept=".xls,.xlsx,.xlsm,.xlsb,.pdf"
                 onChange={onFileInputChange}
                 className="hidden"
               />
@@ -584,11 +584,13 @@ export function ProjectFileSelector({
                                     })}
                                     className={`${fieldClass} py-1.5 text-xs`}
                                   >
-                                    <option value="period">گزارش دوره</option>
+                                    <option value="period">گزارش دوره / پیش‌بینی (تشخیص خودکار)</option>
+                                    <option value="forecast_this">پیش‌بینیِ همین هفته (فقط برای PV)</option>
+                                    <option value="forecast_next">پیش‌بینیِ هفته‌ی بعد (برنامه‌ی حجم‌ها)</option>
                                     <option value="monthly_plan">برنامه‌ی ماهانه‌ی حجم‌ها</option>
                                     <option value="monthly_pv">برنامه‌ی PV ماهانه</option>
                                   </select>
-                                  {d.id in monthly && (
+                                  {(monthly[d.id]?.kind === "monthly_plan" || monthly[d.id]?.kind === "monthly_pv") && (
                                     <select
                                       aria-label={`ماه برنامه ${d.filename}`}
                                       value={monthly[d.id]?.month ?? 0}

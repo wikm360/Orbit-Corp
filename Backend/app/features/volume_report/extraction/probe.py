@@ -43,16 +43,29 @@ def probe_workbook(workbook: WorkbookData) -> list[SheetProbe]:
     return [classify_sheet(sheet) for sheet in workbook.sheets]
 
 
+def _company_in(sheet: SheetData, strict: bool = False) -> str | None:
+    """strict (income / expense pages): only a title cell that BEGINS with "شرکت" in the first rows; a contractor listed in a
+    cost table ("شرکت عمران پویش سیرجان") is not the report's company."""
+    for row in sheet.rows()[: 3 if strict else _COMPANY_SCAN_ROWS]:
+        for cell in row[:_COMPANY_SCAN_COLS]:
+            if not isinstance(cell, str):
+                continue
+            text = normalize_text(cell)
+            if strict and not text.startswith("شرکت"):
+                continue
+            match = _COMPANY_PATTERN.search(text)
+            if match:
+                return match.group().strip()
+    return None
+
+
 def suggest_company(workbook: WorkbookData, probes: list[SheetProbe]) -> str | None:
-    """Looks for "شرکت …" near the top of the visible non-income (summary) sheets. A wizard suggestion only."""
+    """Looks for "شرکت …" near the top of the visible non-income (summary) sheets; failing that, of any visible sheet (a forecast
+    PDF has only income pages, each headed with the company). A wizard suggestion only."""
     for sheet, probe in zip(workbook.sheets, probes):
-        if probe.kind != "other":
-            continue
-        for row in sheet.rows()[:_COMPANY_SCAN_ROWS]:
-            for cell in row[:_COMPANY_SCAN_COLS]:
-                if not isinstance(cell, str):
-                    continue
-                match = _COMPANY_PATTERN.search(normalize_text(cell))
-                if match:
-                    return match.group().strip()
+        if probe.kind == "other" and (found := _company_in(sheet)):
+            return found
+    for sheet, probe in zip(workbook.sheets, probes):
+        if probe.kind != "other" and not sheet.is_hidden and (found := _company_in(sheet, strict=True)):
+            return found
     return None

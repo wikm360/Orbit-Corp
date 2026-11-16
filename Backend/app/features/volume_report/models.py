@@ -242,6 +242,12 @@ class ReportFile(Base):
     kind: Mapped[str] = mapped_column(String(16), nullable=False, default="period", server_default="period")
     plan_start: Mapped[date | None] = mapped_column(Date, nullable=True)
     plan_end: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # Which period a forecast file is for: auto = read it from the titles / file name (undated = the next period), this_period = a
+    # forecast of the report's own period (supplies PV only), next_period = the plan of the period after it.
+    forecast_for: Mapped[str] = mapped_column(String(12), nullable=False, default="auto", server_default="auto")
+    # The period most of the file's sheet titles name (Gregorian); NULL when none does. Titles are often a copy of last week's.
+    title_period_start: Mapped[date | None] = mapped_column(Date, nullable=True)
+    title_period_end: Mapped[date | None] = mapped_column(Date, nullable=True)
     created_at: Mapped[datetime] = _now()
 
 

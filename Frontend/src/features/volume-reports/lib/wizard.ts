@@ -4,7 +4,7 @@ import type { Document, Folder } from "@/features/documents/types";
 import { parseJalaliInput } from "./jalali";
 import type { FileSelection, PeriodType, ReportFileInfo } from "../types";
 
-export const SUPPORTED_EXTENSIONS = [".xls", ".xlsx", ".xlsm", ".pdf"];
+export const SUPPORTED_EXTENSIONS = [".xls", ".xlsx", ".xlsm", ".xlsb", ".pdf"];
 export const EXCEL_EXTENSIONS = SUPPORTED_EXTENSIONS;
 export const isSupportedName = (name: string) => SUPPORTED_EXTENSIONS.some((ext) => name.toLowerCase().endsWith(ext));
 export const isExcelName = isSupportedName;
@@ -124,15 +124,18 @@ export function filterFolderGroups(
     .filter((group) => group.docs.length > 0);
 }
 
-/** A file that is not a normal report file: a monthly volume forecast or a monthly PV plan, with its Jalali month (0 = read it from the file). */
-export interface MonthlyChoice { kind: "monthly_plan" | "monthly_pv"; month: number }
+/** A file that is not a plain "report of the period": a monthly volume forecast or a monthly PV plan (with its Jalali month, 0 = read it from the
+ *  file), or a weekly forecast the user declares: forecast_this = the forecast of this report's own period (PV only), forecast_next = next period's plan. */
+export interface MonthlyChoice { kind: "monthly_plan" | "monthly_pv" | "forecast_this" | "forecast_next"; month: number }
 
 export function selectionToPayload(selection: Record<string, string>, monthly: Record<string, MonthlyChoice>): FileSelection[] {
   return Object.entries(selection).map(([document_id, company_id]) => {
     const choice = monthly[document_id];
-    return choice
-      ? { document_id, company_id, kind: choice.kind, ...(choice.month ? { plan_month: choice.month } : {}) }
-      : { document_id, company_id };
+    if (!choice) return { document_id, company_id };
+    if (choice.kind === "forecast_this" || choice.kind === "forecast_next") {
+      return { document_id, company_id, forecast_for: choice.kind === "forecast_this" ? "this_period" : "next_period" };
+    }
+    return { document_id, company_id, kind: choice.kind, ...(choice.month ? { plan_month: choice.month } : {}) };
   });
 }
 
@@ -146,6 +149,8 @@ export function seedSelectionFromReportFiles(files: ReportFileInfo[]): {
     if (!f.document_id) continue;
     selection[f.document_id] = f.company_id;
     if (f.kind === "monthly_plan" || f.kind === "monthly_pv") monthly[f.document_id] = { kind: f.kind, month: f.plan_month ?? 0 };
+    else if (f.forecast_for === "this_period") monthly[f.document_id] = { kind: "forecast_this", month: 0 };
+    else if (f.forecast_for === "next_period") monthly[f.document_id] = { kind: "forecast_next", month: 0 };
   }
   return { selection, monthly };
 }

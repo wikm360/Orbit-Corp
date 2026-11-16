@@ -267,7 +267,7 @@ def _read_tables(file_path: str) -> list[Table]:
         return read_xlsx_tables(file_path)
     if suffix == ".csv":
         return read_csv_tables(file_path)
-    if suffix in LEGACY_OFFICE_EXTENSIONS and suffix in {".xls", ".xlsm", ".ods"}:
+    if suffix in LEGACY_OFFICE_EXTENSIONS and suffix in {".xls", ".xlsm", ".xlsb", ".ods"}:
         from app.features.documents.ingestion.converter import converted_copy
 
         with converted_copy(file_path) as modern:
@@ -276,7 +276,7 @@ def _read_tables(file_path: str) -> list[Table]:
 
 
 def is_spreadsheet(file_path: str) -> bool:
-    return Path(file_path).suffix.lower() in {".xlsx", ".xls", ".xlsm", ".ods", ".csv"}
+    return Path(file_path).suffix.lower() in {".xlsx", ".xls", ".xlsm", ".xlsb", ".ods", ".csv"}
 
 
 # ---------------------------------------------------------------------------

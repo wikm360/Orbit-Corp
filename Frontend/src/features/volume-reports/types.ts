@@ -26,7 +26,7 @@ export interface ReportSummary {
 
 export interface ReportFileInfo {
   id: string; document_id: string | null; filename: string; company_id: string; status: "pending" | "parsed" | "failed"; error_message: string | null;
-  kind?: FileKind; plan_start?: string | null; plan_end?: string | null; plan_month?: number | null;
+  kind?: FileKind; forecast_for?: ForecastFor; plan_start?: string | null; plan_end?: string | null; plan_month?: number | null;
 }
 export interface GateCause { code: string; count: number }
 export interface CompanyNarrative {
@@ -42,7 +42,10 @@ export interface ReportDetail extends Omit<ReportSummary, "created_at" | "update
 }
 
 export interface ReportCreate { project_id: string; title: string; period_type: PeriodType; period_start: string; period_end: string; period_label: string }
-export interface FileSelection { document_id: string; company_id: string; kind?: FileKind; plan_month?: number }
+/** Which period a forecast file is for: auto reads it from the titles / file name; this_period = the forecast of the report's own period
+ *  (it only supplies PV); next_period = the plan of the period after it (next week's volumes). */
+export type ForecastFor = "auto" | "this_period" | "next_period";
+export interface FileSelection { document_id: string; company_id: string; kind?: FileKind; plan_month?: number; forecast_for?: ForecastFor }
 /** period = a normal report file; monthly_plan = a volume forecast for a whole month, spread over the days of the next period;
  *  monthly_pv = a monthly PV plan per project, its share by days gives the PV of this report's own period. */
 export type FileKind = "period" | "monthly_plan" | "monthly_pv";
@@ -71,7 +74,12 @@ export interface SourceReads {
   forecast_period?: { start: string; end: string; is_this_period: boolean } | null;
   evm: { actual: { projects: number; has_total: boolean }; planned: { projects: number; has_total: boolean } };
 }
-export interface SourceInfo { reads?: SourceReads; kind?: FileKind; plan?: PlanInfo | null; id: string; filename: string; status: string; error_message: string | null; suggested_company: string | null; sheet_log: SheetLogEntry[]; warnings: SourceWarning[] }
+/** What the platform decided about a forecast file: this = the forecast of the report's own period (PV only), next = next period's plan. */
+export interface ForecastScope {
+  scope: "this" | "next"; source: "override" | "title" | "filename" | "title+filename" | "ambiguous" | "mixed" | "unknown";
+  title_period: { start: string; end: string } | null; filename_period: { start: string; end: string } | null;
+}
+export interface SourceInfo { reads?: SourceReads; kind?: FileKind; forecast_for?: ForecastFor; forecast?: ForecastScope | null; plan?: PlanInfo | null; id: string; filename: string; status: string; error_message: string | null; suggested_company: string | null; sheet_log: SheetLogEntry[]; warnings: SourceWarning[] }
 
 export type ResultScope = "holding" | "company" | "site";
 export interface ResultRow {
@@ -176,9 +184,10 @@ export interface EvmFigures {
   contract_amount: string | null; bcws: string | null; pv: string | null; ev: string | null; ev_net: string | null; ac: string | null;
   cpi: string | null; spi: string | null;
 }
-export type PvSource = "file" | "forecast_file" | "previous_report" | "monthly_pv" | "manual";
+export type PvSource = "file" | "forecast_file" | "previous_report" | "forecast_income" | "previous_income" | "monthly_pv" | "manual";
 /** Where the PV (and so the SPI) of a project comes from; everything else is read from the project's own report file. */
-export interface EvmProject extends EvmFigures { project: string | null; filename: string; pv_source?: PvSource; pv_source_label?: string; pv_match?: "exact" | "fuzzy" | null; pv_share?: string | null; pv_auto?: string | null; pv_manual?: string | null }
+/** notes: pv_from_file (no forecast found, the file's own PV is used) · pv_missing · spi_extreme (SPI above 3: usually a placeholder PV). */
+export interface EvmProject extends EvmFigures { project: string | null; filename: string; notes?: string[]; pv_source?: PvSource; pv_source_label?: string; pv_match?: "exact" | "fuzzy" | null; pv_share?: string | null; pv_auto?: string | null; pv_manual?: string | null }
 export interface EvmTotal extends EvmFigures { projects: number }
 /** Sum of the income sheets' totals blocks; a field is null unless every sheet printed it. */
 export interface EvmIncome {

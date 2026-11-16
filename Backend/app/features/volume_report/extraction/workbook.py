@@ -1,4 +1,4 @@
-"""Uniform read access to .xls/.xlsx/.xlsm workbooks. Blocking I/O: call from a worker/thread, never an async handler.
+"""Uniform read access to .xls/.xlsx/.xlsm/.xlsb workbooks. Blocking I/O: call from a worker/thread, never an async handler.
 
 Only the cells the parser needs are materialised (<= MAX_ROWS x MAX_COLS per sheet) and only for sheets asked for."""
 
@@ -106,6 +106,14 @@ def open_workbook(path: str) -> Iterator[WorkbookData]:
                     data = _open_xlsx(converted, stack)
                 except Exception as convert_error:
                     raise BadRequestError("The spreadsheet could not be read.") from convert_error
+        elif suffix == ".xlsb":
+            # openpyxl cannot read the binary format: LibreOffice makes an xlsx twin (as it does for a broken .xls)
+            from app.features.documents.ingestion.converter import converted_copy
+
+            try:
+                data = _open_xlsx(stack.enter_context(converted_copy(path)), stack)
+            except Exception as error:
+                raise BadRequestError("The spreadsheet could not be read.") from error
         elif suffix in (".xlsx", ".xlsm"):
             try:
                 data = _open_xlsx(path, stack)
@@ -119,5 +127,5 @@ def open_workbook(path: str) -> Iterator[WorkbookData]:
             except Exception as error:
                 raise BadRequestError("The PDF document could not be read.") from error
         else:
-            raise BadRequestError("Only .xls, .xlsx, .xlsm and .pdf files are supported.")
+            raise BadRequestError("Only .xls, .xlsx, .xlsm, .xlsb and .pdf files are supported.")
         yield data

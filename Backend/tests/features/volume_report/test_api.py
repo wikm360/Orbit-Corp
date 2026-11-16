@@ -629,6 +629,75 @@ async def test_monthly_forecast_is_spread_over_the_days_of_the_next_period(clien
     assert (await _planned_concrete(client, leader, rid3)).get("concrete", Decimal(0)) == 0
 
 
+async def test_forecast_of_this_period_is_not_next_weeks_plan(client, tmp_path):
+    _, leader, leader_id, project_id, _ = await _world(client, "this-forecast")
+    company = await _company(client, leader)
+    title = "گزارش پیش بینی درآمد پروژه سیرجان قطروئیه"
+    row = [(None, "بتن ریزی پی", "متر مکعب", 40)]
+    actual = await _document(tmp_path, project_id, leader_id, rows=[(None, "بتن ریزی پی", "متر مکعب", 25)], name="a.xlsx")
+    # 2026-11-01..07 = 10-16 Aban; the period after it is 17-23 Aban
+    this_week = await _document(tmp_path, project_id, leader_id, rows=row, name="پیش بینی 10-16 آبان.xlsx", title=title)
+    next_week = await _document(tmp_path, project_id, leader_id, rows=row, name="پیش بینی 17-23 آبان.xlsx", title=title)
+    base = {"document_id": actual, "company_id": company}
+    rid, files = await _monthly_report(client, leader, project_id, company, [base, {"document_id": this_week, "company_id": company}], "2026-11-01", "2026-11-07")
+    assert (await _planned_concrete(client, leader, rid)).get("concrete", Decimal(0)) == 0  # a forecast OF this week: PV only
+    rid, _ = await _monthly_report(client, leader, project_id, company, [base, {"document_id": next_week, "company_id": company}], "2026-11-01", "2026-11-07")
+    assert (await _planned_concrete(client, leader, rid))["concrete"] == Decimal("40")  # the plan of the week after
+    # a name that says nothing + the user's choice
+    plain = await _document(tmp_path, project_id, leader_id, rows=row, name="f.xlsx", title=title)
+    rid, _ = await _monthly_report(client, leader, project_id, company, [base, {"document_id": plain, "company_id": company, "forecast_for": "this_period"}], "2026-11-01", "2026-11-07")
+    assert (await _planned_concrete(client, leader, rid)).get("concrete", Decimal(0)) == 0
+    rid, _ = await _monthly_report(client, leader, project_id, company, [base, {"document_id": plain, "company_id": company, "forecast_for": "next_period"}], "2026-11-01", "2026-11-07")
+    assert (await _planned_concrete(client, leader, rid))["concrete"] == Decimal("40")
+
+
+def _week_book(tmp_path, project_title, qty, total, evm_ev=None, forecast=False):
+    """An income sheet (one project, one line, a totals block) and, for an actual file, its EVM sheet (EV = the sheet's "جمع کل درآمد")."""
+    wb = Workbook()
+    ws = add_income_sheet(wb, "درآمد", [(None, "بتن ریزی پی", "متر مکعب", qty)],
+                          title=("گزارش پیش بینی درآمد پروژه " if forecast else "گزارش درآمد پروژه ") + project_title)
+    ws.cell(12, 2, "جمع کل درآمد (ریال)")
+    ws.cell(12, 6, total)
+    if evm_ev is not None:
+        evm = wb.create_sheet("EVM")
+        evm.append(["شرکت نمونه"])
+        evm.append(["گزارش مدیریت ارزش کسب شده (EVM)"])
+        evm.append(["ردیف", "نام پروژه", "مبلغ قرارداد (ریال)", "M-BCWS", "PV", "EV", "ev", "AC", "CPI=ev/AC", "SPI=EV/PV"])
+        evm.append([1, "نام کاملاً متفاوت در EVM", 900 * B, None, None, evm_ev, evm_ev * 0.77, evm_ev * 0.6, 1.28, None])
+    if "Sheet" in wb.sheetnames:
+        del wb["Sheet"]
+    return save(wb, tmp_path, f"{uuid.uuid4().hex}.xlsx")
+
+
+async def _doc_at(path, project_id, uploader_id, name):
+    async with async_session_factory() as db:
+        doc = Document(filename=name, file_path=path, content_type="application/octet-stream", status=DocumentStatus.READY,
+                       content_hash=uuid.uuid4().hex + uuid.uuid4().hex, project_id=uuid.UUID(project_id), uploaded_by=uuid.UUID(uploader_id))
+        db.add(doc)
+        await db.commit()
+        return str(doc.id)
+
+
+async def test_pv_of_a_forecast_without_an_evm_page_comes_from_its_income_total_by_value_not_by_name(client, tmp_path):
+    _, leader, leader_id, project_id, _ = await _world(client, "pv-income")
+    company = await _company(client, leader)
+    title = "احداث راه چنگوله"
+    # week 1 (10-16 Aban): its actual + the forecast of the NEXT week (17-23 Aban): income sheet only, "جمع کل درآمد" = 300 (EV level)
+    a1 = await _doc_at(_week_book(tmp_path, title, 100, 200 * B, evm_ev=200 * B), project_id, leader_id, "گزارش 10-16.xlsx")
+    f1 = await _doc_at(_week_book(tmp_path, title, 150, 300 * B, forecast=True), project_id, leader_id, "پیش بینی 17-23 آبان.xlsx")
+    await _monthly_report(client, leader, project_id, company, [{"document_id": a1, "company_id": company}, {"document_id": f1, "company_id": company}], "2026-11-01", "2026-11-07")
+    # week 2: only its actual. The EVM names the project differently, but its EV is the income sheet's total: tied to the site by value
+    a2 = await _doc_at(_week_book(tmp_path, title, 120, 250 * B, evm_ev=250 * B), project_id, leader_id, "گزارش 17-23.xlsx")
+    rid, _ = await _monthly_report(client, leader, project_id, company, [{"document_id": a2, "company_id": company}], "2026-11-08", "2026-11-14")
+    project = (await _evm(client, leader, rid))["actual"]["companies"][0]["projects"][0]
+    assert project["pv_source"] == "previous_income" and Decimal(project["pv"]) == 300 * B and project["spi"] == "0.83"
+    # the same-week forecast of week 2 (a file of its own, named for the week) takes over the previous report's
+    f2 = await _doc_at(_week_book(tmp_path, title, 130, 280 * B, forecast=True), project_id, leader_id, "پیش بینی 17-23 آبان - هفته جاری.xlsx")
+    rid, _ = await _monthly_report(client, leader, project_id, company, [{"document_id": a2, "company_id": company}, {"document_id": f2, "company_id": company}], "2026-11-08", "2026-11-14")
+    project = (await _evm(client, leader, rid))["actual"]["companies"][0]["projects"][0]
+    assert project["pv_source"] == "forecast_income" and Decimal(project["pv"]) == 280 * B and project["spi"] == "0.89"
+
+
 async def test_site_with_its_own_forecast_ignores_the_monthly_one(client, tmp_path):
     _, leader, leader_id, project_id, _ = await _world(client, "monthly2")
     company = await _company(client, leader)
@@ -747,3 +816,106 @@ async def test_reparse_evm_rereads_the_files_and_keeps_the_typed_pv(client, tmp_
     outsider, _ = await _register(client, "reparse-outsider@example.com")
     assert (await client.post(f"{API}/{rid}/evm/reparse", headers=outsider)).status_code == 403
     assert (await client.post(f"{API}/{uuid.uuid4()}/evm/reparse", headers=leader)).status_code == 404
+
+
+# ---- a real week (18-24 Aban 1405): every company's files together --------------------------------------------------------------
+_WEEK = __import__("pathlib").Path("eval/volume_report/گزارش 18 تا 25")
+
+
+def _week_company(name: str) -> str:
+    if "سیستان" in name or "گزارش 18تا24 آبان پیش بینی" in name:
+        return "سیستان"
+    if "گلومک" in name:
+        return "گلومک"
+    if "فراگیر" in name:
+        return "فراگیر"
+    return "محورگستر"
+
+
+async def _real_week_report(client, tmp_path):
+    import shutil
+
+    _, leader, leader_id, project_id, _ = await _world(client, "real-week")
+    companies: dict[str, str] = {}
+    selections = []
+    for source in sorted(_WEEK.iterdir()):
+        if source.name.startswith(".") or source.suffix.lower() not in (".xls", ".xlsx", ".xlsb", ".pdf"):
+            continue
+        company = _week_company(source.name)
+        if company not in companies:
+            companies[company] = await _company(client, leader, company)
+        path = tmp_path / f"{uuid.uuid4().hex}{source.suffix}"
+        shutil.copy(source, path)
+        async with async_session_factory() as db:
+            doc = Document(filename=source.name, file_path=str(path), content_type="application/octet-stream", status=DocumentStatus.READY,
+                           content_hash=uuid.uuid4().hex + uuid.uuid4().hex, project_id=uuid.UUID(project_id), uploaded_by=uuid.UUID(leader_id))
+            db.add(doc)
+            await db.commit()
+            selections.append({"document_id": str(doc.id), "company_id": companies[company]})
+    rid = await _evm_report(client, leader, project_id, selections, "2026-11-09", "2026-11-15")  # 18-24 Aban 1405
+    return leader, rid
+
+
+def _by_name(company, fragment):
+    return next(p for p in company["projects"] if fragment in p["project"])
+
+
+@pytest.mark.skipif(not _WEEK.exists(), reason="samples not present")
+async def test_real_week_evm_pv_sources_and_no_helper_rows(client, tmp_path):
+    leader, rid = await _real_week_report(client, tmp_path)
+    data = await _evm(client, leader, rid)
+    companies = {c["company"]: c for c in data["actual"]["companies"]}
+    assert set(companies) == {"سیستان", "محورگستر"}  # the forecast-only companies (گلومک, فراگیر) have no actual EVM
+    sistan, mahvar = companies["سیستان"], companies["محورگستر"]
+    assert sistan["total"]["cpi"] == "1.33" and sistan["total"]["spi"] == "0.73" and sistan["total"]["projects"] == 2
+    assert len(mahvar["projects"]) == 10  # no "کل درآمد" / "هزینه" / activity rows of the summary tables under the Sirjan EVM table
+    # PV = EV of the forecast of THIS week; a forecast without an EVM page gives its "جمع کل درآمد" (EV level, not ev)
+    sahrab, ravar, zarand = _by_name(mahvar, "پد شماره 4"), _by_name(mahvar, "راور"), _by_name(mahvar, "زرند")
+    assert (sahrab["pv_source"], sahrab["pv"], sahrab["spi"]) == ("forecast_file", "74547200000.00", "1.35")
+    assert (ravar["pv_source"], ravar["spi"], ravar["cpi"]) == ("forecast_file", "0.61", "0.97")
+    assert (zarand["pv_source"], zarand["spi"]) == ("forecast_file", "0.75")
+    chengoole = _by_name(mahvar, "چنگوله")
+    assert (chengoole["pv_source"], Decimal(chengoole["pv"]), chengoole["spi"]) == ("forecast_income", Decimal("44698054905"), "1.50")
+    maaber = _by_name(mahvar, "معابر")  # an ACTUAL budget-template page whose column heading says "برنامه" is not a forecast
+    assert (maaber["pv_source"], Decimal(maaber["pv"]), maaber["spi"]) == ("forecast_income", Decimal("15132366352"), "0.64")
+    ghatrooyeh = _by_name(mahvar, "قطروئیه")
+    assert (ghatrooyeh["pv_source"], Decimal(ghatrooyeh["ac"]).quantize(Decimal("1")), ghatrooyeh["spi"]) == ("forecast_income", Decimal(111626622167), "0.80")
+    assert not any("spi_extreme" in p["notes"] for p in mahvar["projects"])
+    # the same project listed in two files is counted once
+    assert sum("ابنیه میادین" in p["project"] for p in mahvar["projects"]) == 1
+
+
+@pytest.mark.skipif(not _WEEK.exists(), reason="samples not present")
+async def test_real_week_forecasts_of_this_week_are_pv_only_not_next_weeks_plan(client, tmp_path):
+    leader, rid = await _real_week_report(client, tmp_path)
+    sources = {f["filename"]: f for f in (await client.get(f"{API}/{rid}/sources", headers=leader)).json()}
+    chengoole = sources["پیش بینی چنگوله 18-24 آبان.xls"]["forecast"]  # its title is last week's copy: ignored; the file name says this week
+    assert (chengoole["scope"], chengoole["source"]) == ("this", "filename")
+    assert sources["معابر سیرجان پیش بینی 18-24.pdf"]["forecast"]["scope"] == "this"  # no date inside: "18-24" in the file name
+    assert sources["سیرجان قطروئیه 18-24 آبان.xlsb"]["forecast"] is None  # an actual report is no forecast
+    planned = (await client.get(f"{API}/{rid}/results?group_by=company&basis=planned", headers=leader)).json()
+    assert all(Decimal(r["qty"]) == 0 for r in planned["rows"])  # nothing of it is "next week's plan"
+
+
+@pytest.mark.skipif(not _WEEK.exists(), reason="samples not present")
+async def test_forecast_for_override_decides_when_the_file_does_not_say(client, tmp_path):
+    import shutil
+
+    _, leader, leader_id, project_id, _ = await _world(client, "override")
+    company = await _company(client, leader)
+    ids = []
+    for name in ("گزارش هفتگی از 18 الی 24 آبان ماه پروژه میدان نفتی سهراب.xls", "گزارش پیش بینی هفتگی از 18 الی 24 آبان ماه پروژه میدان نفتی سهراب.pdf"):
+        path = tmp_path / f"{uuid.uuid4().hex}{name[-4:]}"
+        shutil.copy(_WEEK / name, path)
+        async with async_session_factory() as db:
+            doc = Document(filename="sahrab-" + name[-4:], file_path=str(path), content_type="application/octet-stream", status=DocumentStatus.READY,
+                           content_hash=uuid.uuid4().hex + uuid.uuid4().hex, project_id=uuid.UUID(project_id), uploaded_by=uuid.UUID(leader_id))
+            db.add(doc)
+            await db.commit()
+            ids.append(str(doc.id))  # the names say nothing: the PDF is only a forecast because the user says so
+    docs = [{"document_id": ids[0], "company_id": company}, {"document_id": ids[1], "company_id": company, "forecast_for": "this_period"}]
+    rid = await _evm_report(client, leader, project_id, docs, "2026-11-09", "2026-11-15")
+    project = (await _evm(client, leader, rid))["actual"]["companies"][0]["projects"][0]
+    assert (project["pv_source"], project["pv"], project["spi"]) == ("forecast_file", "74547200000.00", "1.35")
+    files = (await client.get(f"{API}/{rid}/sources", headers=leader)).json()
+    assert {f["forecast_for"] for f in files} == {"auto", "this_period"}

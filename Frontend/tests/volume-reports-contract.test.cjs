@@ -855,6 +855,19 @@ test('wizard helpers group folders, build file payloads, and seed resumed/append
     { document_id: 'd3', company_id: 'c1', kind: 'monthly_pv' },
   ]);
 
+  // a weekly forecast the user declares: of this period (PV only) or of the next one (next week's plan); resumed reports seed it back
+  const forecasts = wizard.selectionToPayload({ d4: 'c1', d5: 'c1' }, { d4: { kind: 'forecast_this', month: 0 }, d5: { kind: 'forecast_next', month: 0 } });
+  assert.deepEqual(forecasts, [
+    { document_id: 'd4', company_id: 'c1', forecast_for: 'this_period' },
+    { document_id: 'd5', company_id: 'c1', forecast_for: 'next_period' },
+  ]);
+  const reseeded = wizard.seedSelectionFromReportFiles([
+    { id: 'rf4', document_id: 'd4', filename: 'f.pdf', company_id: 'c1', status: 'parsed', error_message: null, kind: 'period', forecast_for: 'this_period' },
+    { id: 'rf5', document_id: 'd5', filename: 'g.pdf', company_id: 'c1', status: 'parsed', error_message: null, kind: 'period', forecast_for: 'auto' },
+  ]);
+  assert.deepEqual(reseeded.monthly, { d4: { kind: 'forecast_this', month: 0 } });
+  assert.ok(wizard.isSupportedName('سیرجان قطروئیه.xlsb'));
+
   assert.equal(status.GATE_LABELS.pending_files, 'فایل در انتظار پردازش');
   assert.ok(status.GATE_HINTS.pending_files.includes('اجرای دور جدید'));
 });

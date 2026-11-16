@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
 # Legacy/odd office formats are converted to their OOXML twin with LibreOffice first (see converter.py).
-LEGACY_OFFICE_EXTENSIONS = {".xls", ".xlsm", ".ods", ".doc", ".rtf", ".odt", ".ppt", ".odp"}
+LEGACY_OFFICE_EXTENSIONS = {".xls", ".xlsm", ".xlsb", ".ods", ".doc", ".rtf", ".odt", ".ppt", ".odp"}
 DOCUMENT_EXTENSIONS = {".pdf", ".docx", ".pptx", ".xlsx", ".csv", ".txt"} | LEGACY_OFFICE_EXTENSIONS
 SUPPORTED_EXTENSIONS = DOCUMENT_EXTENSIONS | IMAGE_EXTENSIONS
 

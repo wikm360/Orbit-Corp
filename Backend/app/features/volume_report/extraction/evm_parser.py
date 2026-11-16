@@ -25,7 +25,7 @@ _BIG_INT = re.compile(r"^\d{5,}$")
 _DECIMAL = re.compile(r"^\d+\.\d{1,3}$")
 _RATIO = re.compile(r"^\d{1,2}(?:\.\d{1,3})?$")  # after the amounts: CPI, SPI (an Excel 0.0 / 1.0 arrives as "0" / "1")
 _INT = re.compile(r"^\d{1,4}$")
-_TOTAL_WORDS = ("جمع",)
+_TOTAL_WORDS = ("جمع", "میانگین")  # "میانگین وزنی" ends the table in some company templates
 _PLAN_WORDS = ("پیش بینی", "پیش‌بینی", "pishbini", "pish bini", "forecast", "برنامه ای", "برنامه‌ای")
 _TOLERANCE = Decimal("0.02")
 # Header cells that wrap onto the rows below the CPI/SPI row; a text row with one of these is never part of a project name.
@@ -120,12 +120,23 @@ def _find_header(rows: list[list[Any]]) -> int | None:
     return None
 
 
+_STRONG_PLAN_WORDS = ("پیش بینی", "پیش‌بینی", "pishbini", "pish bini", "forecast")
+
+
 def _basis(rows: list[list[Any]], header_index: int, sheet_name: str, file_name: str | None, period_label: str | None = None) -> str:
-    title = normalize_text(" ".join(str(c) for r in rows[:header_index] for c in r if c is not None))
+    """planned when the title / sheet / file name says "پیش بینی" (or "برنامه" in the sheet or file name, or in the first title line).
+    The weak word "برنامه ای" is also a COLUMN heading of actual sheets ("درصد پیشرفت برنامه ای", "درآمد برنامه ای از ابتدای سال"),
+    so below the first title line only the strong words count."""
+    title_lines = [normalize_text(" ".join(str(c) for c in r if c is not None)) for r in rows[:header_index]]
+    title_lines = [line for line in title_lines if line]
     names = normalize_text(f"{sheet_name} {file_name or ''}")
-    text = f"{title} {names}"
-    if any(w in text for w in _PLAN_WORDS):
+    strong_text = " ".join([*title_lines, names])
+    first_line = title_lines[0] if title_lines else ""
+    # a title that BEGINS with "برنامه" ("برنامه <project>", "برنامه های دست اجرا"); "شاخص عملکرد برنامه (SPI)" is a column heading
+    plain_plan_title = any(re.match(r"برنامه(?!\s*\u200c?\s*(?:ای|ی)(?!\w))", line) for line in title_lines[:3])
+    if any(w in strong_text for w in _STRONG_PLAN_WORDS) or any(w in f"{first_line} {names}" for w in _PLAN_WORDS) or plain_plan_title:
         return "planned"
+    text = f"{' '.join(title_lines)} {names}"
     if period_label:
         rep_range = find_period_range(period_label)
         sheet_range = find_period_range(text)
@@ -260,6 +271,7 @@ def _notes_columns(rows: list[list[Any]], header: int) -> set[int]:
 
 
 _MONEY_FIELDS = ("bcws", "pv", "ev", "ev_net", "ac")
+_FOREIGN_CURRENCY = ("یورو", "دلار", "euro", "usd", "درهم")
 _MILLION_LIMIT = Decimal(10) ** 8
 
 
@@ -294,6 +306,10 @@ def _header_columns(rows: list[list[Any]], header: int) -> dict[str, int] | None
             found["contract"] = index
     if not {"ev", "ev_net", "ac", "name"} <= found.keys() or len({found[k] for k in ("ev", "ev_net", "ac")}) < 3:
         return None
+    if "contract" in found:
+        label = normalize_text(labels.get(found["contract"], ""))
+        if any(word in label for word in _FOREIGN_CURRENCY):
+            found["contract_foreign"] = found.pop("contract")  # "(یورو)": summing it with rial amounts would be meaningless
     return found
 
 
@@ -321,11 +337,15 @@ def _parse_by_columns(parsed: ParsedEvm, rows: list[list[Any]], header: int, col
         name = row[columns["name"]] if columns["name"] < len(row) else None
         if not is_total and not (isinstance(name, str) and name.strip()):
             continue
+        if not is_total and _is_legend(str(name).split()) and parsed.rows:
+            break  # the footnotes ("T : مدت قرارداد") end the table: summary tables below them are not projects
         if not is_total and (_is_header_text([str(name)]) or _is_legend(str(name).split())):
             continue
         money = {k: cell(row, k) for k in _MONEY_FIELDS}
         if not any(v is not None for v in money.values()):
             continue  # a project listed with no figures yet
+        if is_total and all(money[k] is None for k in ("ev", "ev_net", "ac")):
+            break  # a "جمع" that only carries a plan (PV 0) is no total of anything
         data = EvmRowData(row_no=offset, project_name=None if is_total else re.sub(r"\s+", " ", str(name)).strip(), is_total=is_total,
                           contract_amount=None if is_total else cell(row, "contract"), **{k: _q(v) for k, v in money.items()})
         data.cpi = _ratio_cell(cell(row, "cpi")) if data.ev_net is not None and data.ac is not None and data.ac > 0 else None

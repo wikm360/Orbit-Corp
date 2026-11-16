@@ -14,7 +14,7 @@ from app.core.database import async_session_factory, engine
 from app.features.documents.models import Document
 from app.features.volume_report import activity, questions, service
 from app.features.volume_report.agent import runner as agent_runner
-from app.features.volume_report.extraction.normalize import group_key
+from app.features.volume_report.extraction.normalize import group_key, site_key
 from app.features.volume_report.extraction.runner import extract_file
 from app.features.volume_report.models import (
     Classification, ClassificationSource, Company, Decision, Dimension, Disposition, EvmRow, ExcludeReason, IncomeTotal, PvPlanRow, FileStatus, Item, Line,
@@ -40,7 +40,9 @@ async def _progress(db: AsyncSession, report: Report, step: str, done: int, tota
 
 
 async def _site_for(db: AsyncSession, company_id: uuid.UUID, name: str, name_norm: str, kind_guess: str) -> Site:
-    site = (await db.execute(select(Site).where(Site.company_id == company_id, Site.name_norm == name_norm))).scalar_one_or_none()
+    sites = (await db.execute(select(Site).where(Site.company_id == company_id))).scalars().all()
+    key = site_key(name_norm)
+    site = next((s for s in sites if s.name_norm == name_norm), None) or next((s for s in sites if site_key(s.name_norm) == key), None)
     if site is None:
         site = Site(company_id=company_id, name=name, name_norm=name_norm, kind=SiteKind(kind_guess), kind_confirmed=False)
         db.add(site)
@@ -60,7 +62,7 @@ async def _parse_files(db: AsyncSession, report: Report, lexicon, overrides: dic
             if document is None or document.project_id != report.project_id:
                 raise ValueError("Source document is no longer available")
             path = service.resolve_document_path(document)
-            extraction = await asyncio.to_thread(extract_file, path, lexicon, report.period_label, overrides.get(rfile.id), rfile.kind == "monthly_plan", rfile.kind == "monthly_pv")
+            extraction = await asyncio.to_thread(extract_file, path, lexicon, report.period_label, overrides.get(rfile.id), rfile.kind == "monthly_plan" or rfile.forecast_for != "auto", rfile.kind == "monthly_pv", file_name=rfile.filename)
         except Exception as exc:
             logger.warning("Volume report %s: file %s failed: %s", report.id, rfile.filename, exc)
             rfile.status = FileStatus.FAILED

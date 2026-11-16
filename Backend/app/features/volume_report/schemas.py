@@ -54,6 +54,9 @@ class FileSelection(BaseModel):
     kind: Literal["period", "monthly_plan", "monthly_pv"] = "period"
     plan_month: int | None = Field(default=None, ge=1, le=12)  # Jalali month of a monthly forecast; detected from the title when omitted
     plan_year: int | None = Field(default=None, ge=1300, le=1500)  # default: the occurrence closest to the report period
+    # Which period a forecast file is for: auto reads the titles / file name; this_period = the forecast of the report's own period
+    # (supplies PV, never "next week's plan"); next_period = the plan of the period after it.
+    forecast_for: Literal["auto", "this_period", "next_period"] = "auto"
 
 
 class FilesUpdate(BaseModel):

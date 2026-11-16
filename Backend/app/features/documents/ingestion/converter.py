@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 CONVERTIBLE_EXTENSIONS: dict[str, tuple[str, str]] = {
     ".xls": (".xlsx", "xlsx:Calc MS Excel 2007 XML"),
     ".xlsm": (".xlsx", "xlsx:Calc MS Excel 2007 XML"),
+    ".xlsb": (".xlsx", "xlsx:Calc MS Excel 2007 XML"),
     ".ods": (".xlsx", "xlsx:Calc MS Excel 2007 XML"),
     ".doc": (".docx", "docx:MS Word 2007 XML"),
     ".rtf": (".docx", "docx:MS Word 2007 XML"),

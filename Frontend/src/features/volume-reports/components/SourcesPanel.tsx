@@ -8,7 +8,7 @@ import { volumeReportApi } from "../api/volumeReportApi";
 import { runSoon } from "../lib/defer";
 import { formatJalaliDate, toFa } from "../lib/jalali";
 import { SHEET_REASON_LABELS, WARNING_LABELS } from "../lib/status";
-import type { PlanInfo, SourceInfo, SourceReads, SourceWarning } from "../types";
+import type { ForecastScope, PlanInfo, SourceInfo, SourceReads, SourceWarning } from "../types";
 import { Card, EmptyState, ErrorBox, LoadingBlock } from "./common";
 
 export const describeWarning = (w: SourceWarning): string => {
@@ -64,6 +64,27 @@ const STATE_STYLE: Record<ReadState, { mark: string; tone: string }> = {
   partial: { mark: "⚠", tone: "text-amber-700" },
   none: { mark: "—", tone: "text-slate-400" },
 };
+
+/** Which period this forecast file was taken to be for, and why (the user can override it when the file is added). */
+function ForecastScopeNote({ forecast }: { forecast: ForecastScope }) {
+  const span = (p: { start: string; end: string } | null) => (p ? `${formatJalaliDate(p.start)} تا ${formatJalaliDate(p.end)}` : "—");
+  const why: Record<ForecastScope["source"], string> = {
+    override: "طبق انتخاب شما",
+    title: "از عنوان فایل",
+    filename: "از نام فایل",
+    "title+filename": "از عنوان و نام فایل",
+    ambiguous: "عنوان و نام فایل هم‌خوان نیستند؛ «نوع فایل» را خودتان انتخاب کنید",
+    mixed: "فایل گزارش واقعی هم دارد؛ بخش پیش‌بینی‌اش برنامه‌ی دوره‌ی بعد حساب می‌شود",
+    unknown: "دوره‌ای در فایل پیدا نشد؛ برنامه‌ی دوره‌ی بعد حساب می‌شود. اگر پیش‌بینیِ همین هفته است «نوع فایل» را عوض کنید",
+  };
+  const warn = forecast.source === "ambiguous" || forecast.source === "unknown";
+  return (
+    <p className={`mb-3 rounded-xl border px-3 py-2 text-xs ${warn ? "border-amber-200/80 bg-amber-50/70 text-amber-900" : "border-indigo-100 bg-indigo-50/60 text-indigo-900"}`}>
+      {forecast.scope === "this" ? "پیش‌بینیِ همین هفته — فقط برای PV (برنامه‌ی هفته‌ی بعد حساب نمی‌شود)" : "پیش‌بینیِ هفته‌ی بعد — برنامه‌ی حجم‌ها"} · {why[forecast.source]}
+      {forecast.title_period || forecast.filename_period ? ` (عنوان: ${span(forecast.title_period)} · نام فایل: ${span(forecast.filename_period)})` : ""}
+    </p>
+  );
+}
 
 function ReadChecklist({ reads, plan }: { reads: SourceReads; plan?: PlanInfo | null }) {
   return (
@@ -137,6 +158,7 @@ export function SourceDetails({
               </p>
             ) : (
               <>
+                {source.forecast && <ForecastScopeNote forecast={source.forecast} />}
                 {source.reads && <ReadChecklist reads={source.reads} plan={source.plan} />}
                 {source.warnings.length > 0 && (
                   <ul className="mb-3 space-y-1" aria-label="هشدارها">

@@ -1164,6 +1164,9 @@ def _detect_pdf_sheet_name(page_num: int, page: pypdf.PageObject) -> str:
         top_texts = [" ".join(w[1] for w in row_words) for _, row_words in rows_by_y[:8]]
 
     combined = " ".join(top_texts)
+    # "برنامه ای" is also a column heading ("درآمد برنامه ای از ابتدای سال", "درصد پیشرفت برنامه ای") of ACTUAL summary pages: a page
+    # is only named a plan from its title lines, never from those headings (the real forecast pages say "برنامه <project>" / "پیش بینی").
+    titles = " ".join(line for line in top_texts if not re.search(r"برنامه\s*\u200c?\s*(?:ای|ی)(?!\w)", line))
 
     site = ""
     for line in top_texts[:4]:
@@ -1176,7 +1179,7 @@ def _detect_pdf_sheet_name(page_num: int, page: pypdf.PageObject) -> str:
     # Determine kind for probe.py classification
     if "پیش بینی" in combined and ("درآمد" in combined or "درامد" in combined):
         prefix = "برنامه درآمد"  # forecast of the next period, same table layout as the income page
-    elif "برنامه" in combined or "پیش بینی" in combined:
+    elif "برنامه" in titles or "پیش بینی" in combined:
         prefix = "برنامه"  # EVM / budget summary page: not a quantity table
     elif "درآمد" in combined or "درامد" in combined:
         prefix = "درآمد"

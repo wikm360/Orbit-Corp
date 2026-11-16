@@ -10,7 +10,7 @@ from app.features.volume_report.extraction.workbook import open_workbook
 from app.features.volume_report.jalali import MONTHS
 
 _DATE = re.compile(r"\d{2,4}\s*[/\-.]\s*\d{1,2}\s*[/\-.]\s*\d{1,4}")
-_DAY_RANGE = re.compile(r"\d{1,2}\s*(?:-|–|تا|الی|لی)\s*\d{1,2}")  # "18-24 آبان", "از 18 الی 24"
+_DAY_RANGE = re.compile(r"(\d{1,2})\s*(?:-|–|تا|الی|لی)\s*(\d{1,2})")  # "18-24 آبان", "از 18 الی 24"
 _TITLE_ROWS = 4
 
 
@@ -24,10 +24,15 @@ def _title(rows: list[list[Any]]) -> str:
     return normalize_text(_raw_title(rows))
 
 
+def _has_day_range(raw: str) -> bool:
+    """A real day range ascends and stays inside a month ("18-24"); "قطعه 6-5" or a code like "22-645" is part of a name."""
+    return any(1 <= int(a) <= int(b) <= 31 for a, b in _DAY_RANGE.findall(raw))
+
+
 def is_period_title(rows: list[list[Any]]) -> bool:
     """A title that names a date range or a week: a forecast for one period, not for a month."""
     raw, text = _raw_title(rows), _title(rows)
-    return bool(_DATE.search(raw) or _DAY_RANGE.search(raw) or "هفته" in text or "هفتگی" in text)
+    return bool(_DATE.search(raw) or _has_day_range(raw) or "هفته" in text or "هفتگی" in text)
 
 
 def month_in_title(rows: list[list[Any]]) -> int | None:
