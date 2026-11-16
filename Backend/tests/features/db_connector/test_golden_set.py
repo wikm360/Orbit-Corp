@@ -115,3 +115,23 @@ def test_corpus_documents_the_new_columns():
     text = " ".join(c["text"] for c in H.load_corpus() if c["kind"] == "view")
     for col in ("expense_item_name", "contract_name_norm", "equipment_plate", "is_wip_transfer", "is_party_account", "holder_name_norm"):
         assert col in text, col
+
+
+def test_core_prompt_defaults_project_pnl_to_current_fiscal_year():
+    prompt = H.load_core_prompt()
+    for needle in ("contract_financials_year", "fiscal_years WHERE voucher_count > 100", "4110", "1117", "مهر"):
+        assert needle in prompt, needle
+
+
+def test_project_pnl_question_retrieves_the_yearly_view_and_the_definition_note():
+    got = _retrieve("تراز عملیاتی سود و زیان پروژه چنگوله چنده؟")
+    views = _views(got)
+    assert "contract_financials_year" in views
+    if "contract_financials" in views:  # the all-years view must never outrank the yearly one for a question without a year
+        assert views.index("contract_financials_year") < views.index("contract_financials")
+    assert "note:project_pnl" in got.keys
+
+
+def test_all_years_contract_view_warns_against_use_without_explicit_all_time():
+    chunk = next(c for c in H.load_corpus() if c["id"] == "view:contract_financials:1")
+    assert "همه‌ی سال‌های مالی" in chunk["text"] and "contract_financials_year" in chunk["text"]

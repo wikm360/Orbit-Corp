@@ -125,6 +125,14 @@ GOLDEN = [
          sql="SELECT TOP 5 counterparty_dl_code AS code, counterparty_name AS name, receivable_balance FROM ai.customer_balances ORDER BY receivable_balance DESC",
          views=["customer_balances"], note="کنترل: سؤال کلی که قبلاً خوب جواب می‌داد نباید خراب شود"),
 
+    # ---------------- تراز عملیاتی پروژه (گزارش «مرور حساب‌ها»ی حسابدار) ----------------
+    dict(id="g27", group="project_pnl", kind="scalar", value_col="amount",
+         question="پروژه چنگوله امسال سود داده یا زیان؟ تراز عملیاتی‌اش چقدر است؟",
+         sql="SELECT SUM(-l.net_debit) AS amount FROM ai.ledger_lines l WHERE l.is_valid_for_reports = 1 AND l.fiscal_year = 1404 "
+             "AND l.contract_dl_code = '661279' AND l.gl_code IN ('1117', '4110')",
+         views=["contract_financials_year", "contract_financials", "ledger_lines"],
+         note="«امسال» = سال مالی جاری، نه جمع همه‌ی سال‌ها (contract_financials 1403+1404+1405 = ‎-670 میلیارد غلط است). مرجع: گزارش حسابدار نرم‌افزار راهکاران، تفصیلی سطح ۴ + کل 1117 و 4110 = ‎-595٬166٬366٬510 (بک‌آپ 2026-11-15)"),
+
     # ---------------- حقوق / کلی (regression) ----------------
     dict(id="g21", group="regression", kind="scalar", value_col="amount",
          question="هزینه حقوق (دسته‌ی حقوق) در سال ۱۴۰۴ چقدر است؟",

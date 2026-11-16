@@ -8,7 +8,7 @@
 ## فایل‌ها (`sql/rahkaran/examples/`)
 | فایل | نقش |
 |---|---|
-| `golden.py` | ۲۶ مورد: `id, group, question, sql (مرجع), kind (scalar/rows/refusal/ambiguous), views (viewهای قابل‌قبول), note` |
+| `golden.py` | ۲۷ مورد: `id, group, question, sql (مرجع), kind (scalar/rows/refusal/ambiguous), views (viewهای قابل‌قبول), note` |
 | `golden_expected.py` | همه‌ی SQL های مرجع را با reader اجرا و `golden_expected.json` را می‌نویسد (بعد از هر بک‌آپ جدید دوباره؛ اعداد با داده عوض می‌شوند) |
 | `eval_golden.py retrieval` | محلی/رایگان: همان `retrieve_hints` پروژه با BM25 (بدون Postgres/embedding/LLM). آیا view درست در top-k هست و در چه رتبه‌ای |
 | `eval_golden.py e2e` | `run_accounting_query` واقعی (نیاز Postgres، LLM، `RAHKARAN_DB_*` به SQL Server ریستور‌شده). امتیاز خودکار scalar/rows؛ refusal/ambiguous = بازبینی دستی |
@@ -38,3 +38,9 @@ SQL مرجع عمداً به `ai.ledger_lines` + `ai.dl_accounts` می‌رود 
 - چهار مرجع golden (g01 g02 g04 g09) با `equipment_project_cost_year` دقیقاً برابر شدند (بر حسب ریال: 36535626086، 1738728636، 245716518467، 11087565710).
 - جمع view جدید = `contract_financials_year.contract_cost` برای ۱۳۹۷–۱۴۰۴ (جز ۱۴۰۱ با ≈۲٫۴ میلیارد ریال بیشتر).
 - `equipment_cost_year` برای 111780: ۱۴۰۱ تا ۱۴۰۳ حدود ۵۷٫۰ و ۶۴٫۳ و ۸۴٫۲ میلیارد تومان (قبلاً صفر).
+
+## g27 — تراز عملیاتی پروژه (2026-11-15، از گزارش «مرور حساب‌ها»ی حسابدار)
+- ریشه‌ی خطا: برای «تراز عملیاتی سود و زیان پروژه X» بدون سال، مدل `ai.contract_financials` (جمع همه‌ی سال‌ها: 1403+1404+1405) را خواند و ‎−670 میلیارد گفت؛ مرجع حسابدار برای سال مالی 1404 برابر **‎−595٬166٬366٬510** ریال است (درآمد 4110 = 2٬447٬837٬267٬019؛ هزینه‌ی 1117 = 3٬043٬003٬633٬529). با سؤال‌های تکه‌تکه (سال و کد حساب صریح) جواب همیشه درست بود.
+- راه‌حل (فقط دانش/hint، بدون تغییر view): قاعده‌ی 18 در `CORE_PROMPT`، note `project_pnl`، هشدار در hint `contract_financials`، مثال‌های few-shot. g27 با جمله‌ی متفاوت از مثال few-shot نوشته شده (تست «نشت» اجازه‌ی کپی را نمی‌دهد).
+- یافته‌های جانبی همان بررسی: وضعیت 2 (یادداشت) در گزارش حسابدار هم شمرده نمی‌شود (قاعده‌ی `is_valid_for_reports` درست است)؛ بک‌آپ قدیمی ۲۸۱ سند عقب بود و با بک‌آپ 2026-11-15 عددها تا ریال برابر شد.
+- روی سرور بعد از تغییر دانش: `git pull`، `dc up -d --build backend worker`، سپس ingest hint ها (`python -m app.features.db_connector.ingest` یا `POST /accounting-db/hints/ingest`).

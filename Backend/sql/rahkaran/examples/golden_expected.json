@@ -487,5 +487,15 @@
     "amount": 15000000
    }
   ]
+ },
+ "g27": {
+  "kind": "scalar",
+  "value_col": "amount",
+  "row_count": 1,
+  "rows": [
+   {
+    "amount": -595166366510
+   }
+  ]
  }
 }
