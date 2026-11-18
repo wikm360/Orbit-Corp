@@ -36,7 +36,6 @@ const SLIDE_W = 1536;
 const SLIDE_H = 864;
 const NAVY = "#252850";
 const READY_STATUSES = new Set(["awaiting_user", "needs_review", "ready", "published"]);
-const NARRATIVE_COMPANIES_PER_SLIDE = 2;
 const SUMMARY_VARIANT_STORAGE_KEY = "vr-presentation-summary-variant";
 
 function chunks<T>(items: T[], size: number): T[][] {
@@ -751,66 +750,115 @@ function getCompanyNarrativeItems(narrative?: CompanyNarrative): string[] {
     if (cleaned.length > 0) return cleaned;
   }
   if (typeof narrative.raw_text === "string" && narrative.raw_text.trim()) {
+    const blocks = narrative.raw_text.split(/\n\s*\n/).map((b) => b.trim()).filter(Boolean);
+    if (blocks.length > 0) return blocks;
     return [narrative.raw_text.trim()];
   }
   return [];
 }
 
-function CompanyNarrativeCard({
-  company,
-  index,
-  items,
-}: {
-  company: ScorecardRow;
-  index: number;
+interface NarrativeCompanyData {
+  comp: ScorecardRow;
   items: string[];
+}
+
+function NarrativeSlideView({
+  companies,
+}: {
+  companies: NarrativeCompanyData[];
 }) {
-  const accentColor = getCompanyColor(company.name, index);
+  const isCompact = companies.length >= 3;
 
   return (
-    <div className="flex h-full flex-col overflow-hidden rounded-3xl border border-slate-200/90 bg-white shadow-sm">
-      {/* Top accent bar */}
-      <div className="h-2 w-full shrink-0" style={{ backgroundColor: accentColor }} />
-
-      {/* Card Header */}
-      <div className="flex shrink-0 items-center justify-between border-b border-slate-100 bg-slate-50/60 px-6 py-4">
-        <div className="flex items-center gap-3.5">
-          <CompanyMark name={company.name} size={36} />
-          <div>
-            <h3 className="text-[19px] font-bold text-slate-900 leading-tight">{company.name}</h3>
-            <span className="text-[12px] text-slate-400">گزارش اقدامات و پیشرفت پروژه‌ها</span>
-          </div>
-        </div>
-        <div
-          className="flex h-9 w-9 items-center justify-center rounded-2xl text-[14px] font-black text-white shadow-sm"
-          style={{ backgroundColor: accentColor }}
-        >
-          {toFa(String(index + 1).padStart(2, "0"))}
-        </div>
-      </div>
-
-      {/* Bullets List */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-4">
-        {items.map((item, i) => {
-          const lines = item.split("\n").map((l) => l.trim()).filter(Boolean);
-          const mainTitle = lines[0] ?? "";
-          const subLines = lines.slice(1);
+    <div
+      className={`flex min-h-0 flex-1 flex-col overflow-y-auto rounded-2xl border border-[#252850]/15 bg-white shadow-sm ${
+        isCompact ? "p-6" : "p-8"
+      }`}
+    >
+      <div className="divide-y divide-slate-100">
+        {companies.map(({ comp, items }, companyIdx) => {
+          const accentColor = getCompanyColor(comp.name, companyIdx);
 
           return (
-            <div key={i} className="flex items-start gap-3 text-[14.5px] leading-relaxed text-slate-700">
-              <span
-                className="mt-2 h-2.5 w-2.5 shrink-0 rounded-full"
-                style={{ backgroundColor: accentColor }}
-              />
-              <div className="flex-1 min-w-0">
-                <p className="font-semibold text-slate-800">{mainTitle}</p>
-                {subLines.length > 0 && (
-                  <div className="mt-1.5 space-y-1 ps-2 text-[13.5px] text-slate-600">
-                    {subLines.map((sub, sIdx) => (
-                      <p key={sIdx} className="leading-normal">{sub}</p>
-                    ))}
+            <div
+              key={comp.id}
+              className={companyIdx === 0 ? (isCompact ? "pb-5" : "pb-6") : isCompact ? "py-5" : "py-6"}
+            >
+              {/* Company Header Row */}
+              <div className="mb-4 flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3.5">
+                  <div
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-[13px] font-black text-white shadow-xs"
+                    style={{ backgroundColor: accentColor }}
+                  >
+                    {toFa(String(companyIdx + 1).padStart(2, "0"))}
                   </div>
-                )}
+                  <CompanyMark name={comp.name} size={isCompact ? 30 : 36} />
+                  <h3
+                    className={`font-bold leading-tight text-[#252850] ${
+                      isCompact ? "text-[18px]" : "text-[21px]"
+                    }`}
+                  >
+                    {comp.name}
+                  </h3>
+                </div>
+              </div>
+
+              {/* Items List */}
+              <div className="space-y-4 ps-11">
+                {items.map((item, itemIdx) => {
+                  const lines = item.split("\n").map((l) => l.trim()).filter(Boolean);
+                  const mainTitle = lines[0] ?? "";
+                  const subLines = lines.slice(1);
+
+                  const gridCols =
+                    subLines.length === 1
+                      ? "grid-cols-1"
+                      : subLines.length === 2
+                      ? "grid-cols-1 md:grid-cols-2"
+                      : "grid-cols-1 md:grid-cols-2 lg:grid-cols-3";
+
+                  return (
+                    <div key={itemIdx} className="space-y-2.5">
+                      <div className="flex items-start gap-2.5 text-slate-800">
+                        <span
+                          className="mt-2 h-2.5 w-2.5 shrink-0 rounded-full"
+                          style={{ backgroundColor: accentColor }}
+                        />
+                        <span
+                          className={`leading-snug text-slate-800 ${
+                            subLines.length > 0 ? "font-bold" : "font-semibold"
+                          } ${isCompact ? "text-[15px]" : "text-[16px]"}`}
+                        >
+                          {mainTitle}
+                        </span>
+                      </div>
+
+                      {subLines.length > 0 && (
+                        <div className={`grid gap-2.5 ps-5 ${gridCols}`}>
+                          {subLines.map((sub, sIdx) => (
+                            <div
+                              key={sIdx}
+                              className="flex items-start gap-2.5 rounded-xl border border-slate-200/70 bg-slate-50/80 px-4 py-2.5 text-slate-700 shadow-2xs"
+                            >
+                              <span
+                                className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full"
+                                style={{ backgroundColor: accentColor }}
+                              />
+                              <span
+                                className={`font-medium leading-relaxed ${
+                                  isCompact ? "text-[13.5px]" : "text-[14.5px]"
+                                }`}
+                              >
+                                {sub}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           );
@@ -1349,38 +1397,21 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
       })
       .filter(({ items }) => items.length > 0);
 
-    const narrativePages = chunks(narrativeCompanies, NARRATIVE_COMPANIES_PER_SLIDE);
-    narrativePages.forEach((pageCompanies, pageIndex) => {
+    if (narrativeCompanies.length > 0) {
       result.push({
-        key: `narratives-${pageIndex}`,
+        key: "narratives",
         render: (page) => (
           <Slide
             title="گزارش عملکرد پروژه‌های عمرانی"
-            subtitle={
-              narrativePages.length > 1
-                ? `مرور وضعیت و اقدامات شرکت‌ها · بخش ${toFa(pageIndex + 1)} از ${toFa(narrativePages.length)}`
-                : "مرور وضعیت و اقدامات شرکت‌ها"
-            }
+            subtitle="مرور وضعیت و اقدامات شرکت‌ها"
             page={page}
             period={period}
           >
-            <div className="grid min-h-0 flex-1 grid-cols-2 gap-6">
-              {pageCompanies.map(({ comp, items }, idx) => {
-                const globalIdx = pageIndex * NARRATIVE_COMPANIES_PER_SLIDE + idx;
-                return (
-                  <CompanyNarrativeCard
-                    key={comp.id}
-                    company={comp}
-                    index={globalIdx}
-                    items={items}
-                  />
-                );
-              })}
-            </div>
+            <NarrativeSlideView companies={narrativeCompanies} />
           </Slide>
         ),
       });
-    });
+    }
 
     result.push({
       key: "closing",
