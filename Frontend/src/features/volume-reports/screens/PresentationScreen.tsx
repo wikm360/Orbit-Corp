@@ -1246,6 +1246,30 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
       });
     });
 
+    const narrativeCompanies = companies
+      .map((comp) => {
+        const narrative = report.narratives?.[comp.id] || report.narratives?.[comp.name];
+        const items = getCompanyNarrativeItems(narrative);
+        return { comp, items };
+      })
+      .filter(({ items }) => items.length > 0);
+
+    if (narrativeCompanies.length > 0) {
+      result.push({
+        key: "narratives",
+        render: (page) => (
+          <Slide
+            title="گزارش عملکرد پروژه‌های عمرانی"
+            subtitle="مرور وضعیت و اقدامات شرکت‌ها"
+            page={page}
+            period={period}
+          >
+            <NarrativeSlideView companies={narrativeCompanies} />
+          </Slide>
+        ),
+      });
+    }
+
     // One page per company right after the scorecard: its EVM reading (SPI / CPI / PV / EV / AC).
     const evmByCompany = new Map((evm?.actual.companies ?? []).map((c) => [c.company_id, c]));
     const profileCompanies = [
@@ -1388,30 +1412,6 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
         ),
       });
     });
-
-    const narrativeCompanies = companies
-      .map((comp) => {
-        const narrative = report.narratives?.[comp.id] || report.narratives?.[comp.name];
-        const items = getCompanyNarrativeItems(narrative);
-        return { comp, items };
-      })
-      .filter(({ items }) => items.length > 0);
-
-    if (narrativeCompanies.length > 0) {
-      result.push({
-        key: "narratives",
-        render: (page) => (
-          <Slide
-            title="گزارش عملکرد پروژه‌های عمرانی"
-            subtitle="مرور وضعیت و اقدامات شرکت‌ها"
-            page={page}
-            period={period}
-          >
-            <NarrativeSlideView companies={narrativeCompanies} />
-          </Slide>
-        ),
-      });
-    }
 
     result.push({
       key: "closing",
