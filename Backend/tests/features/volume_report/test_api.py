@@ -760,13 +760,13 @@ async def test_real_zarand_week_takes_its_pv_from_the_pvf_sheet_of_the_company_w
     assert project["spi"] == "0.71"
 
 
-async def test_manual_pv_mode_uses_the_typed_values_and_blank_means_the_files_own_pv(client, tmp_path):
+async def test_manual_pv_mode_uses_the_typed_values_and_blank_keeps_the_automatic_pv(client, tmp_path):
     _, leader, leader_id, project_id, _ = await _world(client, "pv-manual")
     company = await _company(client, leader)
     actual = await _evm_document(tmp_path, project_id, leader_id, [
         [1, "احداث باند دوم محور زرند - سیریز", 1_000 * B, 90e9, 90e9, 80e9, 60e9, 50e9, 1.2, 0.89],
         [2, "پروژه دوم", 500 * B, 40e9, 40e9, 20e9, 15e9, 30e9, 0.5, 0.5]])
-    plan = await _pv_plan_document(tmp_path, project_id, leader_id, [("احداث باند دوم محور زرند-بافق", 300e9)])
+    plan = await _pv_plan_document(tmp_path, project_id, leader_id, [("احداث باند دوم محور زرند-بافق", 300e9), ("پروژه دوم", 600e9)])
     rid = await _evm_report(client, leader, project_id, [{"document_id": actual, "company_id": company},
                                                         {"document_id": plan, "company_id": company, "kind": "monthly_pv"}], "2026-11-02", "2026-11-08")
     data = await _evm(client, leader, rid)
@@ -774,7 +774,7 @@ async def test_manual_pv_mode_uses_the_typed_values_and_blank_means_the_files_ow
     _, first = _project(data, "محورگستر", "احداث باند دوم محور زرند - سیریز")
     assert Decimal(first["pv"]) == 70 * B and first["pv_source"] == "monthly_pv"
 
-    # manual mode: the typed value wins, the automatic one stays as the suggestion, a blank project keeps the file's PV
+    # manual mode: the typed value wins for its project; a blank project keeps the AUTOMATIC PV (here the plan's 600 x 7/30), not the file's
     body = {"mode": "manual", "values": [{"company_id": company, "project": "احداث باند دوم محور زرند - سیریز", "pv": "100000000000"}]}
     done = await client.put(f"{API}/{rid}/evm/pv", json=body, headers=leader)
     assert done.status_code == 200, done.text
@@ -782,8 +782,8 @@ async def test_manual_pv_mode_uses_the_typed_values_and_blank_means_the_files_ow
     assert done.json()["pv_mode"] == "manual" and Decimal(first["pv"]) == 100 * B and first["pv_source"] == "manual" and first["spi"] == "0.80"
     assert Decimal(first["pv_auto"]) == 70 * B and Decimal(first["pv_manual"]) == 100 * B
     _, second = _project(done.json(), "محورگستر", "پروژه دوم")
-    assert Decimal(second["pv"]) == 40 * B and second["pv_source"] == "file"
-    assert c["total"]["spi"] == "0.71"  # (80 + 20) / (100 + 40)
+    assert Decimal(second["pv"]) == 140 * B and second["pv_source"] == "monthly_pv"
+    assert c["total"]["spi"] == "0.42"  # (80 + 20) / (100 + 140)
 
     # back to auto: the typed values are kept for later but ignored
     back = (await client.put(f"{API}/{rid}/evm/pv", json={"mode": "auto", "values": body["values"]}, headers=leader)).json()
@@ -837,6 +837,8 @@ def _week_company(name: str) -> str:
         return "گلومک"
     if "فراگیر" in name:
         return "فراگیر"
+    if "آبادگران" in name:
+        return "آبادگران"
     return "محورگستر"
 
 
@@ -873,7 +875,7 @@ async def test_real_week_evm_pv_sources_and_no_helper_rows(client, tmp_path):
     leader, rid = await _real_week_report(client, tmp_path)
     data = await _evm(client, leader, rid)
     companies = {c["company"]: c for c in data["actual"]["companies"]}
-    assert set(companies) == {"سیستان", "محورگستر", "گلومک", "فراگیر"}
+    assert set(companies) == {"سیستان", "محورگستر", "گلومک", "فراگیر", "آبادگران"}
     sistan, mahvar = companies["سیستان"], companies["محورگستر"]
     assert sistan["total"]["cpi"] == "1.33" and sistan["total"]["spi"] == "0.73" and sistan["total"]["projects"] == 2
     # no "کل درآمد" / "هزینه" / activity rows of the summary tables under the Sirjan EVM table, and none of the 4 rows the operator hid in
@@ -898,6 +900,13 @@ async def test_real_week_evm_pv_sources_and_no_helper_rows(client, tmp_path):
     assert (_by_name(golomak, "آخران")["pv_source"], _by_name(golomak, "آخران")["spi"]) == ("forecast_income", "0.06")
     assert (_by_name(golomak, "دولومیت")["pv"], _by_name(golomak, "دولومیت")["spi"]) == ("2404870189.00", "0.97")
     assert _by_name(golomak, "تکمیل")["spi"] is None  # no EV this week: nothing to divide
+    # Abadgaran: a weekly EVM in MILLION rial (scaled), PV in the file (no forecast was sent), 1 row hidden by the operator, "جمع" ignored
+    abadgaran = companies["آبادگران"]
+    assert len(abadgaran["projects"]) == 10 and all(p["pv_source"] == "file" for p in abadgaran["projects"])
+    assert not any("کوهبنان" in p["project"] and "قطعه 3" in p["project"] for p in abadgaran["projects"])
+    # SPI 0.82, not the file's own 0.73: its "جمع" still counts the PV (25 billion) of the row the operator hid
+    assert (abadgaran["total"]["ev"], abadgaran["total"]["cpi"], abadgaran["total"]["spi"]) == ("169854370000.00", "0.93", "0.82")
+    assert _by_name(abadgaran, "معدن سه")["ev"] == "39422560000.00"  # 39 422.562 million rial, read to 0.01 million before it is scaled
     faragir = companies["فراگیر"]
     assert (_by_name(faragir, "ذوب")["pv_source"], _by_name(faragir, "ذوب")["spi"]) == ("forecast_file", "1.00")
     assert "spi_extreme" in _by_name(faragir, "سنگ شکن")["notes"]  # 25 000 m3 done against 3 000 planned: flagged, not hidden

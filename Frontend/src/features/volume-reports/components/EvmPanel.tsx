@@ -213,7 +213,7 @@ export function EvmPanel({ reportId, refreshKey, editable }: { reportId: string;
                 className={cn("rounded-lg px-4 py-1.5 text-sm", mode === m.id ? "bg-white font-medium text-teal-800 shadow-sm" : "text-slate-600")}>{m.label}</button>
             ))}
           </div>
-          {manual && <span className="text-xs text-slate-500">PV هر پروژه را به میلیارد ریال بنویسید؛ عدد خاکستری پیشنهاد خودکار است و خانه‌ی خالی یعنی PV خودِ فایل پروژه.</span>}
+          {manual && <span className="text-xs text-slate-500">PV هر پروژه را به میلیارد ریال بنویسید؛ عدد خاکستری PV خودکار است و خانه‌ی خالی یعنی همان PV خودکار می‌ماند؛ فقط پروژه‌هایی که عدد می‌نویسید عوض می‌شوند.</span>}
           <Button size="sm" isLoading={saving} onClick={() => void save()} disabled={mode === data.pv_mode && !manual}>ذخیره</Button>
           <Button size="sm" variant="secondary" isLoading={rereading} onClick={() => void reread()}>بازخوانی از فایل‌ها</Button>
           {saveError && <span role="alert" className="text-xs text-red-600">{saveError}</span>}

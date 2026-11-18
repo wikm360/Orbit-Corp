@@ -1091,9 +1091,8 @@ async def get_evm(db: AsyncSession, report: Report) -> dict:
             continue
         auto_pv, auto_source, auto_match, auto_note = pv_for(row, f)
         manual = overrides.get((f.company_id, normalize_text(row.project_name or "")))
-        # manual mode: only the typed value counts (blank = the file's own PV); the automatic value stays as the suggestion
-        pv, source, match, note = (manual, "manual", None, None) if manual_mode and manual is not None else \
-            ((row.pv, "file", None, None) if manual_mode else (auto_pv, auto_source, auto_match, auto_note))
+        # manual mode: a typed value wins for its project; every other project keeps the automatic PV (forecast, plan, else the file's own)
+        pv, source, match, note = (manual, "manual", None, None) if manual_mode and manual is not None else (auto_pv, auto_source, auto_match, auto_note)
         item = SimpleNamespace(**{c.name: getattr(row, c.name) for c in row.__table__.columns})
         if source != "file":
             overridden.add(f.company_id)
