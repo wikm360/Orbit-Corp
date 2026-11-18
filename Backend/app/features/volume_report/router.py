@@ -13,7 +13,7 @@ from app.features.volume_report import activity, export, memory, questions, serv
 from app.features.volume_report.models import Company, Conversion, Item, ItemRule, Report, ReportStatus, Site
 from app.features.volume_report.schemas import (
     CompanyWrite, ConfirmRequest, ConversionWrite, FilesAdd, FilesUpdate, GenerateNarrativeRequest, ItemRuleWrite, ItemWrite,
-    LexiconWrite, NarrativesUpdate, PvUpdate, ReportCreate, ReportRead, SiteUpdate,
+    EvmExclusionUpdate, LexiconWrite, NarrativesUpdate, PvUpdate, ReportCreate, ReportRead, SiteUpdate,
 )
 from app.features.volume_report.extraction.normalize import normalize_text
 from app.features.volume_report.seed import bump_catalog_version, ensure_seeded
@@ -403,6 +403,12 @@ async def reparse_evm(report: Report = Depends(get_report_for_member), db: Async
 async def set_pv(payload: PvUpdate, report: Report = Depends(get_report_for_member), db: AsyncSession = Depends(get_db)):
     """Where the PV comes from (auto | manual) and the PV typed per project (rial). Returns the refreshed EVM."""
     return await service.set_pv(db, report, payload)
+
+
+@router.put("/{report_id}/evm/exclusions")
+async def set_evm_exclusions(payload: EvmExclusionUpdate, report: Report = Depends(get_report_for_member), db: AsyncSession = Depends(get_db)):
+    """Projects removed from this report's EVM (the whole list). Returns the refreshed EVM."""
+    return await service.set_evm_exclusions(db, report, payload)
 
 
 @router.get("/{report_id}/lines")

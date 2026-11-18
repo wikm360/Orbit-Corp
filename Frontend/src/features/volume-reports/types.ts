@@ -203,4 +203,6 @@ export interface EvmCompany {
 export interface EvmBasis { companies: EvmCompany[]; holding: EvmTotal | null }
 export type PvMode = "auto" | "manual";
 export interface PvEntry { company_id: string; project: string; pv: string | null }
-export interface EvmResponse { report_id: string; pv_mode: PvMode; pv_manual_unmatched?: PvEntry[]; actual: EvmBasis }
+/** A project the user removed from this report's EVM (it is in no total; it can be put back). */
+export interface EvmExcluded { company_id: string; company: string; project: string }
+export interface EvmResponse { report_id: string; pv_mode: PvMode; excluded?: EvmExcluded[]; pv_manual_unmatched?: PvEntry[]; actual: EvmBasis }

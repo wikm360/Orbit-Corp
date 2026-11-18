@@ -48,6 +48,16 @@ class PvUpdate(BaseModel):
     values: list[PvEntry] = Field(default_factory=list, max_length=500)
 
 
+class EvmExclusionEntry(BaseModel):
+    company_id: uuid.UUID
+    project: str = Field(min_length=1, max_length=1000)
+
+
+class EvmExclusionUpdate(BaseModel):
+    """The projects removed from this report's EVM (the whole list: what is not in it is shown again)."""
+    excluded: list[EvmExclusionEntry] = Field(default_factory=list, max_length=200)
+
+
 class FileSelection(BaseModel):
     document_id: uuid.UUID
     company_id: uuid.UUID

@@ -8,7 +8,7 @@ import { volumeReportApi } from "../api/volumeReportApi";
 import { runSoon } from "../lib/defer";
 import { billionInputToRial, formatBillionRial, formatRatio, rialToBillionInput } from "../lib/format";
 import { toFa } from "../lib/jalali";
-import type { EvmBasis, EvmCompany, EvmFigures, EvmProject, EvmResponse, PvMode } from "../types";
+import type { EvmBasis, EvmCompany, EvmExcluded, EvmFigures, EvmProject, EvmResponse, PvMode } from "../types";
 import { Button } from "@/shared/components/ui/Button";
 import { Card, EmptyState, ErrorBox, LoadingBlock, fieldClass } from "./common";
 
@@ -49,7 +49,7 @@ function Summary({ total, title }: { total: EvmFigures; title: string }) {
 
 const COLUMNS = ["پروژه", "PV", "EV", "ev", "AC", "SPI", "CPI"];
 
-function Row({ name, f, strong, note, pvCell, spi }: { name: string; f: EvmFigures; strong?: boolean; note?: string; pvCell?: React.ReactNode; spi?: string | null }) {
+function Row({ name, f, strong, note, pvCell, spi, action }: { name: string; f: EvmFigures; strong?: boolean; note?: string; pvCell?: React.ReactNode; spi?: string | null; action?: React.ReactNode }) {
   return (
     <tr className={cn("border-t border-slate-100", strong && "bg-slate-50 font-semibold")} title={note}>
       <td className="px-3 py-2 text-slate-800">{name}</td>
@@ -59,6 +59,7 @@ function Row({ name, f, strong, note, pvCell, spi }: { name: string; f: EvmFigur
       <td className="px-3 py-2 whitespace-nowrap">{formatBillionRial(f.ac)}</td>
       <td className="px-3 py-2"><Ratio value={spi === undefined ? f.spi : spi} /></td>
       <td className="px-3 py-2"><Ratio value={f.cpi} /></td>
+      {action !== undefined && <td className="px-3 py-2 text-end">{action}</td>}
     </tr>
   );
 }
@@ -73,7 +74,7 @@ function previewSpi(project: EvmProject, text: string | undefined): string | nul
   return (Number(project.ev) / Number(rial)).toFixed(2);
 }
 
-function CompanyCard({ company, manual, draft, setDraft }: { company: EvmCompany; manual: boolean; draft: Record<string, string>; setDraft: (key: string, text: string) => void }) {
+function CompanyCard({ company, manual, draft, setDraft, onExclude }: { company: EvmCompany; manual: boolean; draft: Record<string, string>; setDraft: (key: string, text: string) => void; onExclude?: (companyId: string, project: string) => void }) {
   const reported = company.reported_total;
   const differs = reported && (reported.spi !== company.total.spi || reported.cpi !== company.total.cpi);
   return (
@@ -81,7 +82,7 @@ function CompanyCard({ company, manual, draft, setDraft }: { company: EvmCompany
       <div className="overflow-x-auto rounded-xl border border-slate-100">
         <table className="w-full min-w-[620px] text-xs">
           <thead className="bg-slate-50 text-slate-600">
-            <tr>{COLUMNS.map((h) => <th key={h} className="px-3 py-2 text-start font-medium">{h}</th>)}</tr>
+            <tr>{COLUMNS.map((h) => <th key={h} className="px-3 py-2 text-start font-medium">{h}</th>)}{onExclude && <th className="px-3 py-2" />}</tr>
           </thead>
           <tbody>
             {company.projects.map((p, i) => {
@@ -92,6 +93,10 @@ function CompanyCard({ company, manual, draft, setDraft }: { company: EvmCompany
                 <Row
                   key={`${p.project}-${i}`} name={p.project ?? "—"} f={p} note={p.filename}
                   spi={manual ? previewSpi(p, text) : undefined}
+                  action={onExclude ? (p.project ? (
+                    <button type="button" onClick={() => onExclude(company.company_id, p.project as string)} title="این پروژه از شاخص‌ها و جمع‌ها و پرزنت حذف می‌شود (بعداً قابل بازگرداندن است)"
+                      className="rounded-lg px-2 py-0.5 text-[11px] text-rose-600 hover:bg-rose-50">حذف</button>
+                  ) : null) : undefined}
                   pvCell={manual ? (
                     <input
                       inputMode="decimal" dir="ltr" value={text ?? ""} placeholder={rialToBillionInput(p.pv_auto ?? p.pv) || "—"}
@@ -103,7 +108,7 @@ function CompanyCard({ company, manual, draft, setDraft }: { company: EvmCompany
                 />
               );
             })}
-            <Row name={`جمع ${company.company}`} f={company.total} strong note="جمع محاسبه‌شده از ردیف پروژه‌ها؛ SPI و CPI نسبت مجموع‌ها هستند" />
+            <Row name={`جمع ${company.company}`} f={company.total} strong note="جمع محاسبه‌شده از ردیف پروژه‌ها؛ SPI و CPI نسبت مجموع‌ها هستند" action={onExclude ? null : undefined} />
           </tbody>
         </table>
       </div>
@@ -139,12 +144,12 @@ const EVM_NOTE_TEXT: Record<string, string> = {
   spi_extreme: "SPI بیشتر از ۳ است؛ معمولاً یعنی PV درست وارد نشده است",
 };
 
-function BasisView({ data, manual, draft, setDraft }: { data: EvmBasis; manual: boolean; draft: Record<string, string>; setDraft: (key: string, text: string) => void }) {
+function BasisView({ data, manual, draft, setDraft, onExclude }: { data: EvmBasis; manual: boolean; draft: Record<string, string>; setDraft: (key: string, text: string) => void; onExclude?: (companyId: string, project: string) => void }) {
   if (data.companies.length === 0) return <EmptyState title="جدول EVM در فایل‌ها پیدا نشد" hint="صفحه/شیت «گزارش مدیریت ارزش کسب شده (EVM)» باید در فایل باشد؛ اگر هست، گزارش را دوباره اجرا کنید." />;
   return (
     <div className="space-y-4">
       {data.holding && <Card><Summary total={data.holding} title={`مجموع همه‌ی شرکت‌ها — ${toFa(data.holding.projects)} پروژه`} /></Card>}
-      {data.companies.map((c) => <CompanyCard key={c.company_id} company={c} manual={manual} draft={draft} setDraft={setDraft} />)}
+      {data.companies.map((c) => <CompanyCard key={c.company_id} company={c} manual={manual} draft={draft} setDraft={setDraft} onExclude={onExclude} />)}
       <p className="text-[11px] text-slate-400">ارقام به میلیارد ریال. EV: کارکرد · ev: کارکرد پس از کسر ضریب بالاسری · PV: کارکرد طبق برنامه · AC: هزینه‌ی واقعی · SPI = EV/PV · CPI = ev/AC. «—» یعنی در فایل داده‌ای برای محاسبه نبوده است.</p>
     </div>
   );
@@ -201,6 +206,13 @@ export function EvmPanel({ reportId, refreshKey, editable }: { reportId: string;
     try { adopt(await volumeReportApi.reparseEvm(reportId)); } catch (e) { setSaveError(e instanceof Error ? e.message : "بازخوانی ناموفق بود."); } finally { setRereading(false); }
   }
 
+  async function changeExcluded(next: { company_id: string; project: string }[]) {
+    setSaveError(null);
+    try { adopt(await volumeReportApi.setEvmExclusions(reportId, next)); } catch (e) { setSaveError(e instanceof Error ? e.message : "ذخیره ناموفق بود."); }
+  }
+  const excluded: EvmExcluded[] = data.excluded ?? [];
+  const keep = (list: EvmExcluded[]) => list.map((e) => ({ company_id: e.company_id, project: e.project }));
+
   const manual = mode === "manual";
   const orphans = data.pv_manual_unmatched ?? [];
   return (
@@ -224,7 +236,23 @@ export function EvmPanel({ reportId, refreshKey, editable }: { reportId: string;
           PVِ دستیِ این پروژه‌ها دیگر پروژه‌ی هم‌نامی در فایل‌ها ندارد و به‌کار نمی‌رود: {orphans.map((o) => o.project).join("، ")}
         </p>
       )}
-      <BasisView data={data.actual} manual={manual && editable} draft={draft} setDraft={(key, text) => setDraft((d) => ({ ...d, [key]: text }))} />
+      <BasisView data={data.actual} manual={manual && editable} draft={draft} setDraft={(key, text) => setDraft((d) => ({ ...d, [key]: text }))}
+        onExclude={editable ? (companyId, project) => void changeExcluded([...keep(excluded), { company_id: companyId, project }]) : undefined} />
+      {excluded.length > 0 && (
+        <div role="status" className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-xs text-slate-600">
+          <p className="mb-1 font-medium">پروژه‌های حذف‌شده از این گزارش (در هیچ شاخص و جمعی نیستند):</p>
+          <ul className="space-y-0.5">
+            {excluded.map((e) => (
+              <li key={`${e.company_id}-${e.project}`} className="flex items-center gap-2">
+                <span>{e.company} — {e.project}</span>
+                {editable && (
+                  <button type="button" onClick={() => void changeExcluded(keep(excluded.filter((x) => x !== e)))} className="rounded-lg px-2 py-0.5 text-[11px] text-teal-700 hover:bg-teal-50">بازگرداندن</button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }

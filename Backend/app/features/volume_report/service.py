@@ -24,7 +24,7 @@ from app.features.volume_report import compute, jalali, memory
 from app.features.volume_report.extraction.normalize import Lexicon, LexiconEntry as LexEntry, normalize_text
 from app.features.volume_report.extraction.period_range import find_period_range, resolve_period
 from app.features.volume_report.models import (
-    Classification, ClassificationSource, Company, Conversion, Decision, EvmRow, FileStatus, IncomeTotal, ItemRule, PvPlanRow, PvOverride, DecisionSource, Disposition, Effect,
+    Classification, ClassificationSource, Company, Conversion, Decision, EvmRow, FileStatus, EvmExclusion, IncomeTotal, ItemRule, PvPlanRow, PvOverride, DecisionSource, Disposition, Effect,
     Dimension, ExcludeReason, Item, Line, LexiconKind, LineResult, Question, QuestionStatus, Report, ReportFile, ReportStatus, Result,
     ResultScope, Role, Site, SiteKind, Snapshot, LexiconEntry,
 )
@@ -992,6 +992,11 @@ async def get_evm(db: AsyncSession, report: Report) -> dict:
         .order_by(ReportFile.created_at, PvPlanRow.row_no)
     )).all()
     override_rows = (await db.execute(select(PvOverride).where(PvOverride.report_id == report.id))).scalars().all()
+    excluded_rows = (await db.execute(
+        select(EvmExclusion, Company.name).join(Company, Company.id == EvmExclusion.company_id).where(EvmExclusion.report_id == report.id)
+        .order_by(Company.name, EvmExclusion.project_name)
+    )).all()
+    excluded = {(e.company_id, e.project_key) for e, _ in excluded_rows}
     all_income = (await db.execute(
         select(IncomeTotal, ReportFile).join(ReportFile, ReportFile.id == IncomeTotal.report_file_id).where(ReportFile.report_id == report.id)
     )).all()
@@ -1075,7 +1080,7 @@ async def get_evm(db: AsyncSession, report: Report) -> dict:
     # carries the most figures, so its cost is not counted twice.
     best: dict[tuple[uuid.UUID, str], EvmRow] = {}
     for row, f, _ in rows:
-        if row.basis == "actual" and not row.is_total and row.project_name:
+        if row.basis == "actual" and not row.is_total and row.project_name and (f.company_id, normalize_text(row.project_name)) not in excluded:
             key = (f.company_id, normalize_text(row.project_name))
             figures = lambda r: sum(v is not None for v in (r.pv, r.ev, r.ev_net, r.ac))  # noqa: E731
             if key not in best or figures(row) > figures(best[key]):
@@ -1083,6 +1088,8 @@ async def get_evm(db: AsyncSession, report: Report) -> dict:
     for row, f, company_name in rows:
         if row.basis != "actual":
             continue
+        if not row.is_total and row.project_name and (f.company_id, normalize_text(row.project_name)) in excluded:
+            continue  # removed from this report by the user
         if not row.is_total and row.project_name and best[(f.company_id, normalize_text(row.project_name))] is not row:
             continue
         company = companies.setdefault(f.company_id, {"company_id": f.company_id, "company": company_name, "projects": [], "_rows": [], "_reported": []})
@@ -1121,6 +1128,7 @@ async def get_evm(db: AsyncSession, report: Report) -> dict:
     known = {(c["company_id"], normalize_text(p["project"] or "")) for c in out for p in c["projects"]}
     unmatched = [{"company_id": cid, "project": o_name, "pv": _opt(pv)} for (cid, key), (o_name, pv) in overrides_named.items() if (cid, key) not in known]
     return {"report_id": report.id, "pv_mode": report.pv_mode, "pv_manual_unmatched": unmatched,
+            "excluded": [{"company_id": e.company_id, "company": company_name, "project": e.project_name} for e, company_name in excluded_rows],
             "actual": {"companies": out, "holding": _evm_total(all_rows) if all_rows else None}}
 
 
@@ -1139,6 +1147,27 @@ async def set_pv(db: AsyncSession, report: Report, payload) -> dict:
             raise BadRequestError("Project name is empty")
         db.add(PvOverride(report_id=report.id, company_id=entry.company_id, project_key=key, project_name=entry.project.strip(), pv=entry.pv))
     report.pv_mode = payload.mode
+    await db.commit()
+    return await get_evm(db, report)
+
+
+async def set_evm_exclusions(db: AsyncSession, report: Report, payload) -> dict:
+    """Replaces the list of projects removed from this report's EVM. Nothing is deleted from the files or the stored rows: a removed
+    project can be put back, and it stays removed through a new run (it is matched by its normalized name)."""
+    _require_editable(report)
+    known = {c.id for c in (await db.execute(select(Company))).scalars()}
+    await db.execute(delete(EvmExclusion).where(EvmExclusion.report_id == report.id))
+    seen: set[tuple[uuid.UUID, str]] = set()
+    for entry in payload.excluded:
+        if entry.company_id not in known:
+            raise NotFoundError("Company not found")
+        key = normalize_text(entry.project)
+        if not key:
+            raise BadRequestError("Project name is empty")
+        if (entry.company_id, key) in seen:
+            continue
+        seen.add((entry.company_id, key))
+        db.add(EvmExclusion(report_id=report.id, company_id=entry.company_id, project_key=key, project_name=entry.project.strip()))
     await db.commit()
     return await get_evm(db, report)
 
@@ -1277,9 +1306,11 @@ async def reopen(db: AsyncSession, context: UserContext, report: Report) -> Repo
     await db.flush()
     for o in (await db.execute(select(PvOverride).where(PvOverride.report_id == report.id))).scalars():
         db.add(PvOverride(report_id=fresh.id, company_id=o.company_id, project_key=o.project_key, project_name=o.project_name, pv=o.pv))
+    for e in (await db.execute(select(EvmExclusion).where(EvmExclusion.report_id == report.id))).scalars():
+        db.add(EvmExclusion(report_id=fresh.id, company_id=e.company_id, project_key=e.project_key, project_name=e.project_name))
     for f in (await db.execute(select(ReportFile).where(ReportFile.report_id == report.id))).scalars():
         db.add(ReportFile(report_id=fresh.id, document_id=f.document_id, filename=f.filename, content_hash=f.content_hash, company_id=f.company_id,
-                          kind=f.kind, plan_start=f.plan_start, plan_end=f.plan_end))
+                          kind=f.kind, forecast_for=f.forecast_for, plan_start=f.plan_start, plan_end=f.plan_end))
     # Human decisions carry over so the new draft starts where the old one ended.
     for c in (await db.execute(select(Classification).where(Classification.report_id == report.id, Classification.source == ClassificationSource.HUMAN))).scalars():
         db.add(Classification(

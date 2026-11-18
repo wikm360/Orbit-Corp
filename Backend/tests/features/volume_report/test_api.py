@@ -496,7 +496,7 @@ async def test_evm_is_read_per_project_company_and_holding_without_any_forecast_
     rid = await _evm_report(client, leader, project_id, [{"document_id": docs[0], "company_id": alef}, {"document_id": docs[1], "company_id": be}],
                             "2026-11-02", "2026-11-08")
     data = await _evm(client, leader, rid)
-    assert set(data) == {"report_id", "pv_mode", "pv_manual_unmatched", "actual"}  # no forecast EVM is reported
+    assert set(data) == {"report_id", "pv_mode", "pv_manual_unmatched", "excluded", "actual"}  # no forecast EVM is reported
     a, first = _project(data, "شرکت الف", "پروژه الف")
     assert Decimal(first["pv"]) == 100 * B and first["pv_source"] == "file" and first["cpi"] == "1.20" and first["spi"] == "0.80"
     assert Decimal(a["total"]["ev"]) == 100 * B and a["total"]["cpi"] == "0.94" and a["total"]["spi"] == "0.67"  # ratios of sums
@@ -795,6 +795,32 @@ async def test_manual_pv_mode_uses_the_typed_values_and_blank_keeps_the_automati
     assert (await client.put(f"{API}/{rid}/evm/pv", json=body, headers=outsider)).status_code == 403
 
 
+async def test_a_project_can_be_removed_from_the_evm_and_put_back(client, tmp_path):
+    _, leader, leader_id, project_id, _ = await _world(client, "evm-excl")
+    company = await _company(client, leader)
+    doc = await _evm_document(tmp_path, project_id, leader_id, [
+        [1, "پروژه الف", 1_000 * B, 100e9, 100e9, 80e9, 60e9, 50e9, 1.2, 0.8],
+        [2, "پروژه فقط برنامه", 500 * B, 50e9, 50e9, None, None, None, None, None]])
+    rid = await _evm_report(client, leader, project_id, [{"document_id": doc, "company_id": company}], "2026-11-02", "2026-11-08")
+    before = await _evm(client, leader, rid)
+    c = before["actual"]["companies"][0]
+    assert len(c["projects"]) == 2 and Decimal(c["total"]["pv"]) == 150 * B and before["excluded"] == []
+    done = await client.put(f"{API}/{rid}/evm/exclusions", json={"excluded": [{"company_id": company, "project": "پروژه فقط برنامه"}]}, headers=leader)
+    assert done.status_code == 200, done.text
+    after = done.json()
+    c = after["actual"]["companies"][0]
+    assert [p["project"] for p in c["projects"]] == ["پروژه الف"] and Decimal(c["total"]["pv"]) == 100 * B
+    assert Decimal(after["actual"]["holding"]["pv"]) == 100 * B and after["actual"]["holding"]["projects"] == 1
+    assert after["excluded"] == [{"company_id": company, "company": "محورگستر", "project": "پروژه فقط برنامه"}]
+    # it stays removed through a re-read of the files, and comes back when the list is emptied
+    assert len((await client.post(f"{API}/{rid}/evm/reparse", headers=leader)).json()["actual"]["companies"][0]["projects"]) == 1
+    back = (await client.put(f"{API}/{rid}/evm/exclusions", json={"excluded": []}, headers=leader)).json()
+    assert len(back["actual"]["companies"][0]["projects"]) == 2 and back["excluded"] == []
+    outsider, _ = await _register(client, "excl-outsider@example.com")
+    assert (await client.put(f"{API}/{rid}/evm/exclusions", json={"excluded": []}, headers=outsider)).status_code == 403
+    assert (await client.put(f"{API}/{rid}/evm/exclusions", json={"excluded": [{"company_id": str(uuid.uuid4()), "project": "x"}]}, headers=leader)).status_code == 404
+
+
 async def test_reparse_evm_rereads_the_files_and_keeps_the_typed_pv(client, tmp_path):
     from sqlalchemy import delete
     from app.features.volume_report.models import EvmRow
@@ -900,12 +926,12 @@ async def test_real_week_evm_pv_sources_and_no_helper_rows(client, tmp_path):
     assert (_by_name(golomak, "آخران")["pv_source"], _by_name(golomak, "آخران")["spi"]) == ("forecast_income", "0.06")
     assert (_by_name(golomak, "دولومیت")["pv"], _by_name(golomak, "دولومیت")["spi"]) == ("2404870189.00", "0.97")
     assert _by_name(golomak, "تکمیل")["spi"] is None  # no EV this week: nothing to divide
-    # Abadgaran: a weekly EVM in MILLION rial (scaled), PV in the file (no forecast was sent), 1 row hidden by the operator, "جمع" ignored
+    # Abadgaran: a weekly EVM in MILLION rial (scaled), PV in the file (no forecast was sent), rows hidden by the operator (Zarand-Kuhbanan
+    # قطعه 3 and the La-Tala gold mine) are not read, and the file's own "جمع" (which still counts them) is ignored
     abadgaran = companies["آبادگران"]
-    assert len(abadgaran["projects"]) == 10 and all(p["pv_source"] == "file" for p in abadgaran["projects"])
-    assert not any("کوهبنان" in p["project"] and "قطعه 3" in p["project"] for p in abadgaran["projects"])
-    # SPI 0.82, not the file's own 0.73: its "جمع" still counts the PV (25 billion) of the row the operator hid
-    assert (abadgaran["total"]["ev"], abadgaran["total"]["cpi"], abadgaran["total"]["spi"]) == ("169854370000.00", "0.93", "0.82")
+    assert len(abadgaran["projects"]) == 9 and all(p["pv_source"] == "file" for p in abadgaran["projects"])
+    assert not any("لاطلا" in p["project"] or ("کوهبنان" in p["project"] and "قطعه 3" in p["project"]) for p in abadgaran["projects"])
+    assert (abadgaran["total"]["ev"], abadgaran["total"]["cpi"], abadgaran["total"]["spi"]) == ("155994370000.00", "0.94", "0.83")
     assert _by_name(abadgaran, "معدن سه")["ev"] == "39422560000.00"  # 39 422.562 million rial, read to 0.01 million before it is scaled
     faragir = companies["فراگیر"]
     assert (_by_name(faragir, "ذوب")["pv_source"], _by_name(faragir, "ذوب")["spi"]) == ("forecast_file", "1.00")

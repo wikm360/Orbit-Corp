@@ -321,6 +321,21 @@ class PvOverride(Base):
     created_at: Mapped[datetime] = _now()
 
 
+class EvmExclusion(Base):
+    """A project the user removed from the report's EVM (it has nothing to say: a plan-only row, a duplicate, a sibling project).
+    Matched by normalized name so it survives a new run / re-read of the files; hidden from every total and from the presentation."""
+
+    __tablename__ = "vr_evm_exclusions"
+    __table_args__ = (UniqueConstraint("report_id", "company_id", "project_key", name="uq_vr_evm_exclusions_project"),)
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    report_id: Mapped[uuid.UUID] = _fk("vr_reports", "CASCADE", index=True)
+    company_id: Mapped[uuid.UUID] = _fk("vr_companies", "CASCADE")
+    project_key: Mapped[str] = mapped_column(Text, nullable=False)
+    project_name: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = _now()
+
+
 class PvPlanRow(Base):
     """One project of a monthly PV plan file: the month's planned work value (rial). The period's PV is its share by days."""
 
