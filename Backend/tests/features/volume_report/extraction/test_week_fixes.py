@@ -160,3 +160,34 @@ def test_site_name_of_a_forecast_loses_its_date_suffix():
     path = str(WEEK / "پیش بینی چنگوله 18-24 آبان.xls")
     sheets = extract_file(path, Lexicon.from_seed(), None).sheets
     assert sheets and not any("تاریخ" in s.site_name_norm for s in sheets)
+
+
+# ---- rows the operator hid are not part of the report -----------------------------------------------------------------------------
+
+def _book_with_hidden_row(tmp_path, suffix=".xlsx"):
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "EVM"
+    for row in HEADER + [
+        [1, "پروژه دیده‌شده", 5 * B, 36, None, None, 100 * B, 77 * B, 51 * B, 1.5, None],
+        [2, "پروژه مخفی", 6 * B, 36, None, None, 0, 0, 169 * B, 0.0, None],
+    ]:
+        ws.append(row)
+    ws.row_dimensions[5].hidden = True  # "پروژه مخفی"
+    path = tmp_path / f"book{suffix}"
+    wb.save(path)
+    return str(path)
+
+
+def test_hidden_rows_of_an_xlsx_are_not_read(tmp_path):
+    evm = extract_file(_book_with_hidden_row(tmp_path), Lexicon.from_seed(), None, evm_only=True).evm_sheets[0]
+    assert [r.project_name for r in evm.rows] == ["پروژه دیده‌شده"]  # its 169 billion of cost never reaches the company total
+
+
+@pytest.mark.skipif(not (WEEK / "چنگوله 18-24 آبان.xls").exists(), reason="samples not present")
+def test_hidden_rows_of_an_xls_are_not_read():
+    result = extract_file(str(WEEK / "چنگوله 18-24 آبان.xls"), Lexicon.from_seed(), None, evm_only=True)
+    names = [r.project_name for r in result.evm_sheets[0].rows]
+    assert len(names) == 1 and "CG-2" in names[0]  # the sheet lists 5 projects, 4 rows are hidden

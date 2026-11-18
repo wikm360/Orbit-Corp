@@ -876,7 +876,10 @@ async def test_real_week_evm_pv_sources_and_no_helper_rows(client, tmp_path):
     assert set(companies) == {"سیستان", "محورگستر", "گلومک", "فراگیر"}
     sistan, mahvar = companies["سیستان"], companies["محورگستر"]
     assert sistan["total"]["cpi"] == "1.33" and sistan["total"]["spi"] == "0.73" and sistan["total"]["projects"] == 2
-    assert len(mahvar["projects"]) == 10  # no "کل درآمد" / "هزینه" / activity rows of the summary tables under the Sirjan EVM table
+    # no "کل درآمد" / "هزینه" / activity rows of the summary tables under the Sirjan EVM table, and none of the 4 rows the operator hid in
+    # the Chengoole workbook's shared EVM sheet (tunnel, gold mine, Golgohar tailings, oil-field buildings: ~253 billion of cost)
+    assert len(mahvar["projects"]) == 6  # قطروئیه, زرند, چنگوله, سهراب, راور, معابر
+    assert not any(word in p["project"] for p in mahvar["projects"] for word in ("تونل", "قلقه", "باطله", "کردستان"))
     # PV = EV of the forecast of THIS week; a forecast without an EVM page gives its "جمع کل درآمد" (EV level, not ev)
     sahrab, ravar, zarand = _by_name(mahvar, "پد شماره 4"), _by_name(mahvar, "راور"), _by_name(mahvar, "زرند")
     assert (sahrab["pv_source"], sahrab["pv"], sahrab["spi"]) == ("forecast_file", "74547200000.00", "1.35")
@@ -898,8 +901,6 @@ async def test_real_week_evm_pv_sources_and_no_helper_rows(client, tmp_path):
     faragir = companies["فراگیر"]
     assert (_by_name(faragir, "ذوب")["pv_source"], _by_name(faragir, "ذوب")["spi"]) == ("forecast_file", "1.00")
     assert "spi_extreme" in _by_name(faragir, "سنگ شکن")["notes"]  # 25 000 m3 done against 3 000 planned: flagged, not hidden
-    # the same project listed in two files is counted once
-    assert sum("ابنیه میادین" in p["project"] for p in mahvar["projects"]) == 1
 
 
 @pytest.mark.skipif(not _WEEK.exists(), reason="samples not present")

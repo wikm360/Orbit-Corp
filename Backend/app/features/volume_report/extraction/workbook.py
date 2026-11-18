@@ -45,18 +45,59 @@ def _clean(value: Any) -> Any:
     return None if value == "" else value
 
 
+def _xlsx_hidden_rows(path: str) -> dict[str, set[int]]:
+    """sheet title -> 1-based numbers of the rows the operator hid (or an autofilter hid), among the first MAX_ROWS. openpyxl's read-only
+    mode does not expose row visibility, so the sheet XML is scanned."""
+    import posixpath
+    import re
+    import zipfile
+    from xml.etree import ElementTree as ET
+
+    out: dict[str, set[int]] = {}
+    ns_main = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+    ns_rel = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+    try:
+        with zipfile.ZipFile(path) as zf:
+            rels = {r.get("Id"): r.get("Target") for r in ET.fromstring(zf.read("xl/_rels/workbook.xml.rels"))}
+            for sheet in ET.fromstring(zf.read("xl/workbook.xml")).iter(f"{ns_main}sheet"):
+                target = rels.get(sheet.get(f"{ns_rel}id"))
+                if not target:
+                    continue
+                member = target.lstrip("/") if target.startswith("/") else posixpath.normpath(posixpath.join("xl", target))
+                hidden: set[int] = set()
+                with zf.open(member) as stream:
+                    for _, element in ET.iterparse(stream, events=("end",)):
+                        if element.tag != f"{ns_main}row":
+                            continue
+                        number = int(element.get("r") or 0)
+                        if number > MAX_ROWS:
+                            break
+                        if element.get("hidden") in ("1", "true"):
+                            hidden.add(number)
+                        element.clear()
+                out[sheet.get("name")] = hidden
+    except Exception:  # a layout we cannot scan: read every row, as before
+        logger.warning("Could not read the hidden rows of %s", Path(path).name)
+        return {}
+    return out
+
+
 def _open_xlsx(path: str, stack: ExitStack) -> WorkbookData:
     from openpyxl import load_workbook
 
     workbook = load_workbook(path, data_only=True, read_only=True)
     stack.callback(workbook.close)
+    hidden_rows = _xlsx_hidden_rows(path)
     sheets = []
     for worksheet in workbook.worksheets:
         def loader(ws=worksheet) -> Rows:
-            return [
+            hidden = hidden_rows.get(ws.title, set())
+            rows = [
                 [_clean(cell) for cell in row]
                 for row in ws.iter_rows(min_row=1, max_row=MAX_ROWS, max_col=MAX_COLS, values_only=True)
             ]
+            # A row the operator hid is not part of the report: blank it (keeping the row numbers the questions point at).
+            return [[None] * len(row) if number in hidden else row for number, row in enumerate(rows, start=1)]
 
         sheets.append(SheetData(worksheet.title, worksheet.sheet_state or "visible", loader))
     return WorkbookData(sheets)
@@ -68,7 +109,10 @@ _XLRD_VISIBILITY = {0: "visible", 1: "hidden", 2: "veryHidden"}
 def _open_xls(path: str, stack: ExitStack) -> WorkbookData:
     import xlrd
 
-    book = xlrd.open_workbook(path, on_demand=True)
+    try:
+        book = xlrd.open_workbook(path, on_demand=True, formatting_info=True)  # row visibility needs the formatting records
+    except Exception:  # some files (odd BIFF records) refuse formatting_info: read them without it
+        book = xlrd.open_workbook(path, on_demand=True)
     stack.callback(book.release_resources)
     sheets = []
     for index in range(book.nsheets):
@@ -77,7 +121,11 @@ def _open_xls(path: str, stack: ExitStack) -> WorkbookData:
         def loader(idx=index) -> Rows:
             ws = book.sheet_by_index(idx)
             rows: Rows = []
+            row_info = getattr(ws, "rowinfo_map", {})
             for r in range(min(ws.nrows, MAX_ROWS)):
+                if getattr(row_info.get(r), "hidden", 0):
+                    rows.append([None] * min(ws.ncols, MAX_COLS))  # hidden by the operator: not part of the report (row numbers kept)
+                    continue
                 row = ws.row(r)[:MAX_COLS]
                 # xlrd error cells (#N/A, #DIV/0!) carry an int code, not data
                 rows.append([None if cell.ctype in (xlrd.XL_CELL_EMPTY, xlrd.XL_CELL_BLANK, xlrd.XL_CELL_ERROR)
