@@ -42,7 +42,10 @@ async def _progress(db: AsyncSession, report: Report, step: str, done: int, tota
 async def _site_for(db: AsyncSession, company_id: uuid.UUID, name: str, name_norm: str, kind_guess: str) -> Site:
     sites = (await db.execute(select(Site).where(Site.company_id == company_id))).scalars().all()
     key = site_key(name_norm)
-    site = next((s for s in sites if s.name_norm == name_norm), None) or next((s for s in sites if site_key(s.name_norm) == key), None)
+    # By key, oldest first: two spellings of one project that an earlier run turned into two sites (actual "4 3و8" / forecast "4 3 و 8")
+    # both land on the same one now; the other stays unused.
+    same = sorted((s for s in sites if site_key(s.name_norm) == key), key=lambda s: (not s.kind_confirmed, s.created_at))
+    site = same[0] if same else None
     if site is None:
         site = Site(company_id=company_id, name=name, name_norm=name_norm, kind=SiteKind(kind_guess), kind_confirmed=False)
         db.add(site)
