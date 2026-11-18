@@ -435,17 +435,19 @@ async def recompute(db: AsyncSession, report: Report) -> list[dict]:
     factors = {fid: plan_factor(report, f) for fid, f in files.items()}
     # A site with a forecast of its own (a normal file) never takes the monthly one; otherwise a monthly forecast counts for the
     # days of the next period inside its month (a superseded line stays, with quantity 0, so every line keeps a result).
-    # A forecast OF THIS period (written last week) is the PV source, not "next week's plan": its lines stay (so every line keeps a
-    # result) with quantity 0 and never count as a site's own plan.
+    # The "برنامه" shown beside the actual volumes is the forecast OF THIS period (written last week; it is also the PV source). A
+    # site that has one takes no other forecast into its plan (a next-period forecast in the same report stays, with quantity 0,
+    # for the next report); a site without one keeps the next-period forecast as before.
     actual_files = {l.report_file_id for l, _ in pairs if l.basis == "actual"}
     this_period_files = {fid for fid, f in files.items() if is_this_period_forecast(report, f, fid in actual_files)}
-    own_plan_sites = {s.id for l, s in pairs if l.basis == "planned" and files[l.report_file_id].kind == "period" and l.report_file_id not in this_period_files}
+    sites_with_this = {s.id for l, s in pairs if l.basis == "planned" and l.report_file_id in this_period_files}
+    own_plan_sites = {s.id for l, s in pairs if l.basis == "planned" and files[l.report_file_id].kind == "period"}
 
     def effective_quantity(l: Line, s: Site) -> Decimal:
-        if l.basis == "planned" and l.report_file_id in this_period_files:
-            return Decimal(0)
         if l.basis == "planned" and files[l.report_file_id].kind == "monthly_plan":
             return Decimal(0) if s.id in own_plan_sites else l.quantity * factors[l.report_file_id]
+        if l.basis == "planned" and l.report_file_id not in this_period_files and s.id in sites_with_this:
+            return Decimal(0)
         return l.quantity
 
     lines_in = [
@@ -743,10 +745,16 @@ async def plan_vs_actual(db: AsyncSession, report: Report, group_by: str) -> dic
         .where(ReportFile.report_id == report.id, ReportFile.kind == "monthly_plan").order_by(ReportFile.created_at)
     )).all()
     plan_files = [{"filename": f.filename, "company": company_name, **info} for f, company_name in monthly_files if (info := plan_info(report, f))]
-    body: dict = {"report_id": report.id, "group_by": group_by, "previous_report": None, "rows": [], "next_plan": own_plan["rows"], "plan_files": plan_files}
-    if previous is None:
+    body: dict = {"report_id": report.id, "group_by": group_by, "previous_report": None, "rows": [], "next_plan": own_plan["rows"], "plan_files": plan_files,
+                  "plan_basis": "next"}
+    if await _has_this_period_plan(db, report):
+        # the plan beside the actuals IS this period's forecast (uploaded in this report): compare them directly, there is no "next" plan
+        body.update(plan_basis="this", next_plan=[])
+        previous, prev_plan = None, own_plan
+    elif previous is None:
         return body
-    prev_plan = await get_results(db, report=previous, group_by=group_by, include=set(), basis="planned")
+    else:
+        prev_plan = await get_results(db, report=previous, group_by=group_by, include=set(), basis="planned")
     cell = lambda r: (r["company_id"], r["site_id"], r["item_key"])  # noqa: E731
     planned_by, actual_by = {cell(r): r for r in prev_plan["rows"]}, {cell(r): r for r in actual["rows"]}
     rows = []
@@ -759,11 +767,23 @@ async def plan_vs_actual(db: AsyncSession, report: Report, group_by: str) -> dic
             "decimals": base["decimals"], "planned": p["qty"] if p else None, "actual": a["qty"] if a else None,
             "variance": _q((aq or Decimal(0)) - (pq or Decimal(0))), "achievement_pct": _achievement(pq, aq),
         })
-    body["previous_report"] = {"id": previous.id, "title": previous.title, "period_label": previous.period_label,
-                               "period_start": previous.period_start, "period_end": previous.period_end,
-                               "adjacent": (report.period_start - previous.period_end).days <= 1}
+    if previous is not None:
+        body["previous_report"] = {"id": previous.id, "title": previous.title, "period_label": previous.period_label,
+                                   "period_start": previous.period_start, "period_end": previous.period_end,
+                                   "adjacent": (report.period_start - previous.period_end).days <= 1}
     body["rows"] = rows
     return body
+
+
+async def _has_this_period_plan(db: AsyncSession, report: Report) -> bool:
+    """True when a forecast file of this report is the forecast of the report's own period (see `forecast_scope`)."""
+    files = {f.id: f for f in (await db.execute(select(ReportFile).where(ReportFile.report_id == report.id, ReportFile.kind == "period"))).scalars()}
+    if not files:
+        return False
+    bases = {}
+    for fid, basis in (await db.execute(select(Line.report_file_id, Line.basis).where(Line.report_file_id.in_(list(files))).distinct())).all():
+        bases.setdefault(fid, set()).add(basis)
+    return any("planned" in b and is_this_period_forecast(report, files[fid], "actual" in b) for fid, b in bases.items())
 
 
 # ---- EVM (PV / EV / AC / CPI / SPI) ----------------------------------------------------------------------------
@@ -1008,13 +1028,25 @@ async def get_evm(db: AsyncSession, report: Report) -> dict:
             previous_income[(company_id, site_id)] = previous_income.get((company_id, site_id), Decimal(0)) + t.income_total
 
     def site_of(row: EvmRow, f: ReportFile) -> uuid.UUID | None:
-        """The site whose income sheet totals to this row's EV (exactly: EV is that sheet's "جمع کل درآمد"), so the project is tied to
-        its forecast by value, not by a name the two files may spell differently."""
-        if row.ev is None:
+        """The site whose income sheet totals to this row's EV, so the project is tied to its forecast by value, not by a name the two
+        files may spell differently. EV is that sheet's "جمع کل درآمد" exactly in most templates; in some it leaves a small part out (a
+        deduction): then the nearest sheet within 12% is taken when it is clearly nearer than any other (not one that another row of
+        the file matches exactly)."""
+        if row.ev is None or row.ev <= 0:
             return None
+        sheets = [t for t, f2 in all_income if f2.id == f.id and t.basis == "actual" and t.income_total is not None]
         tolerance = max(Decimal(2), abs(row.ev) / 100000)
-        hits = [t for t, f2 in all_income if f2.id == f.id and t.basis == "actual" and t.income_total is not None and abs(t.income_total - row.ev) <= tolerance]
-        return sheet_site.get((f.id, hits[0].sheet_name)) if len(hits) == 1 else None
+        exact = [t for t in sheets if abs(t.income_total - row.ev) <= tolerance]
+        if len(exact) == 1:
+            return sheet_site.get((f.id, exact[0].sheet_name))
+        if exact:
+            return None
+        taken = {t.sheet_name for r2, f2, _ in rows if f2.id == f.id and r2.basis == "actual" and r2.ev for t in sheets if abs(t.income_total - r2.ev) <= max(Decimal(2), abs(r2.ev) / 100000)}
+        near = sorted((abs(t.income_total - row.ev) / row.ev, t) for t in sheets if t.sheet_name not in taken)
+        near = [(err, t) for err, t in near if err <= Decimal("0.12")]
+        if len(near) == 1 or (len(near) > 1 and near[0][0] * 3 < near[1][0]):
+            return sheet_site.get((f.id, near[0][1].sheet_name))
+        return None
 
     def pv_for(row: EvmRow, f: ReportFile) -> tuple[Decimal | None, str, str | None, str | None]:
         """(pv, source, match kind, note)"""

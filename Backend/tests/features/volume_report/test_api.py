@@ -629,26 +629,34 @@ async def test_monthly_forecast_is_spread_over_the_days_of_the_next_period(clien
     assert (await _planned_concrete(client, leader, rid3)).get("concrete", Decimal(0)) == 0
 
 
-async def test_forecast_of_this_period_is_not_next_weeks_plan(client, tmp_path):
+async def test_forecast_of_this_period_is_the_plan_shown_beside_the_actuals(client, tmp_path):
     _, leader, leader_id, project_id, _ = await _world(client, "this-forecast")
     company = await _company(client, leader)
     title = "گزارش پیش بینی درآمد پروژه سیرجان قطروئیه"
-    row = [(None, "بتن ریزی پی", "متر مکعب", 40)]
     actual = await _document(tmp_path, project_id, leader_id, rows=[(None, "بتن ریزی پی", "متر مکعب", 25)], name="a.xlsx")
     # 2026-11-01..07 = 10-16 Aban; the period after it is 17-23 Aban
-    this_week = await _document(tmp_path, project_id, leader_id, rows=row, name="پیش بینی 10-16 آبان.xlsx", title=title)
-    next_week = await _document(tmp_path, project_id, leader_id, rows=row, name="پیش بینی 17-23 آبان.xlsx", title=title)
+    this_week = await _document(tmp_path, project_id, leader_id, rows=[(None, "بتن ریزی پی", "متر مکعب", 40)], name="پیش بینی 10-16 آبان.xlsx", title=title)
+    next_week = await _document(tmp_path, project_id, leader_id, rows=[(None, "بتن ریزی پی", "متر مکعب", 90)], name="پیش بینی 17-23 آبان.xlsx", title=title)
     base = {"document_id": actual, "company_id": company}
-    rid, files = await _monthly_report(client, leader, project_id, company, [base, {"document_id": this_week, "company_id": company}], "2026-11-01", "2026-11-07")
-    assert (await _planned_concrete(client, leader, rid)).get("concrete", Decimal(0)) == 0  # a forecast OF this week: PV only
-    rid, _ = await _monthly_report(client, leader, project_id, company, [base, {"document_id": next_week, "company_id": company}], "2026-11-01", "2026-11-07")
-    assert (await _planned_concrete(client, leader, rid))["concrete"] == Decimal("40")  # the plan of the week after
-    # a name that says nothing + the user's choice
-    plain = await _document(tmp_path, project_id, leader_id, rows=row, name="f.xlsx", title=title)
-    rid, _ = await _monthly_report(client, leader, project_id, company, [base, {"document_id": plain, "company_id": company, "forecast_for": "this_period"}], "2026-11-01", "2026-11-07")
-    assert (await _planned_concrete(client, leader, rid)).get("concrete", Decimal(0)) == 0
-    rid, _ = await _monthly_report(client, leader, project_id, company, [base, {"document_id": plain, "company_id": company, "forecast_for": "next_period"}], "2026-11-01", "2026-11-07")
+    this = {"document_id": this_week, "company_id": company}
+    rid, _ = await _monthly_report(client, leader, project_id, company, [base, this], "2026-11-01", "2026-11-07")
+    assert (await _planned_concrete(client, leader, rid))["concrete"] == Decimal("40")  # the plan of THIS week, next to the actual 25
+    cmp = (await client.get(f"{API}/{rid}/plan-vs-actual?group_by=holding", headers=leader)).json()
+    row = next(x for x in cmp["rows"] if x["item_key"] == "concrete")
+    assert cmp["plan_basis"] == "this" and cmp["next_plan"] == []
+    assert (Decimal(row["planned"]), Decimal(row["actual"]), Decimal(row["achievement_pct"])) == (40, 25, Decimal("62.5"))
+    # a next-period forecast in the same report does not add to it: the site already has its plan
+    rid, _ = await _monthly_report(client, leader, project_id, company, [base, this, {"document_id": next_week, "company_id": company}], "2026-11-01", "2026-11-07")
     assert (await _planned_concrete(client, leader, rid))["concrete"] == Decimal("40")
+    # without a forecast of this week, the next period's one is the plan (as before)
+    rid, _ = await _monthly_report(client, leader, project_id, company, [base, {"document_id": next_week, "company_id": company}], "2026-11-01", "2026-11-07")
+    assert (await _planned_concrete(client, leader, rid))["concrete"] == Decimal("90")
+    assert (await client.get(f"{API}/{rid}/plan-vs-actual?group_by=holding", headers=leader)).json()["plan_basis"] == "next"
+    # a name that says nothing + the user's choice (either way the file is a forecast)
+    plain = await _document(tmp_path, project_id, leader_id, rows=[(None, "بتن ریزی پی", "متر مکعب", 40)], name="f.xlsx", title=title)
+    for choice in ("this_period", "next_period"):
+        rid, _ = await _monthly_report(client, leader, project_id, company, [base, {"document_id": plain, "company_id": company, "forecast_for": choice}], "2026-11-01", "2026-11-07")
+        assert (await _planned_concrete(client, leader, rid))["concrete"] == Decimal("40")
 
 
 def _week_book(tmp_path, project_title, qty, total, evm_ev=None, forecast=False):
@@ -865,7 +873,7 @@ async def test_real_week_evm_pv_sources_and_no_helper_rows(client, tmp_path):
     leader, rid = await _real_week_report(client, tmp_path)
     data = await _evm(client, leader, rid)
     companies = {c["company"]: c for c in data["actual"]["companies"]}
-    assert set(companies) == {"سیستان", "محورگستر"}  # the forecast-only companies (گلومک, فراگیر) have no actual EVM
+    assert set(companies) == {"سیستان", "محورگستر", "گلومک", "فراگیر"}
     sistan, mahvar = companies["سیستان"], companies["محورگستر"]
     assert sistan["total"]["cpi"] == "1.33" and sistan["total"]["spi"] == "0.73" and sistan["total"]["projects"] == 2
     assert len(mahvar["projects"]) == 10  # no "کل درآمد" / "هزینه" / activity rows of the summary tables under the Sirjan EVM table
@@ -881,20 +889,27 @@ async def test_real_week_evm_pv_sources_and_no_helper_rows(client, tmp_path):
     ghatrooyeh = _by_name(mahvar, "قطروئیه")
     assert (ghatrooyeh["pv_source"], Decimal(ghatrooyeh["ac"]).quantize(Decimal("1")), ghatrooyeh["spi"]) == ("forecast_income", Decimal(111626622167), "0.80")
     assert not any("spi_extreme" in p["notes"] for p in mahvar["projects"])
+    # Golomak: its EV leaves a small part of the income sheet's total out (5-6%), so the project is tied to its forecast by the nearest total
+    golomak = companies["گلومک"]
+    assert (_by_name(golomak, "قطعه 4")["pv_source"], _by_name(golomak, "قطعه 4")["spi"]) == ("forecast_income", "1.17")
+    assert (_by_name(golomak, "آخران")["pv_source"], _by_name(golomak, "آخران")["spi"]) == ("forecast_income", "0.06")
+    assert (_by_name(golomak, "دولومیت")["pv"], _by_name(golomak, "دولومیت")["spi"]) == ("2404870189.00", "0.97")
+    assert _by_name(golomak, "تکمیل")["spi"] is None  # no EV this week: nothing to divide
+    faragir = companies["فراگیر"]
+    assert (_by_name(faragir, "ذوب")["pv_source"], _by_name(faragir, "ذوب")["spi"]) == ("forecast_file", "1.00")
+    assert "spi_extreme" in _by_name(faragir, "سنگ شکن")["notes"]  # 25 000 m3 done against 3 000 planned: flagged, not hidden
     # the same project listed in two files is counted once
     assert sum("ابنیه میادین" in p["project"] for p in mahvar["projects"]) == 1
 
 
 @pytest.mark.skipif(not _WEEK.exists(), reason="samples not present")
-async def test_real_week_forecasts_of_this_week_are_pv_only_not_next_weeks_plan(client, tmp_path):
+async def test_real_week_forecast_files_are_recognised_as_this_weeks(client, tmp_path):
     leader, rid = await _real_week_report(client, tmp_path)
     sources = {f["filename"]: f for f in (await client.get(f"{API}/{rid}/sources", headers=leader)).json()}
     chengoole = sources["پیش بینی چنگوله 18-24 آبان.xls"]["forecast"]  # its title is last week's copy: ignored; the file name says this week
     assert (chengoole["scope"], chengoole["source"]) == ("this", "filename")
     assert sources["معابر سیرجان پیش بینی 18-24.pdf"]["forecast"]["scope"] == "this"  # no date inside: "18-24" in the file name
     assert sources["سیرجان قطروئیه 18-24 آبان.xlsb"]["forecast"] is None  # an actual report is no forecast
-    planned = (await client.get(f"{API}/{rid}/results?group_by=company&basis=planned", headers=leader)).json()
-    assert all(Decimal(r["qty"]) == 0 for r in planned["rows"])  # nothing of it is "next week's plan"
 
 
 @pytest.mark.skipif(not _WEEK.exists(), reason="samples not present")

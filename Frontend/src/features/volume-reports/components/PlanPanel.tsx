@@ -102,9 +102,11 @@ export function PlanPanel({ reportId, periodEnd, refreshKey }: { reportId: strin
         </div>
       )}
 
-      <Card title="تحقق پیش‌بینیِ دوره‌ی قبل"
+      <Card title={data.plan_basis === "this" ? "تحقق برنامه‌ی همین دوره (پیش‌بینی در برابر واقعی)" : "تحقق پیش‌بینیِ دوره‌ی قبل"}
         actions={prev && <Link href={`/volume-reports/${prev.id}`} className="text-xs text-teal-700 hover:underline">گزارش مبدأ: {prev.title} ({prev.period_label})</Link>}>
-        {!prev ? (
+        {data.plan_basis === "this" ? (
+          data.rows.length === 0 ? <EmptyState title="ردیفی برای مقایسه نیست" /> : <ComparisonTable rows={data.rows} showSite={scope === "site"} />
+        ) : !prev ? (
           <EmptyState title="پیش‌بینی‌ای برای این دوره پیدا نشد" hint="گزارش قبلی همین پروژه باید شیت برنامه/پیش‌بینی داشته و پردازش شده باشد." />
         ) : (
           <div className="space-y-2">
@@ -114,7 +116,7 @@ export function PlanPanel({ reportId, periodEnd, refreshKey }: { reportId: strin
         )}
       </Card>
 
-      <Card title={`برنامه‌ی دوره‌ی بعد (پس از ${formatJalaliDate(periodEnd)})`}>
+      {data.plan_basis !== "this" && <Card title={`برنامه‌ی دوره‌ی بعد (پس از ${formatJalaliDate(periodEnd)})`}>
         {data.next_plan.length === 0 ? (
           <EmptyState title="این گزارش شیت پیش‌بینی ندارد" hint="اگر فایل شیت «پیش‌بینی/برنامه» دارد، گزارش را دوباره اجرا کنید." />
         ) : (
@@ -136,7 +138,7 @@ export function PlanPanel({ reportId, periodEnd, refreshKey }: { reportId: strin
             </table>
           </div>
         )}
-      </Card>
+      </Card>}
     </div>
   );
 }

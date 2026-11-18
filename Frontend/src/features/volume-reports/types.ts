@@ -101,6 +101,8 @@ export interface PlanVsActualRow {
   planned: string | null; actual: string | null; variance: string; achievement_pct: string | null;
 }
 export interface PlanVsActual {
+  /** this = the plan beside the actuals is the forecast of this very period (uploaded in this report); next = the older reading: last report's forecast vs these actuals + a plan for the period after. */
+  plan_basis?: "this" | "next";
   report_id: string; group_by: ResultScope; rows: PlanVsActualRow[]; next_plan: ResultRow[]; plan_files?: (PlanInfo & { filename: string; company: string })[];
   previous_report: { id: string; title: string; period_label: string; period_start: string; period_end: string; adjacent: boolean } | null;
 }
