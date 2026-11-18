@@ -5,7 +5,7 @@
 -- (items with an earlier apply month are arrears and are included; has_arrears_items flags them). The department / post / cost center are those
 -- effective in that month. Identity: net_pay = total_benefits - total_deductions.
 -- employer_total_cost = total_benefits + employer_social_insurance + unemployment_insurance + employer_supplementary_insurance (+ parents supplementary employer).
-CREATE OR ALTER VIEW ai.payroll_monthly AS
+CREATE OR ALTER VIEW ai_src.payroll_monthly AS
 SELECT p.PayCalcID AS pay_calc_id,
        p.EmployeeRef AS employee_id,
        e.Code AS employee_code,
@@ -89,6 +89,29 @@ OUTER APPLY (SELECT TOP 1 r.DLCode FROM HCM3.EmployeeRelatedDL r
              ORDER BY r.EffectiveYearMonth DESC, r.EmployeeRelatedDLID DESC) cc
 LEFT JOIN FIN3.DL ccd ON ccd.Code = cc.DLCode
 GROUP BY p.PayCalcID, p.EmployeeRef, e.Code, e.FullName, p.IssueYearMonth, st.department_name, st.post_title, st.job_title, st.employment_type, cc.DLCode, ccd.Title;
+GO
+
+-- Materialize ai.payroll_monthly. The source (ai_src.payroll_monthly) scans all ~3.4M HCM3.PayCalcItem rows with 50+ conditional SUMs and two
+-- OUTER APPLYs per payroll calc: ~30 s of CPU for ANY question that touches it without a month filter (cost center / project name filters cannot be
+-- pushed below the GROUP BY), which hit the 30 s query timeout. The database only changes on restore, so a physical copy (~80K rows) is exactly as
+-- fresh. Public contract unchanged: ai.payroll_monthly is still a VIEW with the same columns.
+IF OBJECT_ID('ai.payroll_monthly_mat', 'U') IS NOT NULL DROP TABLE ai.payroll_monthly_mat;
+GO
+SELECT * INTO ai.payroll_monthly_mat FROM ai_src.payroll_monthly;
+GO
+CREATE UNIQUE CLUSTERED INDEX cx_payroll_monthly_mat ON ai.payroll_monthly_mat (issue_year_month, pay_calc_id) WITH (DATA_COMPRESSION = PAGE);
+CREATE NONCLUSTERED INDEX ix_pmm_cost_center ON ai.payroll_monthly_mat (cost_center_dl_code) INCLUDE (issue_year_month) WITH (DATA_COMPRESSION = PAGE);
+CREATE NONCLUSTERED INDEX ix_pmm_employee ON ai.payroll_monthly_mat (employee_id) WITH (DATA_COMPRESSION = PAGE);
+GO
+-- Fail the whole refresh (the live database stays untouched) if the copy differs from the source.
+DECLARE @src_rows bigint, @src_net decimal(38,4), @src_ben decimal(38,4), @mat_rows bigint, @mat_net decimal(38,4), @mat_ben decimal(38,4);
+SELECT @src_rows = COUNT_BIG(*), @src_net = SUM(CAST(net_pay AS decimal(38,4))), @src_ben = SUM(CAST(total_benefits AS decimal(38,4))) FROM ai_src.payroll_monthly;
+SELECT @mat_rows = COUNT_BIG(*), @mat_net = SUM(CAST(net_pay AS decimal(38,4))), @mat_ben = SUM(CAST(total_benefits AS decimal(38,4))) FROM ai.payroll_monthly_mat;
+IF @mat_rows = 0 OR @src_rows <> @mat_rows OR ABS(ISNULL(@src_net, 0) - ISNULL(@mat_net, 0)) > 0.01 OR ABS(ISNULL(@src_ben, 0) - ISNULL(@mat_ben, 0)) > 0.01
+    THROW 50002, N'ai.payroll_monthly_mat does not match ai_src.payroll_monthly (row count / net_pay / total_benefits)', 1;
+GO
+CREATE OR ALTER VIEW ai.payroll_monthly AS
+SELECT * FROM ai.payroll_monthly_mat;
 GO
 
 -- ai.payroll_factor_values: LONG form of payroll: one row per employee, payroll month, apply month and compensation factor (HCM3.PayCalcItem, ~3.4M rows).

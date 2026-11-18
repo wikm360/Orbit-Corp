@@ -154,7 +154,7 @@ VIEW_HINTS = {
     use="حقوق هر کارمند در هر ماه با عوامل اصلی.", filters="issue_year_month؛ employee_name LIKE …؛ department_name",
     pitfalls="حاوی اطلاعات حقوقی افراد. net_pay = total_benefits − total_deductions."),
  "payroll_by_cost_center_month": dict(
-    keywords=["هزینه حقوق قرارداد", "حقوق هر پروژه", "پرسنل هر قرارداد", "هزینه نیروی انسانی پروژه"], use="هزینه‌ی حقوق هر ماه به تفکیک مرکز هزینه/قرارداد.", filters="issue_year_month یا fiscal_year", pitfalls=""),
+    keywords=["هزینه حقوق قرارداد", "حقوق هر پروژه", "پرسنل هر قرارداد", "هزینه نیروی انسانی پروژه"], use="هزینه‌ی حقوق هر ماه به تفکیک مرکز هزینه/قرارداد.", filters="issue_year_month یا fiscal_year", pitfalls="فیلتر پروژه را با cost_center_dl_code (کد از ai.cost_centers.dl_code) بزن، نه LIKE روی نام. اگر برای پروژه‌ای هیچ ردیفی نبود یعنی در حقوق (HCM) برای آن مرکز هزینه پرسنل ثبت نشده؛ همان را اعلام کن و برای هزینه‌ی حقوق در دفتر کل یک بار از ai.ledger_lines با contract_dl_code و sl_title LIKE N'%حقوق%' بپرس، بیش از این جست‌وجو نکن."),
  "payroll_by_department_month": dict(
     keywords=["حقوق هر واحد", "هزینه حقوق واحد", "حقوق به تفکیک بخش"], use="هزینه‌ی حقوق هر ماه به تفکیک واحد سازمانی.", filters="issue_year_month", pitfalls=""),
  "payroll_year_summary": dict(

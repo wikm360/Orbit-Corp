@@ -32,6 +32,11 @@ Postgres.schema_hints (embedding + متن)  ← مصرف: db_connector/hints.ret
 - امن: DB فقط با بک‌آپ جدید عوض می‌شود و refresh همیشه دوباره می‌سازد. اگر تعداد ردیف یا جمع debit/credit کپی با منبع نخواند `THROW` می‌شود و refresh قبل از swap شکست می‌خورد (DB زنده دست‌نخورده). smoke test هم خالی نبودن `ai.ledger_lines` را چک می‌کند.
 - reader به `ai_src` دسترسی ندارد؛ جدول `ai.ledger_lines_mat` در catalog نیست.
 
+### مادی‌سازی `ai.payroll_monthly` (داخل `60_payroll.sql`)
+- query منبع در `ai_src.payroll_monthly` (ستون جدید را **آنجا** اضافه کنید)؛ در هر apply کپی فیزیکی `ai.payroll_monthly_mat` (~۸۰K ردیف، ایندکس `issue_year_month`/`cost_center_dl_code`/`employee_id`) ساخته و `ai.payroll_monthly` یک view روی آن می‌شود. بقیه‌ی view های حقوق (`payroll_by_cost_center_month` …) دست‌نخورده‌اند.
+- دلیل: منبع کل ~۳٫۴M ردیف `PayCalcItem` را با ۵۰+ SUM شرطی و دو OUTER APPLY می‌خواند؛ هر سؤال حقوقیِ بدون فیلتر ماه (مثلاً فیلتر روی نام پروژه) ≈ ۳۰ث CPU بود و query timeout (۳۰ث) می‌خورد → agent ۳ تلاش × چند مرحله ≈ ۹ دقیقه. بعد از مادی‌سازی ≈ ۰٫۱ث.
+- مثل ledger: اگر تعداد ردیف/جمع `net_pay`/`total_benefits` کپی با منبع نخواند `THROW 50002` و refresh شکست می‌خورد.
+
 ### `apply.py`
 `python sql/rahkaran/apply.py [prefix…]` (مثلاً `30 40`، یا `descr` فقط برای توضیحات). Env: `RAHKARAN_SA_PASSWORD` (الزامی)، `RAHKARAN_HOST/PORT/DB`، `RAHKARAN_AI_PASSWORD/USER`، `RAHKARAN_SKIP_TF4138=1`.
 - idempotent؛ اگر DB `READ_ONLY` است موقتاً `READ_WRITE` می‌کند و برمی‌گرداند.
