@@ -20,6 +20,7 @@ import {
   estimateShareCardGeometry,
   formatCompanyScorecardPeriodNote,
   formatPresentationQuantity,
+  getCanonicalCompanyName,
   getCompanyColor,
   isSummaryVariant,
   mergeCoatCatalog,
@@ -53,18 +54,25 @@ function balancedChunks<T>(items: T[], max: number): T[][] {
 interface ScorecardRow {
   id: string;
   name: string;
+  rawName?: string;
   companyName?: string;
   rows: Map<string, ResultRow>;
 }
 
-function groupByCompany(rows: ResultRow[], extraRows: ResultRow[] = []): ScorecardRow[] {
+function groupByCompany(
+  rows: ResultRow[],
+  extraRows: ResultRow[] = [],
+  settingsCompanies: { id?: string; name: string }[] = [],
+): ScorecardRow[] {
   const groups = new Map<string, ScorecardRow>();
   for (const row of [...rows, ...extraRows]) {
     if (!row.company_id) continue;
     if (!groups.has(row.company_id)) {
+      const raw = row.company ?? "بدون نام";
       groups.set(row.company_id, {
         id: row.company_id,
-        name: row.company ?? "بدون نام",
+        name: getCanonicalCompanyName(raw, settingsCompanies),
+        rawName: raw,
         rows: new Map<string, ResultRow>(),
       });
     }
@@ -76,16 +84,22 @@ function groupByCompany(rows: ResultRow[], extraRows: ResultRow[] = []): Scoreca
   return Array.from(groups.values()).sort((a, b) => a.name.localeCompare(b.name, "fa"));
 }
 
-function groupByProject(rows: ResultRow[], extraRows: ResultRow[] = []): ScorecardRow[] {
+function groupByProject(
+  rows: ResultRow[],
+  extraRows: ResultRow[] = [],
+  settingsCompanies: { id?: string; name: string }[] = [],
+): ScorecardRow[] {
   const groups = new Map<string, ScorecardRow>();
   for (const row of [...rows, ...extraRows]) {
     const id = row.site_id ?? row.site;
     if (!id) continue;
     if (!groups.has(id)) {
+      const raw = row.company ?? undefined;
       groups.set(id, {
         id,
         name: row.site ?? "بدون نام",
-        companyName: row.company ?? undefined,
+        companyName: raw ? getCanonicalCompanyName(raw, settingsCompanies) : undefined,
+        rawName: raw,
         rows: new Map<string, ResultRow>(),
       });
     }
@@ -96,7 +110,10 @@ function groupByProject(rows: ResultRow[], extraRows: ResultRow[] = []): Scoreca
     const g = groups.get(id);
     if (g) {
       g.rows.set(row.item_key, row);
-      if (!g.companyName && row.company) g.companyName = row.company;
+      if (!g.companyName && row.company) {
+        g.companyName = getCanonicalCompanyName(row.company, settingsCompanies);
+        g.rawName = row.company;
+      }
     }
   }
   // grouped by company (the order of the company scorecard), then by project name: one company's projects, then the next company's
@@ -1045,8 +1062,8 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
 
     const holdingMap = new Map(mergedHoldingRows.map((row) => [row.item_key, row]));
     const holdingPlannedMap = new Map(mergedHoldingPlannedRows.map((row) => [row.item_key, row]));
-    const companies = groupByCompany(mergedCompanyRows, mergedCompanyPlannedRows);
-    const projects = groupByProject(mergedSiteRows, mergedSitePlannedRows);
+    const companies = groupByCompany(mergedCompanyRows, mergedCompanyPlannedRows, settingsCompanies);
+    const projects = groupByProject(mergedSiteRows, mergedSitePlannedRows, settingsCompanies);
     const period = weekSubtitle || report.period_label;
     const hasAnyReportPlanned =
       mergedCompanyPlannedRows.some((r) => Number.parseFloat(r.qty || "0") > 0) ||
@@ -1217,85 +1234,7 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
       </span>
     ) : undefined;
 
-    const COMPANY_ROWS_PER_SLIDE = 10;
-    const companyPages = chunks(companies, COMPANY_ROWS_PER_SLIDE);
-    if (!companyPages.length) companyPages.push([]);
-    companyPages.forEach((groupSet, pageIndex) => {
-      result.push({
-        key: `companies-${pageIndex}`,
-        render: (page) => (
-          <Slide
-            title="کارنامه شرکت‌ها"
-            subtitle={companyPages.length > 1 ? `بخش ${toFa(pageIndex + 1)} از ${toFa(companyPages.length)}` : period}
-            titleAside={companyScorecardBadge}
-            headerRight={tableLegend}
-            page={page}
-            period={period}
-          >
-            <ScorecardTable
-              entityType="company"
-              groups={groupSet}
-              metrics={tableMetrics}
-              holdingMap={holdingMap}
-              plannedHoldingMap={holdingPlannedMap}
-              plannedGroupMap={plannedCompanyGroupMap}
-              showTotal={pageIndex === companyPages.length - 1}
-            />
-          </Slide>
-        ),
-      });
-    });
-
-    const narrativeCompanies = companies
-      .map((comp) => {
-        const narrative = report.narratives?.[comp.id] || report.narratives?.[comp.name];
-        const items = getCompanyNarrativeItems(narrative);
-        return { comp, items };
-      })
-      .filter(({ items }) => items.length > 0);
-
-    if (narrativeCompanies.length > 0) {
-      result.push({
-        key: "narratives",
-        render: (page) => (
-          <Slide
-            title="گزارش عملکرد پروژه‌های عمرانی"
-            subtitle="مرور وضعیت و اقدامات شرکت‌ها"
-            page={page}
-            period={period}
-          >
-            <NarrativeSlideView companies={narrativeCompanies} />
-          </Slide>
-        ),
-      });
-    }
-
-    // One page per company right after the scorecard: its EVM reading (SPI / CPI / PV / EV / AC).
-    const evmByCompany = new Map((evm?.actual.companies ?? []).map((c) => [c.company_id, c]));
-    const profileCompanies = [
-      ...companies.map((c) => ({ id: c.id, name: c.name, rows: c.rows })),
-      ...(evm?.actual.companies ?? []).filter((c) => !companies.some((x) => x.id === c.company_id)).map((c) => ({ id: c.company_id, name: c.company, rows: new Map<string, ResultRow>() })),
-    ];
-    profileCompanies.forEach((comp) => {
-      result.push({
-        key: `company-profile-${comp.id}`,
-        render: (page) => (
-          <Slide
-            title={comp.name}
-            subtitle={`کارنامه شرکت · ${period}`}
-            titleAside={companyScorecardBadge}
-            headerRight={<CompanyMark name={comp.name} size={54} />}
-            page={page}
-            period={period}
-          >
-            <CompanyProfileBody
-              evm={evmByCompany.get(comp.id) ?? null}
-            />
-          </Slide>
-        ),
-      });
-    });
-
+    // 1. Company Shares / Pie Charts: immediately after holding executive summary
     const shareDataList: ItemShareData[] = tableMetrics
       .map((item) => {
         const contributions: CompanyContribution[] = [];
@@ -1385,6 +1324,97 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
       });
     });
 
+    // 2. Company Scorecard Table
+    const COMPANY_ROWS_PER_SLIDE = 10;
+    const companyPages = chunks(companies, COMPANY_ROWS_PER_SLIDE);
+    if (!companyPages.length) companyPages.push([]);
+    companyPages.forEach((groupSet, pageIndex) => {
+      result.push({
+        key: `companies-${pageIndex}`,
+        render: (page) => (
+          <Slide
+            title="کارنامه شرکت‌ها"
+            subtitle={companyPages.length > 1 ? `بخش ${toFa(pageIndex + 1)} از ${toFa(companyPages.length)}` : period}
+            titleAside={companyScorecardBadge}
+            headerRight={tableLegend}
+            page={page}
+            period={period}
+          >
+            <ScorecardTable
+              entityType="company"
+              groups={groupSet}
+              metrics={tableMetrics}
+              holdingMap={holdingMap}
+              plannedHoldingMap={holdingPlannedMap}
+              plannedGroupMap={plannedCompanyGroupMap}
+              showTotal={pageIndex === companyPages.length - 1}
+            />
+          </Slide>
+        ),
+      });
+    });
+
+    // 3. Company EVM Profiles: One page per company
+    const evmByCompany = new Map((evm?.actual.companies ?? []).map((c) => [c.company_id, c]));
+    const profileCompanies = [
+      ...companies.map((c) => ({ id: c.id, name: c.name, rows: c.rows })),
+      ...(evm?.actual.companies ?? [])
+        .filter((c) => !companies.some((x) => x.id === c.company_id))
+        .map((c) => ({
+          id: c.company_id,
+          name: getCanonicalCompanyName(c.company, settingsCompanies),
+          rows: new Map<string, ResultRow>(),
+        })),
+    ];
+    profileCompanies.forEach((comp) => {
+      result.push({
+        key: `company-profile-${comp.id}`,
+        render: (page) => (
+          <Slide
+            title={comp.name}
+            subtitle={`کارنامه شرکت · ${period}`}
+            titleAside={companyScorecardBadge}
+            headerRight={<CompanyMark name={comp.name} size={54} />}
+            page={page}
+            period={period}
+          >
+            <CompanyProfileBody
+              evm={evmByCompany.get(comp.id) ?? null}
+            />
+          </Slide>
+        ),
+      });
+    });
+
+    // 4. Construction Project Narratives: after company profile pages
+    const narrativeCompanies = companies
+      .map((comp) => {
+        const narrative =
+          report.narratives?.[comp.id] ||
+          report.narratives?.[comp.name] ||
+          (comp.rawName ? report.narratives?.[comp.rawName] : undefined);
+        const items = getCompanyNarrativeItems(narrative);
+        return { comp, items };
+      })
+      .filter(({ items }) => items.length > 0);
+
+    if (narrativeCompanies.length > 0) {
+      result.push({
+        key: "narratives",
+        render: (page) => (
+          <Slide
+            title="گزارش عملکرد پروژه‌های عمرانی"
+            subtitle="مرور وضعیت و اقدامات شرکت‌ها"
+            page={page}
+            period={period}
+          >
+            <NarrativeSlideView companies={narrativeCompanies} />
+          </Slide>
+        ),
+      });
+    }
+
+    // 5. Projects Scorecard Table
     const PROJECT_ROWS_PER_SLIDE = 8;
     const projectPages = balancedChunks(projects, PROJECT_ROWS_PER_SLIDE);
     if (!projectPages.length) projectPages.push([]);

@@ -1001,12 +1001,52 @@ export interface CompanyLogoAsset {
 
 export const COMPANY_LOGOS: CompanyLogoAsset[] = [
   { match: ["فراگیر", "faragir"], src: "/volume-reports/logo_faragir.png", label: "فراگیر عمران نصر" },
-  { match: ["سیستان", "sistan"], src: "/volume-reports/logo_sistan.png", label: "جهاد نصر سیستان" },
+  { match: ["سیستان", "sistan"], src: "/volume-reports/logo_sistan.png", label: "جهاد نصر سیستان و بلوچستان" },
   { match: ["گلومک", "golomak"], src: "/volume-reports/logo_golomak.png", label: "گلومک سازه نصر" },
   { match: ["آبادگران", "abadgaran"], src: "/volume-reports/logo_abadgaran.png", label: "آبادگران رفاه نصر" },
   { match: ["محورگستر", "محور گستر", "mehvar"], src: "/volume-reports/logo_mehvar.png", label: "محور گستر نصر" },
   { match: ["تژه", "tezhe"], src: "/volume-reports/logo_tezheh.png", label: "تژه نصر" },
 ];
+
+export const COMPANY_CANONICAL_NAMES: { match: string[]; fullName: string }[] = [
+  { match: ["سیستان", "sistan"], fullName: "جهاد نصر سیستان و بلوچستان" },
+  { match: ["محورگستر", "محور گستر", "محور", "mehvar"], fullName: "محور گستر نصر" },
+  { match: ["فراگیر", "faragir"], fullName: "فراگیر عمران نصر" },
+  { match: ["گلومک", "golomak"], fullName: "گلومک سازه نصر" },
+  { match: ["آبادگران", "abadgaran"], fullName: "آبادگران رفاه نصر" },
+  { match: ["تژه", "tezhe"], fullName: "تژه نصر" },
+];
+
+/**
+ * Returns the complete official name for a company, expanding any shorthand
+ * or truncated names (e.g. "سیستان" -> "جهاد نصر سیستان و بلوچستان",
+ * "آبادگران" -> "آبادگران رفاه نصر", "فراگیر" -> "فراگیر عمران نصر", etc.).
+ */
+export function getCanonicalCompanyName(
+  name: string | null | undefined,
+  settingsCompanies?: { id?: string; name: string }[]
+): string {
+  if (!name || !name.trim()) return name ?? "بدون نام";
+  const trimmed = name.trim();
+  const normalized = trimmed.toLocaleLowerCase("fa");
+
+  const found = COMPANY_CANONICAL_NAMES.find((item) =>
+    item.match.some((part) => normalized.includes(part.toLocaleLowerCase("fa")))
+  );
+  if (found) return found.fullName;
+
+  if (settingsCompanies && settingsCompanies.length > 0) {
+    const matchFromSettings = settingsCompanies.find((c) => {
+      const cNorm = c.name.trim().toLocaleLowerCase("fa");
+      return cNorm.includes(normalized) || normalized.includes(cNorm);
+    });
+    if (matchFromSettings && matchFromSettings.name.trim().length > trimmed.length) {
+      return matchFromSettings.name.trim();
+    }
+  }
+
+  return trimmed;
+}
 
 const COMPANY_COLOR_PALETTE: { match: string[]; color: string }[] = [
   { match: ["محورگستر", "محور گستر", "mehvar"], color: "#252850" },
@@ -1077,14 +1117,19 @@ export function buildOverviewWheelCompanies(
   reportCompanies: OverviewHoldingCompanyInput[],
   settingsCompanies: { id: string; name: string; is_active?: boolean }[] = [],
 ): OverviewHoldingCompanyInput[] {
-  const filtered = reportCompanies.filter((c) => !isExcludedFromOverviewRing(c.name));
+  const filtered = reportCompanies
+    .map((c) => ({
+      ...c,
+      name: getCanonicalCompanyName(c.name, settingsCompanies),
+    }))
+    .filter((c) => !isExcludedFromOverviewRing(c.name));
   if (!filtered.some((c) => isTezheCompany(c.name))) {
     const configuredTezhe = settingsCompanies.find(
       (c) => (c.is_active ?? true) && isTezheCompany(c.name) && !isExcludedFromOverviewRing(c.name),
     );
     filtered.push({
       id: configuredTezhe?.id ?? "overview-tezhe",
-      name: configuredTezhe?.name ?? "تژه نصر",
+      name: getCanonicalCompanyName(configuredTezhe?.name ?? "تژه نصر", settingsCompanies),
       projectCount: 0,
     });
   }
