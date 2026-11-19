@@ -358,12 +358,18 @@ async def test_forecast_sheet_is_stored_separately_and_compared_with_next_report
     plan = {x["item_key"]: Decimal(x["qty"]) for x in (await client.get(f"{API}/{first}/results?group_by=holding&basis=planned", headers=leader)).json()["rows"]}
     assert actual["concrete"] == 25 and plan["concrete"] == 40  # the forecast never leaks into the actual total
     assert (await client.get(f"{API}/{first}/plan-vs-actual", headers=leader)).json()["previous_report"] is None
+    assert (await client.get(f"{API}/{first}/previous-actuals", headers=leader)).json()["previous_report"] is None
 
     second = await _weekly_report(client, leader, project_id, await _two_sheet_document(tmp_path, project_id, leader_id, 30), company, "2026-11-08", "2026-11-14")
     cmp = (await client.get(f"{API}/{second}/plan-vs-actual?group_by=holding", headers=leader)).json()
     assert cmp["previous_report"]["id"] == first and cmp["previous_report"]["adjacent"] is True
     row = next(x for x in cmp["rows"] if x["item_key"] == "concrete")
     assert Decimal(row["planned"]) == 40 and Decimal(row["actual"]) == 30 and Decimal(row["variance"]) == -10 and Decimal(row["achievement_pct"]) == Decimal("75.0")
+
+    prev_act = (await client.get(f"{API}/{second}/previous-actuals?group_by=holding", headers=leader)).json()
+    assert prev_act["previous_report"]["id"] == first
+    prev_row = next(x for x in prev_act["rows"] if x["item_key"] == "concrete")
+    assert Decimal(prev_row["qty"]) == 25
 
 
 async def test_other_is_remembered_across_reports_and_removed_rows_stay_visible(client, tmp_path):

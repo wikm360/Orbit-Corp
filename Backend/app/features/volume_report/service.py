@@ -775,6 +775,47 @@ async def plan_vs_actual(db: AsyncSession, report: Report, group_by: str) -> dic
     return body
 
 
+async def get_previous_actuals(db: AsyncSession, report: Report, group_by: str = "holding") -> dict:
+    """Actual results of the closest preceding report in the same project for comparison."""
+    candidates = (await db.execute(
+        select(Report).where(
+            Report.project_id == report.project_id,
+            Report.id != report.id,
+            Report.period_start < report.period_start,
+            Report.status.notin_((ReportStatus.DRAFT, ReportStatus.FAILED, ReportStatus.PROCESSING)),
+        )
+        .order_by(Report.period_start.desc(), Report.version.desc())
+    )).scalars().all()
+
+    for cand in candidates:
+        has_results = await db.scalar(
+            select(func.count()).select_from(Result).where(
+                Result.report_id == cand.id,
+                Result.scope == ResultScope(group_by),
+                Result.basis == "actual",
+            )
+        )
+        if has_results:
+            results = await get_results(db, report=cand, group_by=group_by, include=set(), basis="actual")
+            return {
+                "report_id": report.id,
+                "previous_report": {
+                    "id": cand.id,
+                    "title": cand.title,
+                    "period_label": cand.period_label,
+                    "period_start": cand.period_start,
+                    "period_end": cand.period_end,
+                },
+                "rows": results["rows"],
+            }
+
+    return {
+        "report_id": report.id,
+        "previous_report": None,
+        "rows": [],
+    }
+
+
 async def _has_this_period_plan(db: AsyncSession, report: Report) -> bool:
     """True when a forecast file of this report is the forecast of the report's own period (see `forecast_scope`)."""
     files = {f.id: f for f in (await db.execute(select(ReportFile).where(ReportFile.report_id == report.id, ReportFile.kind == "period"))).scalars()}

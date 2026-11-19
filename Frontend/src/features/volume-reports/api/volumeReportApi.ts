@@ -2,7 +2,7 @@ import { API_BASE_URL, ApiError, apiRequest, authorizedFetch, parseErrorMessage 
 
 import type {
   AnswerPayload, CatalogItem, Company, CompanyNarrative, ConfirmItem, Conversion, DecisionRow, FileSelection, ItemRule, ItemRuleWrite, LexiconEntry, LineRow, Question,
-  ReportCreate, ReportDetail, ReportStatus, ReportSummary, ResultScope, ResultsResponse, ReviewGroup, SelectedFile, SettingsItem,
+  ReportCreate, ReportDetail, ReportStatus, ReportSummary, ResultScope, ResultsResponse, PreviousActualsResponse, ReviewGroup, SelectedFile, SettingsItem,
   SettingsItemWrite, Site, SiteKind, SourceInfo, ProgressResponse, GateCause, ActivityResponse, PlanVsActual, EvmResponse, PvEntry, PvMode,
 } from "../types";
 
@@ -37,6 +37,8 @@ export const volumeReportApi = {
   confirm: (id: string, items: ConfirmItem[]) => send<{ issues: GateCause[] }>(`/${id}/review/confirm`, "POST", { items }),
   results: (id: string, groupBy: ResultScope, include: string[] = [], basis: "actual" | "planned" = "actual") =>
     apiRequest<ResultsResponse>(`${BASE}/${id}/results${qs({ group_by: groupBy, include: include.join(","), basis })}`),
+  previousActuals: (id: string, groupBy: ResultScope = "holding") =>
+    apiRequest<PreviousActualsResponse>(`${BASE}/${id}/previous-actuals${qs({ group_by: groupBy })}`),
   planVsActual: (id: string, groupBy: ResultScope) => apiRequest<PlanVsActual>(`${BASE}/${id}/plan-vs-actual${qs({ group_by: groupBy })}`),
   evm: (id: string) => apiRequest<EvmResponse>(`${BASE}/${id}/evm`),
   reparseEvm: (id: string) => send<EvmResponse>(`/${id}/evm/reparse`, "POST"),

@@ -6,13 +6,12 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { volumeReportApi } from "../api/volumeReportApi";
 import { CompanyProfileBody } from "../components/CompanyProfileSlide";
 import { CompanyMark, HoldingRadialOverview } from "../components/HoldingRadialOverview";
-import { SummarySlideContent, SummaryVariantBar, fitTextMaxPx } from "../components/SummarySlideViews";
+import { SummarySlideContent, fitTextMaxPx } from "../components/SummarySlideViews";
 import { ErrorBox, LoadingBlock } from "../components/common";
 import { runSoon } from "../lib/defer";
 import { unitLabel } from "../lib/format";
 import { formatJalaliDate, formatWeekLabel, toFa } from "../lib/jalali";
 import {
-  DEFAULT_SUMMARY_VARIANT,
   addDecimalStrings,
   buildOverviewWheelCompanies,
   computePieSlices,
@@ -22,22 +21,19 @@ import {
   formatPresentationQuantity,
   getCanonicalCompanyName,
   getCompanyColor,
-  isSummaryVariant,
   mergeCoatCatalog,
   mergeCoatResultRows,
   splitSharePages,
   type ScorecardTypography,
   type ShareCardGeometry,
-  type SummaryVariant,
 } from "../lib/presentation";
-import type { CatalogItem, Company, CompanyNarrative, EvmResponse, ReportDetail, ResultRow, ResultsResponse } from "../types";
+import type { CatalogItem, Company, CompanyNarrative, EvmResponse, PreviousActualsResponse, ReportDetail, ResultRow, ResultsResponse } from "../types";
 
 /** The slide canvas is 16in x 9in at 96dpi, so it prints 1:1 and is scaled down with CSS on screen (see globals.css). */
 const SLIDE_W = 1536;
 const SLIDE_H = 864;
 const NAVY = "#252850";
 const READY_STATUSES = new Set(["awaiting_user", "needs_review", "ready", "published"]);
-const SUMMARY_VARIANT_STORAGE_KEY = "vr-presentation-summary-variant";
 
 function chunks<T>(items: T[], size: number): T[][] {
   const result: T[][] = [];
@@ -957,40 +953,11 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
   const [sitePlannedRows, setSitePlannedRows] = useState<ResultRow[]>([]);
   const [settingsCompanies, setSettingsCompanies] = useState<Company[]>([]);
   const [evm, setEvm] = useState<EvmResponse | null>(null);
+  const [previousActuals, setPreviousActuals] = useState<PreviousActualsResponse | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [exporting, setExporting] = useState<{ done: number; total: number } | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
-  const [summaryVariant, setSummaryVariant] = useState<SummaryVariant>(DEFAULT_SUMMARY_VARIANT);
   const { scale, ref: pageRef } = useSlideScale();
-
-  useEffect(() => {
-    return runSoon(() => {
-      try {
-        const param = new URLSearchParams(window.location.search).get("summary");
-        if (isSummaryVariant(param)) {
-          setSummaryVariant(param);
-          return;
-        }
-        const saved = window.localStorage.getItem(SUMMARY_VARIANT_STORAGE_KEY);
-        if (isSummaryVariant(saved)) setSummaryVariant(saved);
-      } catch {
-        // Ignore storage access failures in restricted environments.
-      }
-    });
-  }, []);
-
-  const handleSelectSummaryVariant = useCallback((next: SummaryVariant) => {
-    setSummaryVariant(next);
-    try {
-      window.localStorage.setItem(SUMMARY_VARIANT_STORAGE_KEY, next);
-    } catch {
-      // Ignore storage access failures.
-    }
-  }, []);
-
-  const scrollToSummarySlide = useCallback(() => {
-    document.getElementById("slide-summary")?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, []);
 
   const load = useCallback(async () => {
     setError(null);
@@ -1006,6 +973,7 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
         sitePlannedResult,
         companySettings,
         evmResult,
+        previousActualsResult,
       ] = await Promise.all([
         volumeReportApi.get(reportId),
         volumeReportApi.catalog(),
@@ -1017,6 +985,7 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
         volumeReportApi.results(reportId, "site", [], "planned").catch(() => null),
         volumeReportApi.settings.companies().catch(() => [] as Company[]),
         volumeReportApi.evm(reportId).catch(() => null),
+        volumeReportApi.previousActuals(reportId, "holding").catch(() => null),
       ]);
       setReport(detail);
       setCatalog(items);
@@ -1028,6 +997,7 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
       setSitePlannedRows(sitePlannedResult?.rows ?? []);
       setSettingsCompanies(companySettings);
       setEvm(evmResult);
+      setPreviousActuals(previousActualsResult);
     } catch (reason) {
       setError(reason);
     }
@@ -1155,23 +1125,35 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
       ),
     });
 
+    const mergedPreviousHoldingRows = mergeCoatResultRows(previousActuals?.rows ?? [], coatUnit, coatDecimals);
+    const previousHoldingMap = new Map(mergedPreviousHoldingRows.map((row) => [row.item_key, row]));
+    const previousPeriodNote = previousActuals?.previous_report?.period_label
+      ? `مقایسه با: ${toFa(previousActuals.previous_report.period_label)}`
+      : undefined;
+    const summaryBadge = previousPeriodNote ? (
+      <span className="inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-[#252850]/12 bg-white px-3.5 py-1 text-[13px] font-bold text-[#252850] shadow-sm">
+        <span className="h-2 w-2 shrink-0 rounded-full bg-[#fed836]" />
+        <span>{previousPeriodNote}</span>
+      </span>
+    ) : undefined;
+
     result.push({
       key: "summary",
       render: (page) => (
-        <>
-          <div id="slide-summary" className="no-print">
-            <SummaryVariantBar variant={summaryVariant} onSelect={handleSelectSummaryVariant} compact />
-          </div>
-          <Slide title="خلاصه عملکرد هلدینگ" subtitle={period} page={page} period={period}>
-            <SummarySlideContent
-              variant={summaryVariant}
-              items={visibleItems}
-              holdingMap={holdingMap}
-              holdingPlannedMap={holdingPlannedMap}
-              companyRows={mergedCompanyRows}
-            />
-          </Slide>
-        </>
+        <Slide
+          title="خلاصه عملکرد هلدینگ"
+          subtitle={period}
+          titleAside={summaryBadge}
+          page={page}
+          period={period}
+        >
+          <SummarySlideContent
+            items={visibleItems}
+            holdingMap={holdingMap}
+            previousHoldingMap={previousHoldingMap}
+            previousReportLabel={previousActuals?.previous_report?.period_label}
+          />
+        </Slide>
       ),
     });
 
@@ -1489,14 +1471,13 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
     companyPlannedRows,
     companyRows,
     evm,
-    handleSelectSummaryVariant,
     holding,
     holdingPlanned,
+    previousActuals,
     report,
     settingsCompanies,
     sitePlannedRows,
     siteRows,
-    summaryVariant,
     weekSubtitle,
   ]);
 
@@ -1542,11 +1523,6 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
             </button>
           </div>
         </div>
-        <SummaryVariantBar
-          variant={summaryVariant}
-          onSelect={handleSelectSummaryVariant}
-          onJumpToSlide={scrollToSummarySlide}
-        />
       </div>
       <div ref={pageRef} className="print-only-container mx-auto flex max-w-[1600px] flex-col gap-5" style={{ ["--slide-scale" as string]: scale }}>
         {slides.map((slide, index) => <SlideItem key={slide.key} slide={slide} page={toFa(index + 1)} />)}

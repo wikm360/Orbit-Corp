@@ -387,6 +387,13 @@ async def plan_vs_actual(group_by: str = Query("holding", pattern="^(holding|com
     return await service.plan_vs_actual(db, report, group_by)
 
 
+@router.get("/{report_id}/previous-actuals")
+async def previous_actuals(group_by: str = Query("holding", pattern="^(holding|company|site)$"),
+                           report: Report = Depends(get_report_for_member), db: AsyncSession = Depends(get_db)):
+    """Actual volume results of the closest preceding report for comparison."""
+    return await service.get_previous_actuals(db, report, group_by)
+
+
 @router.get("/{report_id}/evm")
 async def evm(report: Report = Depends(get_report_for_member), db: AsyncSession = Depends(get_db)):
     """PV / EV / AC / CPI / SPI per project and per company, read from the EVM summary page of each file (actual + planned)."""

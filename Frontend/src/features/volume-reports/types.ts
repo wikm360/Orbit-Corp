@@ -96,6 +96,20 @@ export interface LineRow {
 }
 export interface ResultsResponse { report_id: string; status: ReportStatus; group_by: ResultScope; rows: ResultRow[]; other?: LineRow[]; problems?: LineRow[]; nonphysical?: LineRow[] }
 
+export interface PreviousReportInfo {
+  id: string;
+  title: string;
+  period_label: string;
+  period_start: string;
+  period_end: string;
+}
+
+export interface PreviousActualsResponse {
+  report_id: string;
+  previous_report: PreviousReportInfo | null;
+  rows: ResultRow[];
+}
+
 export interface PlanVsActualRow {
   company: string | null; site: string | null; item_key: string; item: string; unit: string; decimals: number;
   planned: string | null; actual: string | null; variance: string; achievement_pct: string | null;
