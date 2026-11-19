@@ -249,12 +249,12 @@ export function BentoSummaryView({
         }}
       >
         {plan.cells.map((cell) => {
-          const { item, colSpan, isHero } = cell;
+          const { item, colSpan } = cell;
           const row = holdingMap.get(item.key);
           const empty = !row;
           const qtyText = row ? formatPresentationQuantity(row.qty) : "—";
           const titlePx = (measured?.key === measurementKey ? measured.titleByKey[item.key] : undefined) ?? 20;
-          const darkCard = isHero && !empty;
+          const darkCard = !empty;
 
           // Comparison data with previous period
           const prevRow = previousHoldingMap?.get(item.key);
@@ -287,28 +287,26 @@ export function BentoSummaryView({
             <div
               key={item.key}
               ref={setCellRef(item.key)}
-              className={`flex min-h-0 flex-col justify-between overflow-hidden rounded-2xl border shadow-sm ${
+              className={`flex min-h-0 flex-col justify-between overflow-hidden rounded-2xl border shadow-md transition-shadow ${
                 colSpan === 2 ? "col-span-2" : ""
               } ${
                 darkCard
-                  ? "border-[#252850] bg-[#252850] text-white"
-                  : empty
-                    ? "border-slate-200 bg-slate-50/80"
-                    : "border-[#252850]/15 bg-white"
+                  ? "border-[#1e2246] bg-[#252850] text-white"
+                  : "border-slate-200 bg-slate-50/80 text-slate-400"
               }`}
             >
               <div
                 className={`h-1.5 shrink-0 ${
-                  darkCard ? "bg-[#fed836]" : empty ? "bg-slate-200" : "bg-[#252850]/85"
+                  darkCard ? "bg-[#fed836]" : "bg-slate-200"
                 }`}
               />
-              <div className="flex min-h-0 flex-1 flex-col justify-between px-5 py-3.5">
+              <div className="flex min-h-0 flex-1 flex-col justify-between px-5 py-4">
                 {/* Header: Title + Unit */}
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                     <p
                       className={`font-black leading-snug ${
-                        darkCard ? "text-white" : empty ? "text-slate-400" : "text-[#252850]"
+                        darkCard ? "text-white" : "text-slate-400"
                       }`}
                       style={{ fontSize: `${titlePx}px`, lineHeight: 1.25 }}
                     >
@@ -320,10 +318,10 @@ export function BentoSummaryView({
                 </div>
 
                 {/* Main Value */}
-                <div className="flex min-h-0 items-center py-1">
+                <div className="flex min-h-0 items-center py-2">
                   <p
                     className={`whitespace-nowrap font-black leading-none tabular-nums ${
-                      darkCard ? "text-[#fed836]" : empty ? "text-slate-300" : "text-[#252850]"
+                      darkCard ? "text-[#fed836]" : "text-slate-300"
                     }`}
                     style={{ fontSize: `${colSpan === 2 ? heroNumPx : regularNumPx}px` }}
                   >
@@ -331,70 +329,46 @@ export function BentoSummaryView({
                   </p>
                 </div>
 
-                {/* Footer: Previous Week Comparison */}
+                {/* Footer: Previous Week Comparison (open, unboxed layout with larger typography) */}
                 {darkCard ? (
-                  <div className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.08] px-3.5 py-1.5 text-[12px]">
-                    <div className="flex min-w-0 items-center gap-1.5">
-                      <span className="text-[11.5px] font-medium text-white/65">هفته قبل:</span>
-                      <span className="font-extrabold text-white tabular-nums">{prevQtyText}</span>
+                  <div className="flex items-center justify-between border-t border-white/10 pt-2.5">
+                    <div className="flex min-w-0 items-baseline gap-2">
+                      <span className="text-[14px] font-medium text-white/65">هفته قبل:</span>
+                      <span className="text-[18px] font-black text-white tabular-nums tracking-tight">{prevQtyText}</span>
                     </div>
                     {trend === "up" && (
-                      <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/35 bg-emerald-500/25 px-2 py-0.5 text-[11px] font-extrabold text-emerald-300">
+                      <span className="inline-flex items-center gap-1 rounded-lg border border-emerald-400/40 bg-emerald-500/25 px-2.5 py-0.5 text-[13px] font-black text-emerald-300">
                         <span>▲</span>
                         <span className="tabular-nums">{pctText}</span>
                       </span>
                     )}
                     {trend === "down" && (
-                      <span className="inline-flex items-center gap-1 rounded-full border border-rose-500/35 bg-rose-500/25 px-2 py-0.5 text-[11px] font-extrabold text-rose-300">
+                      <span className="inline-flex items-center gap-1 rounded-lg border border-rose-400/40 bg-rose-500/25 px-2.5 py-0.5 text-[13px] font-black text-rose-300">
                         <span>▼</span>
                         <span className="tabular-nums">{pctText}</span>
                       </span>
                     )}
                     {trend === "flat" && (
-                      <span className="inline-flex items-center rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-bold text-white/70">
+                      <span className="inline-flex items-center rounded-lg border border-white/15 bg-white/10 px-2.5 py-0.5 text-[13px] font-bold text-white/70">
                         {pctText}
                       </span>
                     )}
                     {trend === "new" && (
-                      <span className="inline-flex items-center rounded-full border border-[#fed836]/30 bg-[#fed836]/25 px-2 py-0.5 text-[11px] font-bold text-[#fed836]">
+                      <span className="inline-flex items-center rounded-lg border border-[#fed836]/40 bg-[#fed836]/25 px-2.5 py-0.5 text-[13px] font-bold text-[#fed836]">
                         {pctText}
                       </span>
                     )}
                     {trend === "none" && (
-                      <span className="text-[11px] font-medium text-white/40">—</span>
+                      <span className="text-[14px] font-medium text-white/40">—</span>
                     )}
                   </div>
                 ) : (
-                  <div className="flex items-center justify-between rounded-xl border border-slate-200/70 bg-slate-50 px-3.5 py-1.5 text-[12px]">
-                    <div className="flex min-w-0 items-center gap-1.5">
-                      <span className="text-[11.5px] font-medium text-slate-400">هفته قبل:</span>
-                      <span className="font-extrabold text-slate-700 tabular-nums">{prevQtyText}</span>
+                  <div className="flex items-center justify-between border-t border-slate-200 pt-2.5">
+                    <div className="flex min-w-0 items-baseline gap-2">
+                      <span className="text-[14px] font-medium text-slate-400">هفته قبل:</span>
+                      <span className="text-[18px] font-black text-slate-700 tabular-nums tracking-tight">{prevQtyText}</span>
                     </div>
-                    {trend === "up" && (
-                      <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-extrabold text-emerald-700">
-                        <span>▲</span>
-                        <span className="tabular-nums">{pctText}</span>
-                      </span>
-                    )}
-                    {trend === "down" && (
-                      <span className="inline-flex items-center gap-1 rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[11px] font-extrabold text-rose-700">
-                        <span>▼</span>
-                        <span className="tabular-nums">{pctText}</span>
-                      </span>
-                    )}
-                    {trend === "flat" && (
-                      <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-500">
-                        {pctText}
-                      </span>
-                    )}
-                    {trend === "new" && (
-                      <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-bold text-amber-700">
-                        {pctText}
-                      </span>
-                    )}
-                    {trend === "none" && (
-                      <span className="text-[11px] font-medium text-slate-400">—</span>
-                    )}
+                    <span className="text-[14px] font-medium text-slate-400">—</span>
                   </div>
                 )}
               </div>

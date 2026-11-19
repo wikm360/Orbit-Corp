@@ -1127,15 +1127,6 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
 
     const mergedPreviousHoldingRows = mergeCoatResultRows(previousActuals?.rows ?? [], coatUnit, coatDecimals);
     const previousHoldingMap = new Map(mergedPreviousHoldingRows.map((row) => [row.item_key, row]));
-    const previousPeriodNote = previousActuals?.previous_report?.period_label
-      ? `مقایسه با: ${toFa(previousActuals.previous_report.period_label)}`
-      : undefined;
-    const summaryBadge = previousPeriodNote ? (
-      <span className="inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-[#252850]/12 bg-white px-3.5 py-1 text-[13px] font-bold text-[#252850] shadow-sm">
-        <span className="h-2 w-2 shrink-0 rounded-full bg-[#fed836]" />
-        <span>{previousPeriodNote}</span>
-      </span>
-    ) : undefined;
 
     result.push({
       key: "summary",
@@ -1143,7 +1134,6 @@ export function PresentationScreen({ reportId }: { reportId: string }) {
         <Slide
           title="خلاصه عملکرد هلدینگ"
           subtitle={period}
-          titleAside={summaryBadge}
           page={page}
           period={period}
         >
